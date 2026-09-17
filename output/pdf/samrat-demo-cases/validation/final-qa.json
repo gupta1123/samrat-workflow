@@ -1,0 +1,97 @@
+{
+  "pdfFiles": [
+    {
+      "file": "01-clean-case/Samrat-Case-01-Complete-Packet.pdf",
+      "pages": 6,
+      "textWithinPageBounds": true,
+      "bytes": 390681
+    },
+    {
+      "file": "01-clean-case/individual-documents/01-purchase-order.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 66230
+    },
+    {
+      "file": "01-clean-case/individual-documents/02-tax-invoice.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 66210
+    },
+    {
+      "file": "01-clean-case/individual-documents/03-eway-bill.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 66026
+    },
+    {
+      "file": "01-clean-case/individual-documents/04-lorry-receipt.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 65970
+    },
+    {
+      "file": "01-clean-case/individual-documents/05-weighment-slip.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 65268
+    },
+    {
+      "file": "01-clean-case/individual-documents/06-delivery-note.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 65941
+    },
+    {
+      "file": "02-mismatch-case/Samrat-Case-02-Mismatch-Packet.pdf",
+      "pages": 6,
+      "textWithinPageBounds": true,
+      "bytes": 390604
+    },
+    {
+      "file": "02-mismatch-case/individual-documents/01-purchase-order.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 66213
+    },
+    {
+      "file": "02-mismatch-case/individual-documents/02-tax-invoice.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 66194
+    },
+    {
+      "file": "02-mismatch-case/individual-documents/03-eway-bill.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 66002
+    },
+    {
+      "file": "02-mismatch-case/individual-documents/04-lorry-receipt.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 65961
+    },
+    {
+      "file": "02-mismatch-case/individual-documents/05-weighment-slip.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 65270
+    },
+    {
+      "file": "02-mismatch-case/individual-documents/06-delivery-note.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 65928
+    },
+    {
+      "file": "Expected-Results-Do-Not-Upload.pdf",
+      "pages": 1,
+      "textWithinPageBounds": true,
+      "bytes": 65683
+    }
+  ],
+  "combinedMatchesIndividualFiles": true,
+  "referenceChecks": "pass",
+  "liveAiRun": false
+}

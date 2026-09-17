@@ -1,0 +1,33 @@
+SAMRAT WINDOWS OPENROUTER KEY REPAIR (INSTALLER 5)
+=================================================
+
+The error "InvalidArgumentError: invalid Authorization header" means the saved
+OpenRouter key contains a space, line break, smart punctuation, or another
+hidden clipboard character. The request is rejected locally before OpenRouter
+or Gemini receives any document.
+
+REPAIR AN EXISTING TEST INSTALLATION
+------------------------------------
+1. Keep Docker Desktop open with Engine running.
+2. Extract Samrat-Windows-OpenRouter-Key-Repair-Installer5.zip.
+3. Copy its scripts folder into C:\ProgramData\Samrat Case Review and choose
+   Replace the files in the destination. Do not delete any other folders.
+4. Open Windows PowerShell and run the command below. The repair requests
+   Administrator access automatically; choose Yes at the Windows prompt.
+
+powershell.exe -NoExit -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramData\Samrat Case Review\scripts\Repair-OpenRouterKey.ps1"
+
+5. Paste a current OpenRouter API key. The repair accepts either the key alone
+   or an OPENROUTER_API_KEY= line and safely removes clipboard formatting,
+   wrapping whitespace, and quotes. The prompt hides the key while it is entered.
+6. Wait for "OpenRouter API key verified" and the green ready message.
+7. Retry the failed case once.
+
+This changes only OPENROUTER_API_KEY and restarts the web and worker containers.
+It does not delete or modify cases, users, uploaded documents, or database data.
+The verification uses OpenRouter's authenticated key-information endpoint; it
+does not send a document or run an AI model.
+
+Installer 5 performs the same key normalization, character validation, and
+authenticated verification during a new installation. It also adds Repair
+OpenRouter Key to the Samrat Case Review Start-menu folder.

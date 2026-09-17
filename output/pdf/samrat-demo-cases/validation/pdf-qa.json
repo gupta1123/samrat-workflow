@@ -1,0 +1,74 @@
+[
+  {
+    "file": "01-clean-case/individual-documents/01-purchase-order.pdf",
+    "pages": 1,
+    "textCharacters": 1393,
+    "bytes": 66230
+  },
+  {
+    "file": "01-clean-case/individual-documents/02-tax-invoice.pdf",
+    "pages": 1,
+    "textCharacters": 1389,
+    "bytes": 66210
+  },
+  {
+    "file": "01-clean-case/individual-documents/03-eway-bill.pdf",
+    "pages": 1,
+    "textCharacters": 1391,
+    "bytes": 66026
+  },
+  {
+    "file": "01-clean-case/individual-documents/04-lorry-receipt.pdf",
+    "pages": 1,
+    "textCharacters": 1280,
+    "bytes": 65970
+  },
+  {
+    "file": "01-clean-case/individual-documents/05-weighment-slip.pdf",
+    "pages": 1,
+    "textCharacters": 761,
+    "bytes": 65268
+  },
+  {
+    "file": "01-clean-case/individual-documents/06-delivery-note.pdf",
+    "pages": 1,
+    "textCharacters": 1337,
+    "bytes": 65941
+  },
+  {
+    "file": "02-mismatch-case/individual-documents/01-purchase-order.pdf",
+    "pages": 1,
+    "textCharacters": 1373,
+    "bytes": 66213
+  },
+  {
+    "file": "02-mismatch-case/individual-documents/02-tax-invoice.pdf",
+    "pages": 1,
+    "textCharacters": 1369,
+    "bytes": 66194
+  },
+  {
+    "file": "02-mismatch-case/individual-documents/03-eway-bill.pdf",
+    "pages": 1,
+    "textCharacters": 1371,
+    "bytes": 66002
+  },
+  {
+    "file": "02-mismatch-case/individual-documents/04-lorry-receipt.pdf",
+    "pages": 1,
+    "textCharacters": 1260,
+    "bytes": 65961
+  },
+  {
+    "file": "02-mismatch-case/individual-documents/05-weighment-slip.pdf",
+    "pages": 1,
+    "textCharacters": 761,
+    "bytes": 65270
+  },
+  {
+    "file": "02-mismatch-case/individual-documents/06-delivery-note.pdf",
+    "pages": 1,
+    "textCharacters": 1317,
+    "bytes": 65928
+  }
+]

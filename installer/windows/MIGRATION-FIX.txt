@@ -1,0 +1,48 @@
+SAMRAT - DATABASE MIGRATION FIX (SUPERSEDED BY INSTALLER 5)
+==========================================================
+
+This repairs the Installer 2 error:
+  ERROR: syntax error at or near ":"
+  ... where filename = :'filename'
+
+Cause: psql does not expand its variables inside SQL supplied with -c. Both
+the history lookup and the history insert are now supplied through standard
+input with SQL-safe quoted variables. No case data or keys are reset.
+
+REPAIR THE TESTER'S EXISTING INSTALLATION
+---------------------------------------
+The later Windows test also found that Envoy requires an API key on the Auth
+health route. Use Samrat-Windows-Health-Check-Fix-Installer4.zip instead; it
+includes this migration file and the health-check repair.
+
+If you are applying only the historical migration repair:
+1. Extract Samrat-Windows-Migration-Fix-Installer3.zip.
+2. Copy its run-migrations.sh file into this existing folder:
+     C:\ProgramData\Samrat Case Review\database
+   Choose Replace when Windows asks. Approve the file copy if prompted.
+   Do not double-click or edit the .sh file, and do not delete any other files.
+3. Keep Docker Desktop running. Open Windows PowerShell as administrator.
+4. Paste this command and press Enter:
+
+powershell.exe -NoExit -NoProfile -ExecutionPolicy RemoteSigned -File "$env:ProgramData\Samrat Case Review\scripts\Install-Samrat.ps1"
+
+5. Existing settings and keys are kept. Follow the administrator email/password
+   prompts. If a new error appears, keep the window open and send its text or
+   a screenshot. Do not reset Docker, delete volumes, or delete the .env file.
+6. Only when it says "Samrat Case Review is ready" open http://localhost:8888
+   and sign in. Close the PowerShell configuration window when finished.
+
+If Windows blocks the script, keep its security protections enabled and report
+the message. Do not change machine-wide execution policy or Smart App Control.
+
+FUTURE RELEASE BUILDS
+---------------------
+The updated complete Samrat-Windows-Installer-Build-Kit-1.0.0.zip includes this
+fix and builds Samrat-Case-Review-Setup-1.0.0-Installer5.exe on Windows.
+It also keeps the configuration window open so errors do not disappear.
+No new application image build or OpenRouter API key is needed for this fix.
+An already compiled Installer 2 EXE is not changed by editing a build kit.
+
+The ZIP patch is not a new setup EXE. Do not send an old Installer 2 EXE to a
+new tester without the repair. The client release still needs signing and
+end-to-end validation on Windows.

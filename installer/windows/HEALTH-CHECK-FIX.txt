@@ -1,0 +1,29 @@
+SAMRAT WINDOWS HEALTH-CHECK REPAIR (INSTALLER 4)
+================================================
+
+This repair includes both fixes discovered during the Windows test:
+1. Database migration history no longer fails near :'filename'.
+2. The Supabase Auth health check supplies the local API key required by Envoy.
+
+The API key is read from the existing private .env file. It is not printed or
+included in this ZIP. Existing database data and configuration are preserved.
+
+HOW TO APPLY IT TO THE EXISTING TESTER INSTALLATION
+--------------------------------------------------
+1. Keep Docker Desktop running.
+2. Extract Samrat-Windows-Health-Check-Fix-Installer4.zip.
+3. Copy the extracted database and scripts folders.
+4. Press Windows + R and open:
+     C:\ProgramData\Samrat Case Review
+5. Paste both folders there. Choose to merge folders and Replace all three
+   matching files when Windows asks. Do not delete any other files or folders.
+6. Open Windows PowerShell as administrator and run:
+
+powershell.exe -NoExit -NoProfile -ExecutionPolicy RemoteSigned -File "$env:ProgramData\Samrat Case Review\scripts\Install-Samrat.ps1"
+
+7. Wait for the administrator email and password prompts. Those values become
+   the local Samrat login credentials. Wait until the script says Samrat is
+   ready, then sign in at http://localhost:8888.
+
+If another error appears, keep the window open and send a screenshot. Do not
+reset Docker, delete its volumes, delete .env, or disable Windows security.

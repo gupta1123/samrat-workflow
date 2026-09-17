@@ -1,0 +1,92 @@
+services:
+  samrat-migrate:
+    image: postgres:17.6-alpine
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: ${POSTGRES_PORT}
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ../../database/migrations:/migrations:ro
+      - ../../database/run-migrations.sh:/tools/run-migrations.sh:ro
+    command: ["sh", "/tools/run-migrations.sh"]
+
+  samrat-web:
+    image: samrat-workflow-web:${SAMRAT_VERSION:-1.0.0}
+    container_name: samrat-web
+    restart: unless-stopped
+    depends_on:
+      samrat-migrate:
+        condition: service_completed_successfully
+    ports:
+      - ${SAMRAT_APP_PORT:-8888}:3000
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      SUPABASE_INTERNAL_URL: http://api-gw:8000
+      SUPABASE_PUBLIC_PORT: ${API_GW_HTTP_PORT:-8000}
+      SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_QUALITY_MODEL: ${OPENROUTER_QUALITY_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_REVIEW_MODEL: ${OPENROUTER_REVIEW_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_REVIEW_REASONING_EFFORT: ${OPENROUTER_REVIEW_REASONING_EFFORT:-high}
+      OPENROUTER_QUALITY_REASONING_TOKENS: ${OPENROUTER_QUALITY_REASONING_TOKENS:-2000}
+      OPENROUTER_MAX_OUTPUT_TOKENS: ${OPENROUTER_MAX_OUTPUT_TOKENS:-8192}
+      OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS: ${OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS:-4096}
+      OPENROUTER_MAX_RETRIES: ${OPENROUTER_MAX_RETRIES:-2}
+      OPENROUTER_RETRY_BASE_MS: ${OPENROUTER_RETRY_BASE_MS:-1200}
+      OPENROUTER_TIMEOUT_MS: ${OPENROUTER_TIMEOUT_MS:-60000}
+      WORKER_SECRET: ${WORKER_SECRET}
+      APP_BASE_URL: http://samrat-web:3000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  samrat-worker:
+    image: samrat-workflow-worker:${SAMRAT_VERSION:-1.0.0}
+    container_name: samrat-worker
+    restart: unless-stopped
+    depends_on:
+      samrat-migrate:
+        condition: service_completed_successfully
+      samrat-web:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      SUPABASE_INTERNAL_URL: http://api-gw:8000
+      SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_QUALITY_MODEL: ${OPENROUTER_QUALITY_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_REVIEW_MODEL: ${OPENROUTER_REVIEW_MODEL:-google/gemini-2.5-flash}
+      OPENROUTER_REVIEW_REASONING_EFFORT: ${OPENROUTER_REVIEW_REASONING_EFFORT:-high}
+      OPENROUTER_QUALITY_REASONING_TOKENS: ${OPENROUTER_QUALITY_REASONING_TOKENS:-2000}
+      OPENROUTER_MAX_OUTPUT_TOKENS: ${OPENROUTER_MAX_OUTPUT_TOKENS:-8192}
+      OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS: ${OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS:-4096}
+      OPENROUTER_MAX_RETRIES: ${OPENROUTER_MAX_RETRIES:-2}
+      OPENROUTER_RETRY_BASE_MS: ${OPENROUTER_RETRY_BASE_MS:-1200}
+      OPENROUTER_TIMEOUT_MS: ${OPENROUTER_TIMEOUT_MS:-60000}
+      WORKER_SECRET: ${WORKER_SECRET}
+      APP_BASE_URL: http://samrat-web:3000

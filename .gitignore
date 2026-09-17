@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.netlify/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.DS_Store
+coverage/
+
+.next-preview/
+.next-build/
+tmp/
+public/pdfjs/

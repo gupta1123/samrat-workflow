@@ -1,0 +1,12 @@
+.git
+.next
+.next-*
+.netlify
+node_modules
+npm-debug.log*
+.env
+.env.*
+!.env.example
+output
+tmp
+installer

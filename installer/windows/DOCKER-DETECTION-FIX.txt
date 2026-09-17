@@ -1,0 +1,42 @@
+SAMRAT WINDOWS INSTALLER 2 - DOCKER DETECTION FIX
+================================================
+
+Historical note: this document describes the small Installer 2 Docker patch.
+The current complete build kit includes that fix plus the migration correction
+and produces Installer 5 instead. See MIGRATION-FIX.txt for the database repair.
+
+Docker is running, but the old Samrat installer says it is missing.
+The old installer checked just one fixed folder. This revision discovers both
+all-users and per-user installations, registered custom folders, and the running
+Docker app. It verifies the Linux engine and Docker Compose before installation.
+
+NO DOCKER REINSTALL OR WSL RESET IS NEEDED FOR THIS FIX.
+
+IF YOU DOWNLOADED THE SMALL PATCH ZIP
+------------------------------------
+1. Close the old Samrat setup window.
+2. Extract the patch ZIP to a separate folder.
+3. Copy ALL files and folders from that extracted patch into your EXISTING
+   Samrat-Windows-Installer-Build-Kit-1.0.0 folder, where
+   01-BUILD-INSTALLER.cmd and the payload folder already exist.
+4. Choose Replace the files in the destination when Windows asks.
+   Merge the scripts folder; do not delete it or the payload/runtime folders.
+5. Keep Docker Desktop open with Engine running.
+6. Double-click 02-CHECK-DOCKER.cmd. If it fails, share its output.
+7. Double-click 01-BUILD-INSTALLER.cmd and wait for SUCCESS.
+8. In the output folder, run the NEW file as administrator:
+   Samrat-Case-Review-Setup-1.0.0-Installer2.exe
+
+The old EXE is not patched automatically. Do not run it again.
+That patch's setup window identifies itself as Installer 2.
+
+IF YOU DOWNLOADED THE COMPLETE UPDATED BUILD KIT
+----------------------------------------------
+No file merging is needed. Extract the complete ZIP and follow steps 5-8 above,
+using Samrat-Case-Review-Setup-1.0.0-Installer5.exe for the current build kit.
+
+The app/image version is still 1.0.0. Only the Windows installer changed.
+Neither the patch nor the Docker diagnostic changes existing cases or databases.
+If setup is run under a DIFFERENT Windows administrator account, that account
+must also be able to access Docker. Run 02-CHECK-DOCKER.cmd as that account to
+check it; do not disable Windows security or reinstall WSL to work around it.

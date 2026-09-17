@@ -1,0 +1,43 @@
+SAMRAT CASE REVIEW - WINDOWS RELEASE BUILDER
+============================================
+
+THIS FOLDER IS NOT THE INSTALLER.
+
+Files ending in .iss, .ps1, .md, or .txt are build scripts and documentation.
+Windows may correctly open those files in a text editor. Do not send those files
+to the client as the installer.
+
+TO CREATE THE REAL WINDOWS INSTALLER
+------------------------------------
+
+1. Extract the complete ZIP file. Do not run files from inside the ZIP preview.
+2. Install Inno Setup 6 from:
+   https://jrsoftware.org/isdl.php
+3. Double-click:
+   01-BUILD-INSTALLER.cmd
+4. Wait for the green success message. The output folder will open automatically.
+5. Send this single file to the tester/client:
+   output\Samrat-Case-Review-Setup-1.0.0-Installer5.exe
+
+TO INSTALL ON THE CLIENT COMPUTER
+---------------------------------
+
+1. Install and start Docker Desktop first.
+2. Right-click Samrat-Case-Review-Setup-1.0.0-Installer5.exe and choose
+   Run as administrator.
+3. Follow the setup prompts.
+
+Installer 5 fixes Docker discovery for per-user and custom-folder installs.
+It also fixes the database setup failure "syntax error at or near ':'".
+It validates OpenRouter keys and rejects hidden clipboard characters.
+See MIGRATION-FIX.txt for repairing an existing Installer 2 installation.
+After configuration says Samrat is ready, close its PowerShell window to finish
+the setup wizard. Errors stay visible in that window if configuration fails.
+If Docker is already running, do not reinstall it because of the old installer
+message. Use this new EXE. See DOCKER-DETECTION-FIX.txt for patch instructions.
+Double-click 02-CHECK-DOCKER.cmd to run a read-only prerequisite check.
+
+If Windows SmartScreen warns about an unknown publisher during internal testing,
+that is because the EXE is not code-signed. Use More info > Run anyway only when
+the file came directly from the Samrat release builder. Sign the EXE with the
+organisation's Windows code-signing certificate before final client distribution.

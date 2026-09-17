@@ -1,0 +1,534 @@
+[
+  {
+    "caseNumber": 1,
+    "packet": "01-clean-case/Samrat-Case-01-Complete-Packet.pdf",
+    "documents": [
+      {
+        "id": "case-1-doc-1",
+        "type": "Purchase Order",
+        "title": "Purchase Order - SG/PO/26-27/101",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "supplierGstin": "27AABCA1001C1ZQ",
+          "buyerGstin": "27AABCS9001D1ZQ",
+          "currency": "INR",
+          "subtotal": "620000.00",
+          "taxAmount": "111600.00",
+          "totalAmount": "731600.00",
+          "itemQuantity": "10000",
+          "unit": "KG",
+          "hsnSac": "7216",
+          "taxRate": "18",
+          "cgstRate": "9",
+          "sgstRate": "9",
+          "poNumber": "SG/PO/26-27/101",
+          "documentDate": "2026-08-28"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "CH150",
+            "description": "MS Channel 150 x 75 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "6000",
+            "unit": "KG",
+            "rate": "60.00",
+            "taxableAmount": "360000.00",
+            "lineTotal": "360000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "32400.00",
+            "sgstAmount": "32400.00",
+            "taxAmount": "64800.00"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "CH100",
+            "description": "MS Channel 100 x 50 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "4000",
+            "unit": "KG",
+            "rate": "65.00",
+            "taxableAmount": "260000.00",
+            "lineTotal": "260000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "23400.00",
+            "sgstAmount": "23400.00",
+            "taxAmount": "46800.00"
+          }
+        ],
+        "md": "Samrat Group - Demo Division\nPURCHASE ORDER\nSG/PO/26-27/101\nDOCUMENT 01  /  SPECIMEN\nSUPPLIER / DISPATCH FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / SHIP TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nORDER DATE\n28-Aug-2026\nDELIVERY DATE\n31-Aug-2026\nPO NUMBER\nSG/PO/26-27/101\nCURRENCY / SUPPLY STATE\nINR / Maharashtra (27)\nMATERIAL SCHEDULE\nITEM / DESCRIPTION\nHSN\nQTY (KG)\nRATE (INR/KG)\nTAXABLE (INR)\nCH150 - MS Channel 150 x 75 mm, Grade E250\n7216\n 6,000\n 60.00\n 360,000.00\nCH100 - MS Channel 100 x 50 mm, Grade E250\n7216\n 4,000\n 65.00\n 260,000.00\nTotal material quantity\n10,000 KG\nPacking and freight included.\nNo additional charges.\nCurrency: INR.\nTaxable value\n620,000.00\nCGST @ 9%\n55,800.00\nSGST @ 9%\n55,800.00\nTotal GST @ 18%\n111,600.00\nOrder total (INR)\n731,600.00\nCOMMERCIAL TERMS\nPayment: 30 days from invoice date. Delivery: 31-Aug-2026 to the buyer address. Price: fixed per KG; packing and freight included.\nGST: CGST 9% + SGST 9%. Goods and quantities as listed above.\nPURCHASE APPROVAL\nDEMO RECORD\nApproved / Demo signatory\nORDER ACKNOWLEDGED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-01-Complete-Packet.pdf",
+        "sourceHint": "01-purchase-order.pdf"
+      },
+      {
+        "id": "case-1-doc-2",
+        "type": "Tax Invoice",
+        "title": "Tax Invoice - ARM/26-27/101",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "supplierGstin": "27AABCA1001C1ZQ",
+          "buyerGstin": "27AABCS9001D1ZQ",
+          "currency": "INR",
+          "subtotal": "620000.00",
+          "taxAmount": "111600.00",
+          "totalAmount": "731600.00",
+          "itemQuantity": "10000",
+          "unit": "KG",
+          "hsnSac": "7216",
+          "taxRate": "18",
+          "cgstRate": "9",
+          "sgstRate": "9",
+          "invoiceNumber": "ARM/26-27/101",
+          "referencePoNumber": "SG/PO/26-27/101",
+          "documentDate": "2026-08-31",
+          "eWayBillNumber": "271260831101",
+          "vehicleNumber": "MH12AB4821"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "CH150",
+            "description": "MS Channel 150 x 75 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "6000",
+            "unit": "KG",
+            "rate": "60.00",
+            "taxableAmount": "360000.00",
+            "lineTotal": "360000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "32400.00",
+            "sgstAmount": "32400.00",
+            "taxAmount": "64800.00"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "CH100",
+            "description": "MS Channel 100 x 50 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "4000",
+            "unit": "KG",
+            "rate": "65.00",
+            "taxableAmount": "260000.00",
+            "lineTotal": "260000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "23400.00",
+            "sgstAmount": "23400.00",
+            "taxAmount": "46800.00"
+          }
+        ],
+        "md": "Aster Ridge Metals Pvt. Ltd. (Demo)\nTAX INVOICE\nARM/26-27/101\nDOCUMENT 02  /  SPECIMEN\nSUPPLIER / DISPATCH FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / SHIP TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nINVOICE DATE\n31-Aug-2026\nREFERENCE PO NUMBER\nSG/PO/26-27/101\nVEHICLE NUMBER\nMH12AB4821\nE-WAY BILL NUMBER\n271260831101\nMATERIAL SCHEDULE\nITEM / DESCRIPTION\nHSN\nQTY (KG)\nRATE (INR/KG)\nTAXABLE (INR)\nCH150 - MS Channel 150 x 75 mm, Grade E250\n7216\n 6,000\n 60.00\n 360,000.00\nCH100 - MS Channel 100 x 50 mm, Grade E250\n7216\n 4,000\n 65.00\n 260,000.00\nTotal material quantity\n10,000 KG\nPacking and freight included.\nNo additional charges.\nCurrency: INR.\nTaxable value\n620,000.00\nCGST @ 9%\n55,800.00\nSGST @ 9%\n55,800.00\nTotal GST @ 18%\n111,600.00\nInvoice total (INR)\n731,600.00\nCOMMERCIAL TERMS\nPayment: 30 days from invoice date. Delivery: 31-Aug-2026 to the buyer address. Price: fixed per KG; packing and freight included.\nGST: CGST 9% + SGST 9%. Goods and quantities as listed above.\nSUPPLIER DISPATCH\nDEMO RECORD\nApproved / Demo signatory\nSTORE RECEIVED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-01-Complete-Packet.pdf",
+        "sourceHint": "02-tax-invoice.pdf"
+      },
+      {
+        "id": "case-1-doc-3",
+        "type": "E-Way Bill",
+        "title": "E-Way Bill - 271260831101",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "supplierGstin": "27AABCA1001C1ZQ",
+          "buyerGstin": "27AABCS9001D1ZQ",
+          "eWayBillNumber": "271260831101",
+          "referenceInvoiceNumber": "ARM/26-27/101",
+          "documentDate": "2026-08-31",
+          "validityDate": "2026-09-01",
+          "vehicleNumber": "MH12AB4821",
+          "lorryReceiptNumber": "NSR/26-27/101",
+          "transporterName": "Northstar Roadlines (Demo)",
+          "subtotal": "620000.00",
+          "totalTaxableAmount": "620000.00",
+          "taxAmount": "111600.00",
+          "totalAmount": "731600.00",
+          "cgstRate": "9",
+          "sgstRate": "9",
+          "taxRate": "18",
+          "currency": "INR"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "CH150",
+            "description": "MS Channel 150 x 75 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "6000",
+            "unit": "KG"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "CH100",
+            "description": "MS Channel 100 x 50 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "4000",
+            "unit": "KG"
+          }
+        ],
+        "md": "TRANSPORT DOCUMENT / E-WAY RECORD\nE-WAY BILL\n271260831101\nDOCUMENT 03  /  SPECIMEN\nGENERATED AT\n31-Aug-2026 09:30\nVALID UNTIL\n01-Sep-2026 23:59\nTRANSACTION / MODE\nOutward supply / Road\nREFERENCE INVOICE / DATE\nARM/26-27/101 / 31-Aug-2026\nPART A - CONSIGNMENT AND PARTIES\nSUPPLIER / DISPATCH FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / SHIP TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nGOODS DESCRIPTION\nHSN\nQUANTITY (KG)\nCH150 - MS Channel 150 x 75 mm, Grade E250\n7216\n 6,000\nCH100 - MS Channel 100 x 50 mm, Grade E250\n7216\n 4,000\nConsignment quantity\n10,000 KG\nPlace of supply: Maharashtra\nSupply category: Intra-state\nCurrency: INR\nTaxable value\n620,000.00\nCGST @ 9%\n55,800.00\nSGST @ 9%\n55,800.00\nTotal GST @ 18%\n111,600.00\nDeclared invoice value\n731,600.00\nPART B - TRANSPORT PARTICULARS\nVEHICLE NUMBER\nMH12AB4821\nLORRY RECEIPT REFERENCE\nNSR/26-27/101\nTRANSPORTER\nNorthstar Roadlines (Demo)\nROUTE\nPune to Nashik, Maharashtra\nTransport distance: 210 KM. Reference purchase order: SG/PO/26-27/101. This specimen is an e-way bill layout for testing and is not issued by\na government portal.\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-01-Complete-Packet.pdf",
+        "sourceHint": "03-eway-bill.pdf"
+      },
+      {
+        "id": "case-1-doc-4",
+        "type": "Lorry Receipt",
+        "title": "Lorry Receipt - NSR/26-27/101",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "documentDate": "2026-08-31",
+          "lorryReceiptNumber": "NSR/26-27/101",
+          "eWayBillNumber": "271260831101",
+          "vehicleNumber": "MH12AB4821",
+          "netWeight": "10000",
+          "transporterName": "Northstar Roadlines (Demo)"
+        },
+        "lineItems": [],
+        "md": "Northstar Roadlines (Demo)\nLORRY RECEIPT\nNSR/26-27/101\nDOCUMENT 04  /  SPECIMEN\nBOOKING DATE / TIME\n31-Aug-2026 10:00\nREFERENCE INVOICE\nARM/26-27/101\nE-WAY BILL NUMBER\n271260831101\nREFERENCE PURCHASE ORDER\nSG/PO/26-27/101\nCONSIGNOR / FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nCONSIGNEE / TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nVEHICLE AND CONSIGNMENT\nVEHICLE NUMBER\nMH12AB4821\nCONSIGNMENT NET WEIGHT\n10,000 KG\nROUTE FROM\nPune, Maharashtra\nROUTE TO\nNashik, Maharashtra\nGOODS DESCRIPTION\nHSN\nQUANTITY (KG)\nCH150 - MS Channel 150 x 75 mm, Grade E250\n7216\n 6,000\nCH100 - MS Channel 100 x 50 mm, Grade E250\n7216\n 4,000\nCARRIAGE INSTRUCTIONS\nFreight: included in supplier's price; no separate freight billed or payable by the consignee on this receipt. Carry both material lines\nunder the referenced invoice. Delivery date: 31-Aug-2026. No vehicle substitution recorded.\nTRANSPORTER ISSUED\nDEMO RECORD\nApproved / Demo signatory\nDRIVER ACKNOWLEDGED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-01-Complete-Packet.pdf",
+        "sourceHint": "04-lorry-receipt.pdf"
+      },
+      {
+        "id": "case-1-doc-5",
+        "type": "Weighment Slip",
+        "title": "Weighment Slip - SG/WB/26-27/101",
+        "pages": 1,
+        "fields": {
+          "weighmentNumber": "SG/WB/26-27/101",
+          "weighbridgeName": "Samrat Demo Weighbridge - Nashik",
+          "referencePoNumber": "SG/PO/26-27/101",
+          "referenceInvoiceNumber": "ARM/26-27/101",
+          "documentDate": "2026-08-31",
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "vehicleNumber": "MH12AB4821",
+          "grossWeight": "24000",
+          "tareWeight": "14000",
+          "netWeight": "10000"
+        },
+        "lineItems": [],
+        "md": "Samrat Group - Demo Division\nWEIGHMENT SLIP\nSG/WB/26-27/101\nDOCUMENT 05  /  SPECIMEN\nWEIGHBRIDGE\nSamrat Demo Weighbridge - Nashik\nDATE / TIME\n31-Aug-2026 15:05\nVEHICLE NUMBER\nMH12AB4821\nINVOICE REFERENCE\nARM/26-27/101\nSUPPLIER\nAster Ridge Metals Pvt. Ltd. (Demo)\nPO REFERENCE\nSG/PO/26-27/101\nELECTRONIC SCALE READINGS\nGROSS WEIGHT\n24,000 KG\n14:55\nTARE WEIGHT\n14,000 KG\n15:05\nNET WEIGHT\n10,000 KG\nGross minus tare\nScale calculation: 24,000 KG - 14,000 KG = 10,000 KG.\nVehicle remained on the same consignment. Reading unit: KG. All weights are simulated.\nOPERATOR VERIFIED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-01-Complete-Packet.pdf",
+        "sourceHint": "05-weighment-slip.pdf"
+      },
+      {
+        "id": "case-1-doc-6",
+        "type": "Delivery Note",
+        "title": "Delivery Note - ARM/DN/26-27/101",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "documentDate": "2026-08-31",
+          "deliveryNoteNumber": "ARM/DN/26-27/101",
+          "referencePoNumber": "SG/PO/26-27/101",
+          "vehicleNumber": "MH12AB4821",
+          "itemQuantity": "10000",
+          "unit": "KG"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "CH150",
+            "description": "MS Channel 150 x 75 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "6000",
+            "unit": "KG"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "CH100",
+            "description": "MS Channel 100 x 50 mm, Grade E250",
+            "hsnSac": "7216",
+            "quantity": "4000",
+            "unit": "KG"
+          }
+        ],
+        "md": "Samrat Group - Demo Division\nDELIVERY NOTE\nARM/DN/26-27/101\nDOCUMENT 06  /  SPECIMEN\nSUPPLIER / SENT BY\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / RECEIVED AT\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nDELIVERY DATE / TIME\n31-Aug-2026 15:20\nREFERENCE INVOICE\nARM/26-27/101\nREFERENCE PO NUMBER\nSG/PO/26-27/101\nVEHICLE NUMBER\nMH12AB4821\nE-WAY BILL NUMBER\n271260831101\nLORRY RECEIPT NUMBER\nNSR/26-27/101\nRECEIPT SCHEDULE\nITEM / DESCRIPTION\nHSN\nDISPATCHED (KG)\nRECEIVED (KG)\nCH150 - MS Channel 150 x 75 mm, Grade E250\n7216\n 6,000\n 6,000\nCH100 - MS Channel 100 x 50 mm, Grade E250\n7216\n 4,000\n 4,000\nDISPATCHED QUANTITY\n10,000 KG\nRECORDED RECEIVED QUANTITY\n10,000 KG\nRECEIPT ACKNOWLEDGEMENT\nStore records the material and quantities listed above against the referenced purchase order and invoice. Packing is intact.\nDelivery completed at the buyer address on 31-Aug-2026. Freight and packing are included in the supplier's invoice price.\nSUPPLIER HANDOVER\nDEMO RECORD\nApproved / Demo signatory\nSTORE RECEIVED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-01-Complete-Packet.pdf",
+        "sourceHint": "06-delivery-note.pdf"
+      }
+    ],
+    "expectedFields": []
+  },
+  {
+    "caseNumber": 2,
+    "packet": "02-mismatch-case/Samrat-Case-02-Mismatch-Packet.pdf",
+    "documents": [
+      {
+        "id": "case-2-doc-1",
+        "type": "Purchase Order",
+        "title": "Purchase Order - SG/PO/26-27/102",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "supplierGstin": "27AABCA1001C1ZQ",
+          "buyerGstin": "27AABCS9001D1ZQ",
+          "currency": "INR",
+          "subtotal": "620000.00",
+          "taxAmount": "111600.00",
+          "totalAmount": "731600.00",
+          "itemQuantity": "12000",
+          "unit": "KG",
+          "hsnSac": "7208",
+          "taxRate": "18",
+          "cgstRate": "9",
+          "sgstRate": "9",
+          "poNumber": "SG/PO/26-27/102",
+          "documentDate": "2026-08-28"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "PL06",
+            "description": "MS Plate 6 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "8000",
+            "unit": "KG",
+            "rate": "50.00",
+            "taxableAmount": "400000.00",
+            "lineTotal": "400000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "36000.00",
+            "sgstAmount": "36000.00",
+            "taxAmount": "72000.00"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "PL08",
+            "description": "MS Plate 8 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "4000",
+            "unit": "KG",
+            "rate": "55.00",
+            "taxableAmount": "220000.00",
+            "lineTotal": "220000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "19800.00",
+            "sgstAmount": "19800.00",
+            "taxAmount": "39600.00"
+          }
+        ],
+        "md": "Samrat Group - Demo Division\nPURCHASE ORDER\nSG/PO/26-27/102\nDOCUMENT 01  /  SPECIMEN\nSUPPLIER / DISPATCH FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / SHIP TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nORDER DATE\n28-Aug-2026\nDELIVERY DATE\n31-Aug-2026\nPO NUMBER\nSG/PO/26-27/102\nCURRENCY / SUPPLY STATE\nINR / Maharashtra (27)\nMATERIAL SCHEDULE\nITEM / DESCRIPTION\nHSN\nQTY (KG)\nRATE (INR/KG)\nTAXABLE (INR)\nPL06 - MS Plate 6 mm, Grade E250\n7208\n 8,000\n 50.00\n 400,000.00\nPL08 - MS Plate 8 mm, Grade E250\n7208\n 4,000\n 55.00\n 220,000.00\nTotal material quantity\n12,000 KG\nPacking and freight included.\nNo additional charges.\nCurrency: INR.\nTaxable value\n620,000.00\nCGST @ 9%\n55,800.00\nSGST @ 9%\n55,800.00\nTotal GST @ 18%\n111,600.00\nOrder total (INR)\n731,600.00\nCOMMERCIAL TERMS\nPayment: 30 days from invoice date. Delivery: 31-Aug-2026 to the buyer address. Price: fixed per KG; packing and freight included.\nGST: CGST 9% + SGST 9%. Goods and quantities as listed above.\nPURCHASE APPROVAL\nDEMO RECORD\nApproved / Demo signatory\nORDER ACKNOWLEDGED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-02-Mismatch-Packet.pdf",
+        "sourceHint": "01-purchase-order.pdf"
+      },
+      {
+        "id": "case-2-doc-2",
+        "type": "Tax Invoice",
+        "title": "Tax Invoice - ARM/26-27/102",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "supplierGstin": "27AABCA1001C1ZQ",
+          "buyerGstin": "27AABCS9001D1ZQ",
+          "currency": "INR",
+          "subtotal": "620000.00",
+          "taxAmount": "111600.00",
+          "totalAmount": "731600.00",
+          "itemQuantity": "12000",
+          "unit": "KG",
+          "hsnSac": "7208",
+          "taxRate": "18",
+          "cgstRate": "9",
+          "sgstRate": "9",
+          "invoiceNumber": "ARM/26-27/102",
+          "referencePoNumber": "SG/PO/26-27/102",
+          "documentDate": "2026-08-31",
+          "eWayBillNumber": "271260831102",
+          "vehicleNumber": "MH14EF6724"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "PL06",
+            "description": "MS Plate 6 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "8000",
+            "unit": "KG",
+            "rate": "50.00",
+            "taxableAmount": "400000.00",
+            "lineTotal": "400000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "36000.00",
+            "sgstAmount": "36000.00",
+            "taxAmount": "72000.00"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "PL08",
+            "description": "MS Plate 8 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "4000",
+            "unit": "KG",
+            "rate": "55.00",
+            "taxableAmount": "220000.00",
+            "lineTotal": "220000.00",
+            "cgstRate": "9",
+            "sgstRate": "9",
+            "taxRate": "18",
+            "cgstAmount": "19800.00",
+            "sgstAmount": "19800.00",
+            "taxAmount": "39600.00"
+          }
+        ],
+        "md": "Aster Ridge Metals Pvt. Ltd. (Demo)\nTAX INVOICE\nARM/26-27/102\nDOCUMENT 02  /  SPECIMEN\nSUPPLIER / DISPATCH FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / SHIP TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nINVOICE DATE\n31-Aug-2026\nREFERENCE PO NUMBER\nSG/PO/26-27/102\nVEHICLE NUMBER\nMH14EF6724\nE-WAY BILL NUMBER\n271260831102\nMATERIAL SCHEDULE\nITEM / DESCRIPTION\nHSN\nQTY (KG)\nRATE (INR/KG)\nTAXABLE (INR)\nPL06 - MS Plate 6 mm, Grade E250\n7208\n 8,000\n 50.00\n 400,000.00\nPL08 - MS Plate 8 mm, Grade E250\n7208\n 4,000\n 55.00\n 220,000.00\nTotal material quantity\n12,000 KG\nPacking and freight included.\nNo additional charges.\nCurrency: INR.\nTaxable value\n620,000.00\nCGST @ 9%\n55,800.00\nSGST @ 9%\n55,800.00\nTotal GST @ 18%\n111,600.00\nInvoice total (INR)\n731,600.00\nCOMMERCIAL TERMS\nPayment: 30 days from invoice date. Delivery: 31-Aug-2026 to the buyer address. Price: fixed per KG; packing and freight included.\nGST: CGST 9% + SGST 9%. Goods and quantities as listed above.\nSUPPLIER DISPATCH\nDEMO RECORD\nApproved / Demo signatory\nSTORE RECEIVED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-02-Mismatch-Packet.pdf",
+        "sourceHint": "02-tax-invoice.pdf"
+      },
+      {
+        "id": "case-2-doc-3",
+        "type": "E-Way Bill",
+        "title": "E-Way Bill - 271260831102",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "supplierGstin": "27AABCA1001C1ZQ",
+          "buyerGstin": "27AABCS9001D1ZQ",
+          "eWayBillNumber": "271260831102",
+          "referenceInvoiceNumber": "ARM/26-27/102",
+          "documentDate": "2026-08-31",
+          "validityDate": "2026-09-01",
+          "vehicleNumber": "MH14EF6724",
+          "lorryReceiptNumber": "NSR/26-27/102",
+          "transporterName": "Northstar Roadlines (Demo)",
+          "subtotal": "650000.00",
+          "totalTaxableAmount": "650000.00",
+          "taxAmount": "117000.00",
+          "totalAmount": "767000.00",
+          "cgstRate": "9",
+          "sgstRate": "9",
+          "taxRate": "18",
+          "currency": "INR"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "PL06",
+            "description": "MS Plate 6 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "8000",
+            "unit": "KG"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "PL08",
+            "description": "MS Plate 8 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "4000",
+            "unit": "KG"
+          }
+        ],
+        "md": "TRANSPORT DOCUMENT / E-WAY RECORD\nE-WAY BILL\n271260831102\nDOCUMENT 03  /  SPECIMEN\nGENERATED AT\n31-Aug-2026 09:30\nVALID UNTIL\n01-Sep-2026 23:59\nTRANSACTION / MODE\nOutward supply / Road\nREFERENCE INVOICE / DATE\nARM/26-27/102 / 31-Aug-2026\nPART A - CONSIGNMENT AND PARTIES\nSUPPLIER / DISPATCH FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / SHIP TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nGOODS DESCRIPTION\nHSN\nQUANTITY (KG)\nPL06 - MS Plate 6 mm, Grade E250\n7208\n 8,000\nPL08 - MS Plate 8 mm, Grade E250\n7208\n 4,000\nConsignment quantity\n12,000 KG\nPlace of supply: Maharashtra\nSupply category: Intra-state\nCurrency: INR\nTaxable value\n650,000.00\nCGST @ 9%\n58,500.00\nSGST @ 9%\n58,500.00\nTotal GST @ 18%\n117,000.00\nDeclared invoice value\n767,000.00\nPART B - TRANSPORT PARTICULARS\nVEHICLE NUMBER\nMH14EF6724\nLORRY RECEIPT REFERENCE\nNSR/26-27/102\nTRANSPORTER\nNorthstar Roadlines (Demo)\nROUTE\nPune to Nashik, Maharashtra\nTransport distance: 210 KM. Reference purchase order: SG/PO/26-27/102. This specimen is an e-way bill layout for testing and is not issued by\na government portal.\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-02-Mismatch-Packet.pdf",
+        "sourceHint": "03-eway-bill.pdf"
+      },
+      {
+        "id": "case-2-doc-4",
+        "type": "Lorry Receipt",
+        "title": "Lorry Receipt - NSR/26-27/102",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "documentDate": "2026-08-31",
+          "lorryReceiptNumber": "NSR/26-27/102",
+          "eWayBillNumber": "271260831102",
+          "vehicleNumber": "MH20CD7823",
+          "netWeight": "12000",
+          "transporterName": "Northstar Roadlines (Demo)"
+        },
+        "lineItems": [],
+        "md": "Northstar Roadlines (Demo)\nLORRY RECEIPT\nNSR/26-27/102\nDOCUMENT 04  /  SPECIMEN\nBOOKING DATE / TIME\n31-Aug-2026 10:00\nREFERENCE INVOICE\nARM/26-27/102\nE-WAY BILL NUMBER\n271260831102\nREFERENCE PURCHASE ORDER\nSG/PO/26-27/102\nCONSIGNOR / FROM\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nCONSIGNEE / TO\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nVEHICLE AND CONSIGNMENT\nVEHICLE NUMBER\nMH20CD7823\nCONSIGNMENT NET WEIGHT\n12,000 KG\nROUTE FROM\nPune, Maharashtra\nROUTE TO\nNashik, Maharashtra\nGOODS DESCRIPTION\nHSN\nQUANTITY (KG)\nPL06 - MS Plate 6 mm, Grade E250\n7208\n 8,000\nPL08 - MS Plate 8 mm, Grade E250\n7208\n 4,000\nCARRIAGE INSTRUCTIONS\nFreight: included in supplier's price; no separate freight billed or payable by the consignee on this receipt. Carry both material lines\nunder the referenced invoice. Delivery date: 31-Aug-2026. No vehicle substitution recorded.\nTRANSPORTER ISSUED\nDEMO RECORD\nApproved / Demo signatory\nDRIVER ACKNOWLEDGED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-02-Mismatch-Packet.pdf",
+        "sourceHint": "04-lorry-receipt.pdf"
+      },
+      {
+        "id": "case-2-doc-5",
+        "type": "Weighment Slip",
+        "title": "Weighment Slip - SG/WB/26-27/102",
+        "pages": 1,
+        "fields": {
+          "weighmentNumber": "SG/WB/26-27/102",
+          "weighbridgeName": "Samrat Demo Weighbridge - Nashik",
+          "referencePoNumber": "SG/PO/26-27/102",
+          "referenceInvoiceNumber": "ARM/26-27/102",
+          "documentDate": "2026-08-31",
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "vehicleNumber": "MH14EF6724",
+          "grossWeight": "25700",
+          "tareWeight": "14000",
+          "netWeight": "11700"
+        },
+        "lineItems": [],
+        "md": "Samrat Group - Demo Division\nWEIGHMENT SLIP\nSG/WB/26-27/102\nDOCUMENT 05  /  SPECIMEN\nWEIGHBRIDGE\nSamrat Demo Weighbridge - Nashik\nDATE / TIME\n31-Aug-2026 15:05\nVEHICLE NUMBER\nMH14EF6724\nINVOICE REFERENCE\nARM/26-27/102\nSUPPLIER\nAster Ridge Metals Pvt. Ltd. (Demo)\nPO REFERENCE\nSG/PO/26-27/102\nELECTRONIC SCALE READINGS\nGROSS WEIGHT\n25,700 KG\n14:55\nTARE WEIGHT\n14,000 KG\n15:05\nNET WEIGHT\n11,700 KG\nGross minus tare\nScale calculation: 25,700 KG - 14,000 KG = 11,700 KG.\nVehicle remained on the same consignment. Reading unit: KG. All weights are simulated.\nOPERATOR VERIFIED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-02-Mismatch-Packet.pdf",
+        "sourceHint": "05-weighment-slip.pdf"
+      },
+      {
+        "id": "case-2-doc-6",
+        "type": "Delivery Note",
+        "title": "Delivery Note - ARM/DN/26-27/102",
+        "pages": 1,
+        "fields": {
+          "vendorName": "Aster Ridge Metals Pvt. Ltd. (Demo)",
+          "buyerName": "Samrat Group - Demo Division",
+          "documentDate": "2026-08-31",
+          "deliveryNoteNumber": "ARM/DN/26-27/102",
+          "referencePoNumber": "SG/PO/26-27/102",
+          "vehicleNumber": "MH14EF6724",
+          "itemQuantity": "12000",
+          "unit": "KG"
+        },
+        "lineItems": [
+          {
+            "lineNumber": "1",
+            "itemCode": "PL06",
+            "description": "MS Plate 6 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "8000",
+            "unit": "KG"
+          },
+          {
+            "lineNumber": "2",
+            "itemCode": "PL08",
+            "description": "MS Plate 8 mm, Grade E250",
+            "hsnSac": "7208",
+            "quantity": "4000",
+            "unit": "KG"
+          }
+        ],
+        "md": "Samrat Group - Demo Division\nDELIVERY NOTE\nARM/DN/26-27/102\nDOCUMENT 06  /  SPECIMEN\nSUPPLIER / SENT BY\nAster Ridge Metals Pvt. Ltd. (Demo)\nUnit 42, Sample Industrial Estate, Pune, Maharashtra 411001\nGSTIN: 27AABCA1001C1ZQ\nBUYER / RECEIVED AT\nSamrat Group - Demo Division\nUnit 01, Training Park, Nashik, Maharashtra 422001\nGSTIN: 27AABCS9001D1ZQ\nDELIVERY DATE / TIME\n31-Aug-2026 15:20\nREFERENCE INVOICE\nARM/26-27/102\nREFERENCE PO NUMBER\nSG/PO/26-27/102\nVEHICLE NUMBER\nMH14EF6724\nE-WAY BILL NUMBER\n271260831102\nLORRY RECEIPT NUMBER\nNSR/26-27/102\nRECEIPT SCHEDULE\nITEM / DESCRIPTION\nHSN\nDISPATCHED (KG)\nRECEIVED (KG)\nPL06 - MS Plate 6 mm, Grade E250\n7208\n 8,000\n 8,000\nPL08 - MS Plate 8 mm, Grade E250\n7208\n 4,000\n 4,000\nDISPATCHED QUANTITY\n12,000 KG\nRECORDED RECEIVED QUANTITY\n12,000 KG\nRECEIPT ACKNOWLEDGEMENT\nStore records the material and quantities listed above against the referenced purchase order and invoice. Packing is intact.\nDelivery completed at the buyer address on 31-Aug-2026. Freight and packing are included in the supplier's invoice price.\nSUPPLIER HANDOVER\nDEMO RECORD\nApproved / Demo signatory\nSTORE RECEIVED\nDEMO RECORD\nApproved / Demo signatory\nFICTIONAL TRAINING RECORD - NOT VALID FOR TAX, TRANSIT OR PAYMENT\nAll parties, identifiers and approvals are specimen data. No real transaction.\n1 / 1\n",
+        "sourceFileName": "Samrat-Case-02-Mismatch-Packet.pdf",
+        "sourceHint": "06-delivery-note.pdf"
+      }
+    ],
+    "expectedFields": [
+      "subtotal",
+      "taxAmount",
+      "totalAmount",
+      "vehicleNumber",
+      "netWeight"
+    ]
+  }
+]

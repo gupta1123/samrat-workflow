@@ -1,0 +1,104 @@
+[
+  {
+    "caseNumber": 1,
+    "packet": "01-clean-case/Samrat-Case-01-Complete-Packet.pdf",
+    "groupedDocuments": 6,
+    "combinedAndSeparateFilesAgree": true,
+    "fields": [],
+    "mismatches": [],
+    "scope": "Local comparison of supplied reference fields only. AI extraction and terms review were not called."
+  },
+  {
+    "caseNumber": 2,
+    "packet": "02-mismatch-case/Samrat-Case-02-Mismatch-Packet.pdf",
+    "groupedDocuments": 6,
+    "combinedAndSeparateFilesAgree": true,
+    "fields": [
+      "netWeight",
+      "subtotal",
+      "taxAmount",
+      "totalAmount",
+      "vehicleNumber"
+    ],
+    "mismatches": [
+      {
+        "field": "vehicleNumber",
+        "values": [
+          {
+            "docId": "case-2-doc-2",
+            "value": "MH14EF6724"
+          },
+          {
+            "docId": "case-2-doc-3",
+            "value": "MH14EF6724"
+          },
+          {
+            "docId": "case-2-doc-4",
+            "value": "MH20CD7823"
+          },
+          {
+            "docId": "case-2-doc-5",
+            "value": "MH14EF6724"
+          },
+          {
+            "docId": "case-2-doc-6",
+            "value": "MH14EF6724"
+          }
+        ]
+      },
+      {
+        "field": "subtotal",
+        "values": [
+          {
+            "docId": "case-2-doc-2",
+            "value": "620000.00"
+          },
+          {
+            "docId": "case-2-doc-3",
+            "value": "650000.00"
+          }
+        ]
+      },
+      {
+        "field": "taxAmount",
+        "values": [
+          {
+            "docId": "case-2-doc-2",
+            "value": "111600.00"
+          },
+          {
+            "docId": "case-2-doc-3",
+            "value": "117000.00"
+          }
+        ]
+      },
+      {
+        "field": "totalAmount",
+        "values": [
+          {
+            "docId": "case-2-doc-2",
+            "value": "731600.00"
+          },
+          {
+            "docId": "case-2-doc-3",
+            "value": "767000.00"
+          }
+        ]
+      },
+      {
+        "field": "netWeight",
+        "values": [
+          {
+            "docId": "case-2-doc-4",
+            "value": "12000"
+          },
+          {
+            "docId": "case-2-doc-5",
+            "value": "11700"
+          }
+        ]
+      }
+    ],
+    "scope": "Local comparison of supplied reference fields only. AI extraction and terms review were not called."
+  }
+]
