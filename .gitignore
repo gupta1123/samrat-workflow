@@ -15,3 +15,6 @@ public/pdfjs/
 
 # Local backup archive (1.5GB) - never commit
 Samrat-backup.zip
+
+# Supabase CLI runtime state (may contain local secrets)
+supabase/.temp/
