@@ -307,6 +307,40 @@ function isHsnOnlyLineItem(item: CommercialLineItem) {
   return Boolean(item.hsnSac && !hasBusinessValue);
 }
 
+const NON_ITEM_PATTERNS = [
+  /\bigst\b.*@/i,
+  /\bcgst\b.*@/i,
+  /\bsgst\b.*@/i,
+  /\bgst\b.*@/i,
+  /\be-way\s*bill\s*(no|number)?/i,
+  /\bplace\s*of\s*supply\b/i,
+  /\bbank\s*(details|name|account|ifsc)?\b/i,
+  /\bstate\s*bank\b/i,
+  /\bauthorized\s*signatory\b/i,
+  /\bterms\s*(and|&)\s*conditions\b/i,
+  /\bamount\s*in\s*words\b/i,
+  /\bround\s*off\b/i,
+  /\bpayment\s*terms\b/i,
+  /\bdelivery\s*terms\b/i,
+  /\bfreight\s*terms\b/i,
+];
+
+function isNonItemRow(item: CommercialLineItem) {
+  const description = cleanWhitespace(item.description ?? "");
+  if (!description) return false;
+  
+  const quantity = parseLineItemNumber(item.quantity);
+  const rate = parseLineItemNumber(item.rate);
+  
+  if (quantity === 1 && rate !== null && rate > 10000) {
+    for (const pattern of NON_ITEM_PATTERNS) {
+      if (pattern.test(description)) return true;
+    }
+  }
+  
+  return false;
+}
+
 function removePlaceholderZeroLineAmounts(item: CommercialLineItem) {
   const next = { ...item };
   const hasPositiveMonetarySignal = [
@@ -373,7 +407,8 @@ export function sanitizeLineItems(value: unknown): CommercialLineItem[] {
 
     if (
       isTaxSummaryOnlyLineItem(cleanedItem) ||
-      isHsnOnlyLineItem(cleanedItem)
+      isHsnOnlyLineItem(cleanedItem) ||
+      isNonItemRow(cleanedItem)
     ) {
       return [];
     }

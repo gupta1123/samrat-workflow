@@ -57,13 +57,14 @@ function formatDateTime(value: string | null) {
   if (!value) return "—";
 
   return new Date(value)
-    .toLocaleString("en-US", {
+    .toLocaleString("en-IN", {
       month: "short",
       day: "numeric",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
+      timeZone: "Asia/Kolkata",
     })
     .replace(",", " -")
     .replace(/\s([AP]M)$/, "_$1"); // Rough match for image format

@@ -93,6 +93,9 @@ function findBestPoDoc(
           const normalizedDocNum = normalizeSapReference(doc.docNum);
           if (normalizedPo && normalizedDocNum && normalizedPo === normalizedDocNum) {
             score += 50;
+          } else {
+            // No PO match - significantly reduce score to prevent false matches
+            score = Math.max(0, score - 40);
           }
         }
         const hasOpenQty = doc.lines.some((l) => l.openQty !== null && l.openQty > 0);
@@ -109,7 +112,7 @@ function matchPacketLineToPoLine(
   packetLine: SapPacketLine,
   poLines: PoLine[],
   usedIndices: Set<number>,
-): PoLine | null {
+): { line: PoLine; confidence: "exact" | "fuzzy" } | null {
   const lineDesc = (packetLine.description ?? "").toLowerCase().trim();
   const lineHsn = (packetLine.hsnSac ?? "").trim();
 
@@ -123,7 +126,7 @@ function matchPacketLineToPoLine(
       (lineHsn && poItemCode && lineHsn === poItemCode)
     ) {
       usedIndices.add(i);
-      return po;
+      return { line: po, confidence: "exact" };
     }
   }
   for (let i = 0; i < poLines.length; i++) {
@@ -136,7 +139,7 @@ function matchPacketLineToPoLine(
       (lineHsn && poItemCode && lineHsn.includes(poItemCode))
     ) {
       usedIndices.add(i);
-      return po;
+      return { line: po, confidence: "fuzzy" };
     }
   }
   return null;
@@ -249,12 +252,15 @@ function scoreGrpoDoc(
     score += vendorScore * 50;
   }
 
-  // PO number match against DocNum
+  // PO number match against DocNum (required for GRPO matching)
   if (poNumber) {
     const normalizedPo = normalizeSapReference(poNumber);
     const normalizedDocNum = normalizeSapReference(doc.docNum);
     if (normalizedPo && normalizedDocNum && normalizedPo === normalizedDocNum) {
       score += 50;
+    } else {
+      // No PO match - significantly reduce score to prevent false matches
+      score = Math.max(0, score - 40);
     }
   }
 
@@ -357,10 +363,6 @@ export async function GET(request: Request, context: Context) {
       return NextResponse.json({ matched: false, reason: "sap_unavailable" });
     }
 
-    if (grpoRows.length === 0) {
-      return NextResponse.json({ matched: false, reason: "no_open_grpo" });
-    }
-
     // Group by GRPO document and score
     const grpoDocs = groupGrpoByDoc(grpoRows);
     const scored = grpoDocs
@@ -368,15 +370,16 @@ export async function GET(request: Request, context: Context) {
       .filter((entry) => entry.score > 20) // minimum threshold
       .sort((a, b) => b.score - a.score);
 
-    if (scored.length === 0) {
+    // GRPO first, OpenPO fallback for the base document
+    const bestPo = findBestPoDoc(groupPoByDoc(poRows), poNumber, vendorName);
+    if (scored.length === 0 && !bestPo) {
       return NextResponse.json({ matched: false, reason: "no_match" });
     }
+    const baseSource: "grpo" | "po" = scored.length > 0 ? "grpo" : "po";
+    const bestGrpo = scored.length > 0 ? scored[0].doc : null;
 
-    // Best match
-    const bestGrpo = scored[0].doc;
-
-    // Build packet lines
-    const packetLines: SapPacketLine[] = (documentsResult.data ?? []).flatMap((d) =>
+    // Build packet lines (deduplicated by description)
+    const allPacketLines: SapPacketLine[] = (documentsResult.data ?? []).flatMap((d) =>
       readStoredLineItems(d.extracted_fields).map((item) => ({
         documentType: String(d.document_type ?? ""),
         description: typeof item.description === "string" ? item.description : undefined,
@@ -389,13 +392,24 @@ export async function GET(request: Request, context: Context) {
       })),
     );
 
-    // Match packet lines to the best GRPO
-    const usedIndices = new Set<number>();
+    // Deduplicate by description (keep first occurrence)
+    const seenDescriptions = new Set<string>();
+    const packetLines: SapPacketLine[] = [];
+    for (const line of allPacketLines) {
+      const key = (line.description ?? "").toLowerCase().trim();
+      if (!key || !seenDescriptions.has(key)) {
+        packetLines.push(line);
+        if (key) seenDescriptions.add(key);
+      }
+    }
+
+    // Match packet lines against both documents; confidence comes from the base
+    const grpoUsedIndices = new Set<number>();
     const poUsedIndices = new Set<number>();
-    const bestPo = findBestPoDoc(groupPoByDoc(poRows), poNumber, vendorName);
     const matchedLines: MatchedPacketLine[] = packetLines.map((line) => {
-      const match = matchPacketLineToGrpoLine(line, bestGrpo.lines, usedIndices);
+      const grpoMatch = bestGrpo ? matchPacketLineToGrpoLine(line, bestGrpo.lines, grpoUsedIndices) : null;
       const poMatch = bestPo ? matchPacketLineToPoLine(line, bestPo.lines, poUsedIndices) : null;
+      const primary = baseSource === "grpo" ? grpoMatch : poMatch;
       return {
         description: line.description,
         hsnSac: line.hsnSac,
@@ -404,9 +418,9 @@ export async function GET(request: Request, context: Context) {
         rate: line.rate,
         taxableAmount: line.taxableAmount,
         taxAmount: line.taxAmount,
-        matchedGrpoLine: match?.line ?? null,
-        matchConfidence: match?.confidence ?? "none",
-        matchedPoLine: poMatch,
+        matchedGrpoLine: grpoMatch?.line ?? null,
+        matchConfidence: primary?.confidence ?? "none",
+        matchedPoLine: poMatch?.line ?? null,
       };
     });
 
@@ -416,10 +430,11 @@ export async function GET(request: Request, context: Context) {
     const apPayload = {
       documentType: "APInvoice",
       vendor: {
-        cardCode: bestGrpo.bpCode,
-        cardName: bestGrpo.bpName,
+        cardCode: (baseSource === "grpo" ? bestGrpo?.bpCode : bestPo?.bpCode) ?? null,
+        cardName: (baseSource === "grpo" ? bestGrpo?.bpName : bestPo?.bpName) ?? null,
       },
-      baseGrpoDocNum: String(bestGrpo.docNum),
+      baseGrpoDocNum: baseSource === "grpo" && bestGrpo ? String(bestGrpo.docNum) : null,
+      basePoDocNum: baseSource === "po" && bestPo ? String(bestPo.docNum) : null,
       poNumber,
       invoiceNumber: classification.invoiceNumber,
       caseId: id,
@@ -448,9 +463,10 @@ export async function GET(request: Request, context: Context) {
 
     return NextResponse.json({
       matched: true,
-      grpoDocNum: bestGrpo.docNum,
-      grpoVendor: bestGrpo.bpName,
-      grpoLineCount: bestGrpo.lines.length,
+      baseSource,
+      grpoDocNum: bestGrpo?.docNum ?? null,
+      grpoVendor: bestGrpo?.bpName ?? null,
+      grpoLineCount: bestGrpo?.lines.length ?? 0,
       poDocNum: bestPo?.docNum ?? null,
       poLineCount: bestPo?.lines.length ?? 0,
       matchCount,

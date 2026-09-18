@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   Copy,
@@ -29,6 +30,7 @@ type ApPayload = {
   documentType: string;
   vendor: { cardCode: string | null; cardName: string | null };
   baseGrpoDocNum: string | null;
+  basePoDocNum: string | null;
   poNumber: string | null;
   invoiceNumber: string | null;
   caseId: string;
@@ -49,7 +51,8 @@ type ApPayload = {
 type PrepareResult = {
   matched: boolean;
   reason?: string;
-  grpoDocNum?: string | number;
+  baseSource?: "grpo" | "po";
+  grpoDocNum?: string | number | null;
   poDocNum?: string | number | null;
   grpoVendor?: string | null;
   grpoLineCount?: number;
@@ -67,6 +70,29 @@ function formatMoney(value: number | null | undefined): string {
     currency: "INR",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function ConfidenceBadge({ confidence }: { confidence: "exact" | "fuzzy" | "none" }) {
+  if (confidence === "exact") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-[#ebf5ee] px-2 py-0.5 text-[10px] font-medium text-[#1b4332]">
+        <CheckCircle2 className="h-3 w-3" />
+        Exact
+      </span>
+    );
+  }
+  if (confidence === "fuzzy") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-[#fef3c7] px-2 py-0.5 text-[10px] font-medium text-[#92400e]">
+        Fuzzy
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-[#fee2e2] px-2 py-0.5 text-[10px] font-medium text-[#991b1b]">
+      No match
+    </span>
+  );
 }
 
 export function SapInvoicePreparePanel({
@@ -114,7 +140,10 @@ export function SapInvoicePreparePanel({
       const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/sap-post`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseGrpoDocNum: data.apPayload.baseGrpoDocNum }),
+        body: JSON.stringify({
+          baseGrpoDocNum: data.apPayload.baseGrpoDocNum ?? null,
+          basePoDocNum: data.apPayload.basePoDocNum ?? null,
+        }),
       });
       const body = await response.json().catch(() => ({}));
       setSaveResult(
@@ -150,8 +179,7 @@ export function SapInvoicePreparePanel({
     const reasonMessages: Record<string, string> = {
       no_invoice: "No vendor invoice found in this case.",
       sap_unavailable: "Could not reach SAP. Check the connection and try again.",
-      no_open_grpo: "No open GRPO documents found in SAP for this vendor.",
-      no_match: "No GRPO matched this case. Check vendor name and PO number.",
+      no_match: "No matching GRPO or Open PO found in SAP. Check vendor name and PO number.",
       error: "Could not load SAP data. Try again.",
     };
     const message = reasonMessages[data?.reason ?? ""] ?? "No SAP match found for this case.";
@@ -177,135 +205,239 @@ export function SapInvoicePreparePanel({
   }
 
   const { apPayload, matchedLines, grpoDocNum, poDocNum, matchCount, packetLineCount } = data;
+  const baseSource = data.baseSource ?? "grpo";
+  const baseDocNum = baseSource === "po" ? poDocNum : grpoDocNum;
+  const baseLabel = baseSource === "po" ? "PO" : "GRPO";
 
   if (variant === "sidebar") {
     return (
-      <div className="px-4 py-3 space-y-1.5">
-        <div className="flex items-center gap-1.5">
-          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#2d6a4f]" />
-          <span className="truncate text-[12px] font-semibold text-[#111827]">
-            GRPO {grpoDocNum}{poDocNum ? ` · PO ${poDocNum}` : ""}
-          </span>
-        </div>
-        <div className="text-[11px] text-[#8a7f72]">
-          {matchCount}/{packetLineCount} lines matched
-        </div>
+      <div className="flex items-center gap-1.5 px-4 py-3">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#2d6a4f]" />
+        <span className="truncate text-[12px] font-semibold text-[#111827]">
+          Matched to {baseLabel} {baseDocNum ?? "—"}
+        </span>
+        <span className="shrink-0 text-[11px] text-[#8a7f72]">
+          · {matchCount}/{packetLineCount} lines matched
+        </span>
       </div>
     );
   }
 
   return (
-    <div className="px-4 py-3 space-y-3">
+    <div className="px-4 py-3 space-y-4">
       {/* Header */}
       <div className="flex items-center gap-2">
         <CheckCircle2 className="h-4 w-4 text-[#2d6a4f]" />
         <span className="text-[12px] font-semibold text-[#111827]">
-          GRPO {grpoDocNum}{poDocNum ? ` · PO ${poDocNum}` : ""}
+          Matched to {baseLabel} {baseDocNum ?? "—"}
         </span>
         <span className="text-[11px] text-[#8a7f72]">
           · {matchCount}/{packetLineCount} lines matched
         </span>
       </div>
 
-      {/* Vendor + refs */}
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px]">
-        <div>
-          <span className="text-[#8a7f72]">Vendor</span>
-          <div className="font-medium text-[#111827]">
-            {apPayload.vendor.cardName ?? "—"}
-            {apPayload.vendor.cardCode ? (
-              <span className="ml-1 text-[#8a7f72]">({apPayload.vendor.cardCode})</span>
-            ) : null}
+      {/* Two-column layout: Invoice (left) | SAP Match (right) */}
+      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+        
+        {/* LEFT: Invoice to Post */}
+        <div className="rounded-lg border border-[#e0d8cc] bg-white">
+          <div className="border-b border-[#e0d8cc] bg-[#fbfaf8] px-4 py-2.5">
+            <div className="text-[11px] font-semibold text-[#3d3530]">Invoice to Post</div>
+            <div className="text-[10px] text-[#8a7f72]">AP Invoice → SAP</div>
+          </div>
+          
+          <div className="p-4 space-y-3">
+            {/* Vendor */}
+            <div>
+              <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">Vendor</div>
+              <div className="text-[12px] font-semibold text-[#111827]">
+                {apPayload.vendor.cardName ?? "—"}
+              </div>
+              {apPayload.vendor.cardCode && (
+                <div className="text-[10px] text-[#8a7f72]">Code: {apPayload.vendor.cardCode}</div>
+              )}
+            </div>
+
+            {/* References */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">Invoice #</div>
+                <div className="text-[11px] font-medium text-[#111827]">{apPayload.invoiceNumber ?? "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">PO #</div>
+                <div className="text-[11px] font-medium text-[#111827]">{apPayload.poNumber ?? "—"}</div>
+              </div>
+            </div>
+
+            {/* Line Items */}
+            <div>
+              <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide mb-2">Line Items</div>
+              <div className="rounded border border-[#ece6dc] overflow-hidden">
+                <table className="w-full text-[10px]">
+                  <thead>
+                    <tr className="bg-[#fbfaf8] text-[#8a7f72]">
+                      <th className="px-2 py-1.5 text-left font-medium">Item</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Qty</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Rate</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {apPayload.lines.map((line, i) => (
+                      <tr key={i} className="border-t border-[#f0ece4]">
+                        <td className="px-2 py-1.5 text-[#111827]">
+                          <div className="font-medium">{line.description ?? "—"}</div>
+                          {line.hsnSac && <div className="text-[9px] text-[#8a7f72]">HSN: {line.hsnSac}</div>}
+                        </td>
+                        <td className="px-2 py-1.5 text-right text-[#111827]">
+                          {line.quantity ?? "—"} {line.unit ?? ""}
+                        </td>
+                        <td className="px-2 py-1.5 text-right text-[#111827]">{formatMoney(line.rate)}</td>
+                        <td className="px-2 py-1.5 text-right font-medium text-[#111827]">{formatMoney(line.taxableAmount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Totals */}
+            <div className="rounded-lg bg-[#fbfaf8] p-3 space-y-1.5">
+              <div className="flex justify-between text-[11px]">
+                <span className="text-[#8a7f72]">Taxable</span>
+                <span className="font-medium text-[#111827]">{formatMoney(apPayload.totals.taxable)}</span>
+              </div>
+              <div className="flex justify-between text-[11px]">
+                <span className="text-[#8a7f72]">Tax</span>
+                <span className="font-medium text-[#111827]">{formatMoney(apPayload.totals.tax)}</span>
+              </div>
+              <div className="flex justify-between text-[11px] border-t border-[#ece6dc] pt-1.5">
+                <span className="font-semibold text-[#3d3530]">Total</span>
+                <span className="font-semibold text-[#111827]">{formatMoney(apPayload.totals.taxable + apPayload.totals.tax)}</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div>
-          <span className="text-[#8a7f72]">Invoice</span>
-          <div className="font-medium text-[#111827]">{apPayload.invoiceNumber ?? "—"}</div>
-        </div>
-        <div>
-          <span className="text-[#8a7f72]">PO</span>
-          <div className="font-medium text-[#111827]">{apPayload.poNumber ?? "—"}</div>
-        </div>
-        <div>
-          <span className="text-[#8a7f72]">Base GRPO</span>
-          <div className="font-medium text-[#111827]">{apPayload.baseGrpoDocNum ?? "—"}</div>
-        </div>
-      </div>
 
-      {/* 3-column comparison table */}
-      {matchedLines && matchedLines.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-[#e0d8cc]">
-          <table className="w-full text-[11px]">
-            <thead>
-              <tr className="bg-[#fbfaf8] text-[10px] font-semibold text-[#8a7f72]">
-                <th className="px-2.5 py-1.5 text-left" rowSpan={2}>Description</th>
-                <th className="px-2.5 py-1.5 text-center border-l border-[#ece6dc]" colSpan={2}>Packet</th>
-                <th className="px-2.5 py-1.5 text-center border-l border-[#ece6dc]" colSpan={2}>PO {poDocNum ?? "—"}</th>
-                <th className="px-2.5 py-1.5 text-center border-l border-[#ece6dc]" colSpan={2}>GRPO {grpoDocNum}</th>
-              </tr>
-              <tr className="bg-[#fbfaf8] text-[10px] font-semibold text-[#8a7f72]">
-                <th className="px-2.5 py-1.5 text-right border-l border-[#ece6dc]">Qty</th>
-                <th className="px-2.5 py-1.5 text-right">Rate</th>
-                <th className="px-2.5 py-1.5 text-right border-l border-[#ece6dc]">Qty</th>
-                <th className="px-2.5 py-1.5 text-right">Rate</th>
-                <th className="px-2.5 py-1.5 text-right border-l border-[#ece6dc]">Open Qty</th>
-                <th className="px-2.5 py-1.5 text-right">Rate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {matchedLines.map((line, i) => {
-                const packetQty = line.quantity;
-                const packetRate = line.rate;
-                const poQty = line.poQty;
-                const poRate = line.poRate;
-                const grpoQty = line.grpoQty;
-                const grpoRate = line.grpoRate;
-                const qtyMismatch = packetQty != null && poQty != null && Number(packetQty) !== Number(poQty);
-                const rateMismatch = packetRate != null && poRate != null && Number(packetRate) !== Number(poRate);
-                return (
-                  <tr key={i} className="border-t border-[#f0ece4]">
-                    <td className="px-2.5 py-1.5 text-[#111827] max-w-[180px] truncate font-medium">
-                      {line.description ?? "—"}
-                    </td>
-                    <td className={`px-2.5 py-1.5 text-right border-l border-[#ece6dc] ${qtyMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}>
-                      {packetQty ?? "—"}
-                    </td>
-                    <td className={`px-2.5 py-1.5 text-right ${rateMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}>
-                      {formatMoney(packetRate)}
-                    </td>
-                    <td className={`px-2.5 py-1.5 text-right border-l border-[#ece6dc] ${qtyMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}>
-                      {poQty ?? "—"}
-                    </td>
-                    <td className={`px-2.5 py-1.5 text-right ${rateMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}>
-                      {formatMoney(poRate)}
-                    </td>
-                    <td className="px-2.5 py-1.5 text-right border-l border-[#ece6dc] text-[#111827]">
-                      {grpoQty ?? "—"}
-                    </td>
-                    <td className="px-2.5 py-1.5 text-right text-[#111827]">
-                      {formatMoney(grpoRate)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+        {/* RIGHT: SAP Match */}
+        <div className="rounded-lg border border-[#e0d8cc] bg-white">
+          <div className="border-b border-[#e0d8cc] bg-[#fbfaf8] px-4 py-2.5">
+            <div className="text-[11px] font-semibold text-[#3d3530]">SAP Match</div>
+            <div className="text-[10px] text-[#8a7f72]">
+              {baseSource === "grpo" ? `GRPO DocNum: ${grpoDocNum ?? "—"}` : `PO DocNum: ${poDocNum ?? "—"}`}
+            </div>
+          </div>
+          
+          <div className="p-4 space-y-3">
+            {/* Match Info */}
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#ebf5ee] border border-[#c3dfcb]">
+              <ArrowRight className="h-4 w-4 text-[#1b4332]" />
+              <div>
+                <div className="text-[11px] font-semibold text-[#1b4332]">
+                  Matched to {baseLabel} {baseDocNum ?? "—"}
+                </div>
+                <div className="text-[10px] text-[#2d6a4f]">
+                  {matchCount} of {packetLineCount} lines matched
+                </div>
+              </div>
+            </div>
 
-      {/* Totals */}
-      <div className="flex items-center gap-4 text-[11px]">
-        <div>
-          <span className="text-[#8a7f72]">Taxable</span>
-          <span className="ml-1 font-medium text-[#111827]">{formatMoney(apPayload.totals.taxable)}</span>
-        </div>
-        <div>
-          <span className="text-[#8a7f72]">Tax</span>
-          <span className="ml-1 font-medium text-[#111827]">{formatMoney(apPayload.totals.tax)}</span>
-        </div>
-        <div>
-          <span className="text-[#8a7f72]">Total</span>
-          <span className="ml-1 font-semibold text-[#111827]">{formatMoney(apPayload.totals.taxable + apPayload.totals.tax)}</span>
+            {/* SAP Document Info */}
+            <div className="grid grid-cols-2 gap-3">
+              {grpoDocNum && (
+                <div>
+                  <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">GRPO #</div>
+                  <div className="text-[11px] font-medium text-[#111827]">{grpoDocNum}</div>
+                </div>
+              )}
+              {poDocNum && (
+                <div>
+                  <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">PO #</div>
+                  <div className="text-[11px] font-medium text-[#111827]">{poDocNum}</div>
+                </div>
+              )}
+            </div>
+
+            {/* Matched Lines Table */}
+            {matchedLines && matchedLines.length > 0 && (
+              <div>
+                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide mb-2">Line Matching</div>
+                <div className="rounded border border-[#ece6dc] overflow-hidden">
+                  <table className="w-full text-[10px]">
+                    <thead>
+                      <tr className="bg-[#fbfaf8] text-[#8a7f72]">
+                        <th className="px-2 py-1.5 text-left font-medium">Description</th>
+                        <th className="px-2 py-1.5 text-right font-medium">Packet Qty</th>
+                        <th className="px-2 py-1.5 text-right font-medium">SAP Qty</th>
+                        <th className="px-2 py-1.5 text-center font-medium">Match</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matchedLines.map((line, i) => {
+                        const sapQty = baseSource === "grpo" ? line.grpoQty : line.poQty;
+                        const packetQty = line.quantity;
+                        const hasMismatch = packetQty != null && sapQty != null && Number(packetQty) !== Number(sapQty);
+                        
+                        return (
+                          <tr key={i} className="border-t border-[#f0ece4]">
+                            <td className="px-2 py-1.5 text-[#111827] max-w-[150px] truncate">
+                              {line.description ?? "—"}
+                            </td>
+                            <td className={`px-2 py-1.5 text-right ${hasMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}>
+                              {packetQty ?? "—"}
+                            </td>
+                            <td className={`px-2 py-1.5 text-right ${hasMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}>
+                              {sapQty ?? "—"}
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              <ConfidenceBadge confidence={line.matchConfidence} />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Confidence Summary */}
+            <div className="rounded-lg bg-[#fbfaf8] p-3">
+              <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide mb-2">Match Summary</div>
+              <div className="space-y-1.5">
+                {matchedLines && (() => {
+                  const exact = matchedLines.filter(l => l.matchConfidence === "exact").length;
+                  const fuzzy = matchedLines.filter(l => l.matchConfidence === "fuzzy").length;
+                  const none = matchedLines.filter(l => l.matchConfidence === "none").length;
+                  return (
+                    <>
+                      {exact > 0 && (
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-[#2d6a4f]" />
+                          <span className="text-[#111827]">{exact} exact match{exact !== 1 ? "es" : ""}</span>
+                        </div>
+                      )}
+                      {fuzzy > 0 && (
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <div className="h-3.5 w-3.5 rounded-full bg-[#fef3c7] flex items-center justify-center">
+                            <div className="h-1.5 w-1.5 rounded-full bg-[#92400e]" />
+                          </div>
+                          <span className="text-[#111827]">{fuzzy} fuzzy match{fuzzy !== 1 ? "es" : ""}</span>
+                        </div>
+                      )}
+                      {none > 0 && (
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <AlertTriangle className="h-3.5 w-3.5 text-[#b91c1c]" />
+                          <span className="text-[#b91c1c]">{none} unmatched</span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -315,7 +447,7 @@ export function SapInvoicePreparePanel({
           {saveResult}
         </div>
       ) : null}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <Button
           size="sm"
           className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white hover:bg-[#3b271a] shadow-sm"

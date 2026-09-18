@@ -107,9 +107,11 @@ function formatDate(value: string) {
 }
 
 function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString("en-US", {
+  return new Date(value).toLocaleTimeString("en-IN", {
     hour: "numeric",
     minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Kolkata",
   });
 }
 
