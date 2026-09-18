@@ -1,0 +1,4 @@
+# Kept in git, excluded from the Heroku slug (500MB limit).
+# None of these are read by the running app.
+/installer/
+/output/
