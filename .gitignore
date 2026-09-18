@@ -12,3 +12,6 @@ coverage/
 .next-build/
 tmp/
 public/pdfjs/
+
+# Local backup archive (1.5GB) - never commit
+Samrat-backup.zip
