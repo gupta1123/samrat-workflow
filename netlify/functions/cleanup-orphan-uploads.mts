@@ -2,6 +2,9 @@ import type { Config } from "@netlify/functions";
 import { createSupabaseAdminClient } from "../../src/server/supabase/admin";
 export const config: Config = { schedule: "17 2 * * *" };
 export default async function handler() {
+  // The Heroku worker dyno owns orphan cleanup in production. Leave this
+  // scheduled function active only where no external worker runs.
+  if (process.env.DISABLE_NETLIFY_SCHEDULES === "true") return;
   const db = createSupabaseAdminClient();
   const { data, error } = await db.rpc("orphan_uploads");
   if (error) throw error;

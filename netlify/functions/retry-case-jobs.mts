@@ -2,6 +2,9 @@ import type { Config } from "@netlify/functions";
 import { createSupabaseAdminClient } from "../../src/server/supabase/admin";
 export const config: Config = { schedule: "* * * * *" };
 export default async function handler() {
+  // The Heroku worker dyno owns job recovery in production. Leave this
+  // scheduled function active only where no external worker runs.
+  if (process.env.DISABLE_NETLIFY_SCHEDULES === "true") return;
   const db = createSupabaseAdminClient();
   const recovered = await db.rpc("recover_stale_case_jobs");
   if (recovered.error) throw recovered.error;
