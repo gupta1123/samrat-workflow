@@ -1,4 +1,4 @@
-import { CaseMismatchReviewPage } from "@/components/cases/CaseMismatchReviewPage";
+import { CaseMismatchPage } from "@/components/cases/CaseMismatchPage";
 import { RuntimeFieldSettingsBootstrap } from "@/components/settings/RuntimeFieldSettingsBootstrap";
 
 export default async function SavedCaseMismatchPage({
@@ -11,7 +11,7 @@ export default async function SavedCaseMismatchPage({
   return (
     <>
       <RuntimeFieldSettingsBootstrap />
-      <CaseMismatchReviewPage caseId={id} />
+      <CaseMismatchPage caseId={id} />
     </>
   );
 }

@@ -550,7 +550,7 @@ test("authoritative review fails closed when packet decisions are incomplete", a
   assert.equal(calls, 2);
 });
 
-test("authoritative review turns a faint page into a blocking mismatch", async (t) => {
+test("authoritative review turns an unreadable page into a blocking mismatch", async (t) => {
   const previousKey = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "test-key-no-network";
   t.after(() => {
@@ -579,7 +579,7 @@ test("authoritative review turns a faint page into a blocking mismatch", async (
                         })[0],
                         status: "needs_review",
                         reason:
-                          "The source is too faint for approval-safe verification.",
+                          "The source is unreadable, so it cannot be verified for approval.",
                       },
                     ],
                     mismatchDecisions: [],
@@ -603,14 +603,14 @@ test("authoritative review turns a faint page into a blocking mismatch", async (
                     ],
                     pageQuality: [
                       {
-                        sourceFileName: "faint-invoice.pdf",
+                        sourceFileName: "unreadable-invoice.pdf",
                         pageNumber: 1,
                         documentId: "invoice",
-                        issues: ["faint"],
+                        issues: ["unreadable"],
                         approvalSafe: false,
                         confidence: "high",
                         reason:
-                          "Critical invoice values are too faint to verify reliably.",
+                          "Critical invoice values cannot be read at all.",
                       },
                     ],
                     notes: [],
@@ -619,14 +619,14 @@ test("authoritative review turns a faint page into a blocking mismatch", async (
                     correctionDecisions: [],
                     pageQuality: [
                       {
-                        sourceFileName: "faint-invoice.pdf",
+                        sourceFileName: "unreadable-invoice.pdf",
                         pageNumber: 1,
                         documentId: "invoice",
-                        issues: ["faint"],
+                        issues: ["unreadable"],
                         approvalSafe: false,
                         confidence: "high",
                         reason:
-                          "Critical invoice values are too faint to verify reliably.",
+                          "Critical invoice values cannot be read at all.",
                       },
                     ],
                   },
@@ -650,13 +650,13 @@ test("authoritative review turns a faint page into a blocking mismatch", async (
         pages: 1,
         fields: { invoiceNumber: "INV-1", vendorName: "Supplier" },
         md: "## Visible Text\nSupplier Invoice INV-1",
-        sourceFileName: "faint-invoice.pdf",
+        sourceFileName: "unreadable-invoice.pdf",
       },
     ],
     {
       sourcePages: [
         {
-          sourceFileName: "faint-invoice.pdf",
+          sourceFileName: "unreadable-invoice.pdf",
           pageNumber: 1,
           image: "data:image/png;base64,fixture",
         },
@@ -794,11 +794,11 @@ test("independent review preserves exact identifiers and catches quality missed 
                 sourceFileName: "packet.pdf",
                 pageNumber: 2,
                 documentId: "weighment",
-                issues: ["faint"],
+                issues: ["unreadable"],
                 approvalSafe: false,
                 confidence: "high",
                 reason:
-                  "The pale text lacks enough contrast for safe visual verification.",
+                  "The page cannot be read at all, so its values cannot be verified.",
               },
             ],
           };
@@ -857,7 +857,7 @@ test("independent review preserves exact identifiers and catches quality missed 
   assert.equal(result.review.verifiedCorrectionMutationCount, 0);
   assert.equal(result.review.rejectedCorrectionMutationCount, 1);
   assert.equal(result.pageQuality[1].approvalSafe, false);
-  assert.deepEqual(result.pageQuality[1].issues, ["faint"]);
+  assert.deepEqual(result.pageQuality[1].issues, ["unreadable"]);
   assert.equal(result.reviewIssues.length, 1);
   assert.equal(result.reviewIssues[0].field, DOCUMENT_READABILITY_FIELD);
   assert.equal(result.review.verdict, "needs_review");

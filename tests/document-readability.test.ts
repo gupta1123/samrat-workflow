@@ -41,8 +41,8 @@ test("a clear upright source page remains approval-safe", () => {
   assert.deepEqual(buildDocumentReadabilityMismatches(assessments), []);
 });
 
-for (const issue of ["faint", "rotated"] as const) {
-  test(`a materially ${issue} source page creates a blocking review issue`, () => {
+for (const issue of ["faint", "rotated", "blurred", "cropped"] as const) {
+  test(`a merely ${issue} source page does not create a review issue`, () => {
     const assessments = parseDocumentPageQuality({
       value: [
         {
@@ -58,14 +58,33 @@ for (const issue of ["faint", "rotated"] as const) {
       sourcePages,
       documents: [document],
     });
-    const mismatches = buildDocumentReadabilityMismatches(assessments);
-
-    assert.equal(mismatches.length, 1);
-    assert.equal(mismatches[0].field, DOCUMENT_READABILITY_FIELD);
-    assert.equal(mismatches[0].values[0].docId, "invoice-1");
-    assert.match(mismatches[0].analysis ?? "", /automatic approval/i);
+    assert.deepEqual(buildDocumentReadabilityMismatches(assessments), []);
   });
 }
+
+test("an unreadable source page creates a blocking review issue", () => {
+  const assessments = parseDocumentPageQuality({
+    value: [
+      {
+        sourceFileName: "packet.pdf",
+        pageNumber: 1,
+        documentId: "invoice-1",
+        issues: ["unreadable"],
+        approvalSafe: false,
+        confidence: "high",
+        reason: "The page cannot be read at all.",
+      },
+    ],
+    sourcePages,
+    documents: [document],
+  });
+  const mismatches = buildDocumentReadabilityMismatches(assessments);
+
+  assert.equal(mismatches.length, 1);
+  assert.equal(mismatches[0].field, DOCUMENT_READABILITY_FIELD);
+  assert.equal(mismatches[0].values[0].docId, "invoice-1");
+  assert.match(mismatches[0].analysis ?? "", /automatic approval/i);
+});
 
 test("page-quality review fails closed when a source page is omitted", () => {
   assert.throws(

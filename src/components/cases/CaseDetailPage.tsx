@@ -39,6 +39,7 @@ import {
   CaseDetailRedesign,
   type RedesignedDocumentCard,
 } from "@/components/cases/CaseDetailRedesign";
+import { ExtractedFieldsPanel, type ExtractedFieldItem } from "@/components/cases/ExtractedFieldsPanel";
 import { PdfEvidencePreview } from "@/components/cases/PdfEvidencePreview";
 import { PacketIntelligencePanel } from "@/components/cases/PacketIntelligencePanel";
 import { ShipmentBatchPanel } from "@/components/cases/ShipmentBatchPanel";
@@ -69,6 +70,7 @@ import {
   getFriendlyAnalysisError,
 } from "@/lib/analysis-progress";
 import {
+  getComparableFieldValue,
   getComparisonModeLabel,
   readComparisonOptions,
 } from "@/lib/comparison";
@@ -100,6 +102,8 @@ import type {
   CaseAnalysisMode,
   CommercialLineItem,
   ComparisonOptions,
+  DocType,
+  FieldKey,
   QueuedUpload,
 } from "@/types/pipeline";
 
@@ -113,6 +117,7 @@ type PreviewFocus = {
   pageNumber?: number;
   occurrence?: number;
 };
+type DocumentFieldComparison = { key: string; label: string } | null;
 const DEFAULT_DATA_PANE_WIDTH = 576;
 const DEFAULT_PREVIEW_ZOOM = 1;
 const MIN_DATA_PANE_WIDTH = 280;
@@ -1370,6 +1375,8 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
   const [previewPageIndex, setPreviewPageIndex] = useState(0);
   const [previewZoom, setPreviewZoom] = useState(DEFAULT_PREVIEW_ZOOM);
   const [previewFocus, setPreviewFocus] = useState<PreviewFocus | null>(null);
+  const [documentFieldComparison, setDocumentFieldComparison] =
+    useState<DocumentFieldComparison>(null);
   const [previewPdfPage, setPreviewPdfPage] = useState<number | null>(null);
   const [previewPdfPageCount, setPreviewPdfPageCount] = useState(1);
   const [dataPaneWidth, setDataPaneWidth] = useState(DEFAULT_DATA_PANE_WIDTH);
@@ -2649,6 +2656,27 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           identifiers,
           visibleMismatches,
         );
+        const extractedFieldCount = Object.values(document.extractedFields || {}).filter(
+          (val) => val !== null && val !== undefined && String(val).trim() !== ""
+        ).length;
+        const comparisonValue = documentFieldComparison
+          ? getComparableFieldValue(
+              { type: document.documentType as DocType, fields: document.extractedFields },
+              documentFieldComparison.key as FieldKey
+            )
+          : undefined;
+        const normalizedComparisonValue = String(comparisonValue ?? "").trim().toLowerCase();
+        const hasComparisonValue = Boolean(
+          normalizedComparisonValue &&
+          !["-", "not detected", "n/a", "na", "null", "undefined"].includes(normalizedComparisonValue)
+        );
+        const participatesInComparisonMismatch = documentFieldComparison
+          ? visibleMismatches.some(
+              (mismatch) =>
+                mismatch.fieldName === documentFieldComparison.key &&
+                mismatch.values.some((entry) => Boolean(entry.docId && identifiers.includes(entry.docId)))
+            )
+          : false;
         return {
           id: document.id,
           type: index.type,
@@ -2657,6 +2685,24 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           pageCount: Math.max(1, document.pageCount || 1),
           hasIssue: issueCount > 0,
           issueCount,
+          fieldCount: extractedFieldCount,
+          comparisonState: documentFieldComparison
+            ? !hasComparisonValue
+              ? "absent" as const
+              : participatesInComparisonMismatch
+                ? "mismatch" as const
+                : "matched" as const
+            : undefined,
+          comparisonValue: documentFieldComparison
+            ? hasComparisonValue
+              ? displayValue(comparisonValue)
+              : "—"
+            : undefined,
+          chainRole: sellerChainRoleMeta
+            ? sellerChainRoleMeta.contextDocumentIds.includes(document.id)
+              ? "supporting" as const
+              : "approval" as const
+            : undefined,
         };
       },
     );
@@ -2753,259 +2799,133 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
       </div>
     );
 
-    const dataNode = (
-      <div className={styles.redesignDataRoot}>
-        <div
-          className={styles.redesignDataTabs}
-          role="tablist"
-          aria-label="Extracted data views"
-        >
-          <button
-            type="button"
-            className={
-              activeDataView === "fields" ? styles.redesignDataTabActive : ""
-            }
-            onClick={() => setActiveDataView("fields")}
-          >
-            Fields <span>{activeDocumentFieldEntries.length}</span>
-          </button>
-          <button
-            type="button"
-            className={
-              activeDataView === "lineItems" ? styles.redesignDataTabActive : ""
-            }
-            onClick={() => setActiveDataView("lineItems")}
-          >
-            Line items <span>{activeDocumentLineItems.length}</span>
-          </button>
-          <button
-            type="button"
-            className={
-              activeDataView === "terms" ? styles.redesignDataTabActive : ""
-            }
-            onClick={() => setActiveDataView("terms")}
-          >
-            PO terms{" "}
-            <span>
-              {activeTermsChecklistRows.length + unmatchedTermsIssues.length}
-            </span>
-          </button>
-        </div>
+    const extractedFieldItems: ExtractedFieldItem[] = (activeDocumentFieldEntries || []).map(
+      ([key, value]) => {
+        const currentValue = typeof value === "string" ? value : displayValue(value);
+        const fieldLabel = getDocumentFieldLabel(activeDocument?.documentType, key);
+        const hasMismatch = visibleMismatches.some((m) => m.fieldName === key);
+        return {
+          key,
+          label: fieldLabel,
+          value: currentValue || "Not detected",
+          hasMismatch,
+        };
+      }
+    );
 
-        {activeDataView === "fields" ? (
-          <div className={styles.redesignDataContent}>
-            <div className={styles.redesignDataGroupLabel}>
-              {currentDocumentIndex?.type || "Document"}
-            </div>
-            <div className={styles.redesignFieldList}>
-              {activeDocumentFieldEntries.length > 0 ? (
-                activeDocumentFieldEntries.map(([key, value]) => {
-                  const currentValue =
-                    typeof value === "string" ? value : displayValue(value);
-                  const fieldLabel = getDocumentFieldLabel(
-                    activeDocument?.documentType,
-                    key,
-                  );
-                  const focusId = `field-${activeDocument?.id || "document"}-${key}`;
+    const stampCheckKeys = [
+      "hasAuthorizedSignature",
+      "hasVendorStamp",
+      "hasStoreStamp",
+      "hasStoreSignature",
+      "hasGateStamp",
+    ];
+
+    if (activeDocument?.extractedFields) {
+      const existingKeySet = new Set(extractedFieldItems.map((f) => f.key));
+      for (const stampKey of stampCheckKeys) {
+        if (!existingKeySet.has(stampKey)) {
+          const rawVal = activeDocument.extractedFields[stampKey];
+          if (rawVal !== undefined && rawVal !== null && String(rawVal).trim() !== "") {
+            const isYes = rawVal === true || String(rawVal).toLowerCase() === "yes";
+            extractedFieldItems.push({
+              key: stampKey,
+              label: getDocumentFieldLabel(activeDocument.documentType, stampKey),
+              value: isYes ? "Yes" : "No",
+              hasMismatch: visibleMismatches.some((m) => m.fieldName === stampKey),
+            });
+          }
+        }
+      }
+    }
+
+    const lineItemsDocumentTotal = formatMoney(activeDocument ? getInvoiceAmount(activeDocument) : null);
+    const lineItemsContent = (
+      <div className={styles.redesignDataContent}>
+        {lineItemsDocumentTotal ? (
+          <div className={styles.redesignLineSummary}>
+            <span>Document total</span>
+            <strong>{lineItemsDocumentTotal}</strong>
+          </div>
+        ) : null}
+        {activeDocumentLineItems.length > 0 ? (
+          <div className={styles.redesignLineTableWrap}>
+            <table className={styles.redesignLineTable}>
+              <thead><tr>{activeDocumentLineItemColumns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
+              <tbody>
+                {activeDocumentLineItems.map((item, itemIndex) => {
                   return (
-                    <button
-                      type="button"
-                      key={key}
-                      className={
-                        previewFocus?.id === focusId
-                          ? styles.redesignDataRowActive
-                          : ""
-                      }
-                      onClick={() =>
-                        handlePreviewFocus({
-                          id: focusId,
-                          label: fieldLabel,
-                          query: currentValue,
-                          pageNumber: activeDocumentSourcePage,
-                        })
-                      }
+                    <tr
+                      key={`${item.lineNumber ?? itemIndex}-${item.description ?? item.rawText ?? ""}`}
                     >
-                      <span>{fieldLabel}</span>
-                      <strong>{currentValue || "Not detected"}</strong>
-                      <Eye />
-                    </button>
-                  );
-                })
-              ) : (
-                <div className={styles.redesignDataEmpty}>
-                  No scalar fields were extracted for this document.
-                </div>
-              )}
-            </div>
-          </div>
-        ) : null}
-
-        {activeDataView === "lineItems" ? (
-          <div className={styles.redesignDataContent}>
-            <div className={styles.redesignLineSummary}>
-              <div>
-                <span>Rows</span>
-                <strong>{activeDocumentLineItems.length}</strong>
-              </div>
-              <div>
-                <span>Document total</span>
-                <strong>
-                  {formatMoney(
-                    activeDocument ? getInvoiceAmount(activeDocument) : null,
-                  ) || "—"}
-                </strong>
-              </div>
-            </div>
-            {activeDocumentLineItems.length > 0 ? (
-              <div className={styles.redesignLineTableWrap}>
-                <table className={styles.redesignLineTable}>
-                  <thead>
-                    <tr>
-                      {activeDocumentLineItemColumns.map((column) => (
-                        <th key={column.key}>{column.label}</th>
-                      ))}
+                      {activeDocumentLineItemColumns.map((column) => {
+                        const cellValue = column.key === "lineNumber"
+                          ? getLineItemValue(item, column.key) || String(itemIndex + 1)
+                          : getLineItemValue(item, column.key);
+                        return <td key={column.key}>{cellValue ? String(cellValue) : "—"}</td>;
+                      })}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {activeDocumentLineItems.map((item, itemIndex) => {
-                      const lineLabel = `Line item ${item.lineNumber || itemIndex + 1}`;
-                      const lineQuery =
-                        item.rawText ||
-                        item.description ||
-                        item.itemCode ||
-                        item.lineNumber ||
-                        "";
-                      const linePageNumber = getLineItemPreviewPage(
-                        activeDocument,
-                        item,
-                      );
-                      const focusId = `line-item-${activeDocument?.id || "document"}-${itemIndex}`;
-                      return (
-                        <tr
-                          key={`${item.lineNumber ?? itemIndex}-${item.description ?? item.rawText ?? ""}`}
-                          className={
-                            previewFocus?.id === focusId
-                              ? styles.redesignDataRowActive
-                              : undefined
-                          }
-                          tabIndex={0}
-                          onClick={() =>
-                            handlePreviewFocus({
-                              id: focusId,
-                              label: lineLabel,
-                              query: lineQuery,
-                              pageNumber: linePageNumber,
-                            })
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              handlePreviewFocus({
-                                id: focusId,
-                                label: lineLabel,
-                                query: lineQuery,
-                                pageNumber: linePageNumber,
-                              });
-                            }
-                          }}
-                        >
-                          {activeDocumentLineItemColumns.map((column) => {
-                            const cellValue =
-                              column.key === "lineNumber"
-                                ? getLineItemValue(item, column.key) ||
-                                  String(itemIndex + 1)
-                                : getLineItemValue(item, column.key);
-                            return (
-                              <td key={column.key}>
-                                {cellValue ? String(cellValue) : "—"}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className={styles.redesignDataEmpty}>
-                No line-item table was extracted for this document.
-              </div>
-            )}
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        ) : null}
-
-        {activeDataView === "terms" ? (
-          <div className={styles.redesignDataContent}>
-            <div className={styles.redesignDataGroupLabel}>
-              Purchase-order terms
-            </div>
-            <div className={styles.redesignTermsList}>
-              {activeTermsChecklistRows.map((row) => (
-                <button
-                  type="button"
-                  key={row.key}
-                  onClick={() =>
-                    handlePreviewFocus({
-                      id: `term-${activeDocument?.id || "document"}-${row.key}`,
-                      label: row.label,
-                      query: row.value,
-                      pageNumber: activeDocumentSourcePage,
-                    })
-                  }
-                >
-                  <span>
-                    <strong>{row.label}</strong>
-                    <small>{row.value}</small>
-                  </span>
-                  <em
-                    className={
-                      row.issue
-                        ? styles.redesignTermIssue
-                        : styles.redesignTermClear
-                    }
-                  >
-                    {row.issue ? "Needs review" : "Fulfilled"}
-                  </em>
-                </button>
-              ))}
-              {unmatchedTermsIssues.map((issue) => (
-                <button
-                  type="button"
-                  key={issue.id}
-                  onClick={() =>
-                    handlePreviewFocus({
-                      id: `term-issue-${issue.id}`,
-                      label: "Terms review item",
-                      query:
-                        issue.analysis ||
-                        issue.fixPlan ||
-                        getTermsIssueText(issue),
-                      pageNumber: activeDocumentSourcePage,
-                    })
-                  }
-                >
-                  <span>
-                    <strong>Review item</strong>
-                    <small>
-                      {issue.analysis ||
-                        issue.fixPlan ||
-                        getTermsIssueText(issue)}
-                    </small>
-                  </span>
-                  <em className={styles.redesignTermIssue}>Needs review</em>
-                </button>
-              ))}
-              {activeTermsChecklistRows.length === 0 &&
-              unmatchedTermsIssues.length === 0 ? (
-                <div className={styles.redesignDataEmpty}>
-                  No purchase-order terms were extracted for this document.
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        ) : <div className={styles.redesignDataEmpty}>No line-item table was extracted for this document.</div>}
       </div>
+    );
+
+    const termsContent = (
+      <div className={styles.redesignDataContent}>
+        <div className={styles.redesignDataGroupLabel}>Purchase-order terms</div>
+        <div className={styles.redesignTermsList}>
+          {activeTermsChecklistRows.map((row) => (
+            <article
+              key={row.key}
+            >
+              <span><strong>{row.label}</strong><small>{row.value}</small></span>
+              <em className={row.issue ? styles.redesignTermIssue : styles.redesignTermClear}>
+                {row.issue ? "Needs review" : "Fulfilled"}
+              </em>
+            </article>
+          ))}
+          {unmatchedTermsIssues.map((issue) => (
+            <article
+              key={issue.id}
+            >
+              <span><strong>Review item</strong><small>{issue.analysis || issue.fixPlan || getTermsIssueText(issue)}</small></span>
+              <em className={styles.redesignTermIssue}>Needs review</em>
+            </article>
+          ))}
+          {activeTermsChecklistRows.length === 0 && unmatchedTermsIssues.length === 0 ? (
+            <div className={styles.redesignDataEmpty}>No purchase-order terms were extracted for this document.</div>
+          ) : null}
+        </div>
+      </div>
+    );
+
+    const dataNode = (
+      <ExtractedFieldsPanel
+        fields={extractedFieldItems}
+        lineItemCount={activeDocumentLineItems.length}
+        activeComparisonFieldKey={documentFieldComparison?.key || null}
+        onCompareField={(field) =>
+          setDocumentFieldComparison((current) =>
+            current?.key === field.key ? null : field
+          )
+        }
+        activeDataView={activeDataView}
+        onDataViewChange={setActiveDataView}
+        termsCount={activeTermsChecklistRows.length + unmatchedTermsIssues.length}
+        hasFailureState={visibleMismatches.some((m) =>
+          m.values.some(
+            (entry) =>
+              entry.docId &&
+              [activeDocument?.id, activeDocument?.clientDocumentId].includes(entry.docId)
+          )
+        )}
+        lineItemsContent={lineItemsContent}
+        termsContent={termsContent}
+      />
     );
 
     const complianceContent = (
@@ -3143,6 +3063,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           decisionError={decisionStatus === "error" ? decisionError : null}
           onDecision={(decision) => void handleCaseDecision(decision)}
           documents={redesignedDocuments}
+          comparisonFieldLabel={documentFieldComparison?.label}
           activeDocumentId={activeDocumentId}
           onSelectDocument={handleDocumentSelection}
           mismatchCount={visibleMismatches.length}
@@ -3168,6 +3089,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           onClearPreviewFocus={() => setPreviewFocus(null)}
           canPreviousPage={canGoToPreviousPreviewPage}
           canNextPage={canGoToNextPreviewPage}
+          showPageControls={activeSourceIsImage ? previewPageCount > 1 : previewPdfPageCount > 1}
           pageLabel={
             activeSourceIsImage
               ? `${Math.min(previewPageIndex + 1, previewPageCount)} / ${previewPageCount}`

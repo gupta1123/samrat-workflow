@@ -14,7 +14,19 @@ function kindLabel(kind: string): string {
   return kind === "GRN" ? "GRN (Goods Receipt)" : "AP Invoice";
 }
 
-export function SapPostingPanel({ caseId }: { caseId: string }) {
+export type SapPanelStatus = {
+  readiness: SapReadiness | null;
+  checking: boolean;
+  error: string | null;
+};
+
+export function SapPostingPanel({
+  caseId,
+  onStatusChange,
+}: {
+  caseId: string;
+  onStatusChange?: (status: SapPanelStatus) => void;
+}) {
   const [readiness, setReadiness] = useState<SapReadiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,16 +39,20 @@ export function SapPostingPanel({ caseId }: { caseId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    onStatusChange?.({ readiness: null, checking: true, error: null });
     try {
-      setReadiness(await fetchSapReadiness(caseId));
+      const next = await fetchSapReadiness(caseId);
+      setReadiness(next);
+      onStatusChange?.({ readiness: next, checking: false, error: null });
     } catch (loadError) {
-      setError(
-        loadError instanceof Error ? loadError.message : "Could not load SAP readiness.",
-      );
+      const message =
+        loadError instanceof Error ? loadError.message : "Could not load SAP readiness.";
+      setError(message);
+      onStatusChange?.({ readiness: null, checking: false, error: message });
     } finally {
       setLoading(false);
     }
-  }, [caseId]);
+  }, [caseId, onStatusChange]);
 
   useEffect(() => {
     void load();

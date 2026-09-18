@@ -33,7 +33,7 @@ test("distinguishes an active final review from a stalled worker", () => {
     },
     now,
   );
-  assert.match(active!, /final AI review is active/);
+  assert.match(active!, /final check/);
 
   const stalled = getAnalysisProgressNotice(
     {

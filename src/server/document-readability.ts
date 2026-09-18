@@ -157,8 +157,14 @@ function issueLabel(issue: DocumentPageQualityAssessment["issues"][number]) {
 export function buildDocumentReadabilityMismatches(
   assessments: DocumentPageQualityAssessment[],
 ): Mismatch[] {
+  // Only unreadable pages surface as review issues. Lesser quality notes
+  // (faint, rotated, blurred, cropped) are intentionally not shown and do
+  // not block approval on their own.
   return assessments
-    .filter((assessment) => !assessment.approvalSafe)
+    .filter(
+      (assessment) =>
+        !assessment.approvalSafe && assessment.issues.includes("unreadable"),
+    )
     .map((assessment, index) => {
       const issueText = assessment.issues.map(issueLabel).join(", ");
       const location = `${assessment.sourceFileName}, page ${assessment.pageNumber}`;

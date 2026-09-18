@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
   ArrowLeft,
@@ -9,8 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
-  Eye,
-  FileText,
   Loader2,
   RotateCw,
   ShieldCheck,
@@ -33,6 +31,10 @@ export type RedesignedDocumentCard = {
   pageCount: number;
   hasIssue: boolean;
   issueCount: number;
+  fieldCount?: number;
+  comparisonState?: "matched" | "mismatch" | "absent";
+  comparisonValue?: string;
+  chainRole?: "approval" | "supporting";
 };
 
 type CaseDetailRedesignProps = {
@@ -55,6 +57,7 @@ type CaseDetailRedesignProps = {
   decisionError: string | null;
   onDecision: (decision: "accepted" | "rejected") => void;
   documents: RedesignedDocumentCard[];
+  comparisonFieldLabel?: string | null;
   activeDocumentId: string | null;
   onSelectDocument: (documentId: string) => void;
   mismatchCount: number;
@@ -76,6 +79,7 @@ type CaseDetailRedesignProps = {
   onClearPreviewFocus: () => void;
   canPreviousPage: boolean;
   canNextPage: boolean;
+  showPageControls: boolean;
   pageLabel: string;
   onPreviousPage: () => void;
   onNextPage: () => void;
@@ -114,6 +118,7 @@ export function CaseDetailRedesign({
   decisionError,
   onDecision,
   documents,
+  comparisonFieldLabel,
   activeDocumentId,
   onSelectDocument,
   mismatchCount,
@@ -135,6 +140,7 @@ export function CaseDetailRedesign({
   onClearPreviewFocus,
   canPreviousPage,
   canNextPage,
+  showPageControls,
   pageLabel,
   onPreviousPage,
   onNextPage,
@@ -146,41 +152,143 @@ export function CaseDetailRedesign({
   onResetZoom,
 }: CaseDetailRedesignProps) {
   const [section, setSection] = useState<CaseSection>("documents");
-  const issueDocumentCount = documents.filter(
-    (document) => document.hasIssue,
-  ).length;
-  const totalPages = documents.reduce(
-    (total, document) => total + Math.max(1, document.pageCount),
-    0,
-  );
-  const isMismatchFree =
-    mismatchCount === 0 &&
-    missingDocumentLabels.length === 0 &&
-    !analysisIntegrityBlocked;
+
+  const cleanTitle =
+    parentName && parentName !== "Procurement packet"
+      ? parentName
+      : caseName.includes(" / ")
+        ? caseName.split(" / ")[0]
+        : caseName;
+
+  const hasSellerChain = documents.some((document) => document.chainRole === "supporting");
+  const approvalDocuments = hasSellerChain
+    ? documents.filter((document) => document.chainRole !== "supporting")
+    : documents;
+  const supportingDocuments = hasSellerChain
+    ? documents.filter((document) => document.chainRole === "supporting")
+    : [];
+
+  const renderDocumentCard = (document: RedesignedDocumentCard, index: number) => {
+    const isSelected = activeDocumentId === document.id;
+    const comparisonClass =
+      document.comparisonState === "matched"
+        ? styles.topDocCardComparedMatched
+        : document.comparisonState === "mismatch"
+          ? styles.topDocCardComparedMismatch
+          : document.comparisonState === "absent"
+            ? styles.topDocCardComparedAbsent
+            : "";
+    const comparisonStatus =
+      document.comparisonState === "matched"
+        ? "Matched"
+        : document.comparisonState === "mismatch"
+          ? "Mismatch"
+          : document.comparisonState === "absent"
+            ? "Not present"
+            : null;
+    const comparisonValue = document.comparisonValue?.trim() || "—";
+
+    return (
+      <button
+        type="button"
+        key={document.id}
+        className={`${styles.topDocCard} ${isSelected ? styles.topDocCardActive : ""} ${comparisonClass} ${
+          document.chainRole === "supporting" ? styles.topDocCardSupporting : ""
+        }`}
+        onClick={() => onSelectDocument(document.id)}
+        aria-label={
+          comparisonFieldLabel && comparisonStatus
+            ? `${document.type}: ${comparisonFieldLabel} — ${comparisonValue}; ${comparisonStatus}`
+            : document.chainRole === "supporting"
+              ? `${document.type}, supporting source-chain document`
+              : document.type
+        }
+      >
+        <div className={styles.topDocCardHeader}>
+          <span className={styles.topDocNum}>{index + 1}</span>
+          <span
+            className={`${styles.topDocDot} ${
+              document.comparisonState === "absent"
+                ? styles.topDocDotMuted
+                : document.comparisonState === "mismatch" || (!document.comparisonState && document.hasIssue)
+                  ? styles.topDocDotBad
+                  : styles.topDocDotGood
+            }`}
+          />
+        </div>
+        <div className={styles.topDocTitle} title={document.type}>{document.type}</div>
+        <div
+          className={comparisonFieldLabel ? styles.topDocValue : styles.topDocSub}
+          title={comparisonFieldLabel ? comparisonValue : undefined}
+        >
+          {comparisonFieldLabel
+            ? comparisonValue
+            : document.fieldCount
+              ? `${document.fieldCount} fields`
+              : document.pageLabel}
+        </div>
+      </button>
+    );
+  };
 
   return (
     <div className={styles.redesignPage}>
-      <header className={styles.redesignHeader}>
-        <div className={styles.redesignCrumb}>
-          <Link href="/cases">All Cases</Link>
-          <span>/</span>
-          <strong>{caseSlug}</strong>
-        </div>
-        <div className={styles.redesignHeaderRow}>
-          <Link
-            href="/cases"
-            className={styles.redesignBack}
-            aria-label="Back to cases"
-          >
+      <header className={styles.compactHeader}>
+        <div className={styles.compactHeaderLeft}>
+          <Link href="/cases" className={styles.compactBack} aria-label="Back to cases" title="Back to All Cases">
             <ArrowLeft />
           </Link>
-          <h1 title={caseName}>{caseName}</h1>
-          <span
-            className={`${styles.redesignStatus} ${getStatusClass(status)}`}
-          >
-            {statusLabel}
-          </span>
+          <div className={styles.compactInfo}>
+            <div className={styles.compactTitleRow}>
+              <h1 title={caseName}>{cleanTitle}</h1>
+              <span className={`${styles.redesignStatus} ${getStatusClass(status)}`}>{statusLabel}</span>
+            </div>
+            <div className={styles.compactMetaRow}>
+              {poNumber ? <span>PO <strong>{poNumber}</strong></span> : null}
+              {poNumber && invoiceNumber ? <i>·</i> : null}
+              {invoiceNumber ? <span>Invoice <strong>{invoiceNumber}</strong></span> : null}
+              {amountLabel ? <><i>·</i><span>Amount <strong className={styles.compactAmount}>{amountLabel}</strong></span></> : null}
+            </div>
+          </div>
+        </div>
+
+        <div className={styles.compactHeaderRight}>
+          <nav className={styles.compactTabs} aria-label="Case detail sections">
+            <button
+              type="button"
+              className={section === "documents" ? styles.compactTabActive : styles.compactTab}
+              onClick={() => setSection("documents")}
+            >
+              Documents
+            </button>
+            <button
+              type="button"
+              className={section === "compliance" ? styles.compactTabActive : styles.compactTab}
+              onClick={() => setSection("compliance")}
+            >
+              Compliance {complianceCount > 0 && <span className={styles.compactTabBadge}>{complianceCount}</span>}
+            </button>
+            <button
+              type="button"
+              className={section === "activity" ? styles.compactTabActive : styles.compactTab}
+              onClick={() => setSection("activity")}
+            >
+              Activity
+            </button>
+          </nav>
+
           <div className={styles.redesignHeaderActions}>
+            <Link
+              href={mismatchCount > 0 ? `/cases/${caseId}/mismatches` : `/cases/${caseId}/mismatches?tab=sap`}
+              className={`${styles.redesignButtonOutline} ${styles.compactMismatchAction}`}
+              aria-label={mismatchCount > 0 ? `Review ${mismatchCount} ${mismatchCount === 1 ? "mismatch" : "mismatches"}` : "Post to SAP"}
+            >
+              {mismatchCount > 0 ? (
+                <><TriangleAlert /> {mismatchCount} {mismatchCount === 1 ? "mismatch" : "mismatches"}</>
+              ) : (
+                <><Database /> Post to SAP</>
+              )}
+            </Link>
             {showActions ? (
               <>
                 <button
@@ -195,67 +303,18 @@ export function CaseDetailRedesign({
                   type="button"
                   className={styles.redesignButtonPrimary}
                   disabled={decisionUpdating || !canApprove}
-                  title={
-                    canApprove ? undefined : approvalBlockedReason || undefined
-                  }
+                  title={canApprove ? undefined : approvalBlockedReason || undefined}
                   onClick={() => onDecision("accepted")}
                 >
-                  {decisionUpdating ? (
-                    <Loader2 className={styles.redesignSpinner} />
-                  ) : (
-                    <Check />
-                  )}{" "}
-                  Approve case
+                  {decisionUpdating ? <Loader2 className={styles.redesignSpinner} /> : <Check />} Approve
                 </button>
               </>
             ) : null}
           </div>
         </div>
-        <div className={styles.redesignMeta}>
-          <span>{parentName}</span>
-          <i>·</i>
-          <span>{poNumber || "PO not detected"}</span>
-          <i>·</i>
-          <span>{invoiceNumber || "Invoice not detected"}</span>
-          <i>·</i>
-          <span>{dateLabel}</span>
-          {amountLabel ? (
-            <>
-              <i>·</i>
-              <span>{amountLabel}</span>
-            </>
-          ) : null}
-          <i>·</i>
-          <span>{uploadedLabel}</span>
-        </div>
-        <nav className={styles.redesignTabs} aria-label="Case detail sections">
-          <button
-            type="button"
-            className={section === "documents" ? styles.redesignTabActive : ""}
-            onClick={() => setSection("documents")}
-          >
-            Documents & data
-          </button>
-          <button
-            type="button"
-            className={section === "compliance" ? styles.redesignTabActive : ""}
-            onClick={() => setSection("compliance")}
-          >
-            Compliance <span>{complianceCount}</span>
-          </button>
-          <button
-            type="button"
-            className={section === "activity" ? styles.redesignTabActive : ""}
-            onClick={() => setSection("activity")}
-          >
-            Activity
-          </button>
-        </nav>
       </header>
 
-      {decisionError ? (
-        <div className={styles.redesignDecisionError}>{decisionError}</div>
-      ) : null}
+      {decisionError ? <div className={styles.redesignDecisionError}>{decisionError}</div> : null}
 
       {section === "documents" ? (
         <>
@@ -264,247 +323,115 @@ export function CaseDetailRedesign({
               {intelligenceContent}
             </div>
           ) : null}
-          <section className={styles.redesignMetrics} aria-label="Case summary">
-            <article>
-              <span>Packet</span>
-              <strong>
-                {documents.length} <small>documents</small>
-              </strong>
-              <p>{totalPages} pages classified</p>
-            </article>
-            {analysisIntegrityBlocked &&
-            mismatchCount === 0 &&
-            missingDocumentLabels.length === 0 ? (
-              <article
-                className={`${styles.redesignMetricCard} ${styles.redesignMetricAlert}`}
-                title={approvalBlockedReason || undefined}
-              >
-                <span>Analysis</span>
-                <strong>Incomplete</strong>
-                <p>Approval is blocked</p>
-              </article>
-            ) : isMismatchFree ? (
-              <article
-                className={`${styles.redesignMetricCard} ${styles.redesignMetricClear}`}
-              >
-                <span>Mismatches</span>
-                <strong>Clean</strong>
-                <p>No issues found</p>
-              </article>
+
+          <section
+            className={`${styles.topDocumentStrip} ${
+              comparisonFieldLabel ? styles.topDocumentStripComparing : ""
+            }`}
+            aria-label="Documents in packet"
+          >
+            {hasSellerChain ? (
+              <div className={styles.topDocumentGroup}>
+                <div className={styles.topDocumentGroupHeader}>
+                  <span className={styles.topDocumentGroupTitle}>Approval documents</span>
+                  <span className={styles.topDocumentGroupHint}>Used for reconciliation</span>
+                </div>
+                <div
+                  className={styles.topDocumentGrid}
+                  style={{ "--top-document-columns": Math.max(4, Math.min(approvalDocuments.length, 10)) } as CSSProperties}
+                >
+                  {approvalDocuments.map((document) => renderDocumentCard(document, documents.indexOf(document)))}
+                </div>
+              </div>
             ) : (
-              <Link
-                href={`/cases/${caseId}/mismatches`}
-                title={`${reviewTitle}: ${reviewDescription}`}
-                className={`${styles.redesignMetricCard} ${styles.redesignMetricAlert}`}
+              <div
+                className={styles.topDocumentGrid}
+                style={{ "--top-document-columns": Math.max(7, Math.min(documents.length, 10)) } as CSSProperties}
               >
-                <span>
-                  {missingDocumentLabels.length
-                    ? "Missing documents"
-                    : "Mismatches"}
-                </span>
-                <strong>{missingDocumentLabels.length || mismatchCount}</strong>
-                <p>
-                  {missingDocumentLabels.length
-                    ? missingDocumentLabels.join(", ")
-                    : pendingMismatchCount
-                      ? `${pendingMismatchCount} need a decision`
-                      : "every issue reviewed"}
-                </p>
-                <b>
-                  {missingDocumentLabels.length
-                    ? "Review required files"
-                    : "Review mismatches"}{" "}
-                  <ChevronRight />
-                </b>
-              </Link>
+                {documents.map(renderDocumentCard)}
+              </div>
             )}
-            <article>
-              <span>Compliance</span>
-              <strong>
-                {complianceCount} <small>checks</small>
-              </strong>
-              <p>
-                {complianceCount
-                  ? "extracted PO clauses"
-                  : "no clauses detected"}
-              </p>
-            </article>
-            <article>
-              <span>Invoice value</span>
-              <strong>{amountLabel || "—"}</strong>
-              <p
-                className={
-                  issueDocumentCount
-                    ? styles.redesignMetricWarning
-                    : styles.redesignMetricGood
-                }
-              >
-                {issueDocumentCount
-                  ? `${issueDocumentCount} document${issueDocumentCount === 1 ? "" : "s"} in a mismatch`
-                  : "packet values are consistent"}
-              </p>
-            </article>
+
+            {supportingDocuments.length ? (
+              <div className={`${styles.topDocumentGroup} ${styles.topDocumentGroupSupporting}`}>
+                <div className={styles.topDocumentGroupHeader}>
+                  <span className={styles.topDocumentGroupTitle}>Source chain</span>
+                  <span className={styles.topDocumentSupportingBadge}>Supporting only</span>
+                </div>
+                <div
+                  className={styles.topDocumentGrid}
+                  style={{ "--top-document-columns": Math.max(3, Math.min(supportingDocuments.length, 10)) } as CSSProperties}
+                >
+                  {supportingDocuments.map((document) => renderDocumentCard(document, documents.indexOf(document)))}
+                </div>
+              </div>
+            ) : null}
           </section>
 
-          <section className={styles.redesignSplit}>
-            <aside
-              className={styles.redesignDocumentPane}
-              aria-label="Documents in packet"
-            >
-              <div className={styles.redesignPaneHeader}>
-                Documents in packet <span>{documents.length}</span>
-              </div>
-              <div className={styles.redesignDocumentList}>
-                {documents.map((document) => (
-                  <button
-                    type="button"
-                    key={document.id}
-                    className={
-                      activeDocumentId === document.id
-                        ? styles.redesignDocumentActive
-                        : ""
-                    }
-                    onClick={() => onSelectDocument(document.id)}
-                  >
-                    <span className={styles.redesignDocumentIcon}>
-                      <FileText />
-                      <i
-                        className={
-                          document.hasIssue
-                            ? styles.redesignDocumentToneBad
-                            : styles.redesignDocumentToneGood
-                        }
-                      />
-                    </span>
-                    <span className={styles.redesignDocumentCopy}>
-                      <strong>{document.type}</strong>
-                      <span>{document.fileName}</span>
-                      <small>
-                        <i
-                          className={
-                            document.hasIssue
-                              ? styles.redesignDocumentDotBad
-                              : styles.redesignDocumentDotGood
-                          }
-                        />{" "}
-                        {document.pageLabel} ·{" "}
-                        {document.issueCount > 0
-                          ? `${document.issueCount} issue${document.issueCount === 1 ? "" : "s"} found`
-                          : "No issues found"}
-                      </small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </aside>
-
-            <main className={styles.redesignViewerPane}>
-              <div className={styles.redesignViewerToolbar}>
-                <div className={styles.redesignViewerSegment}>
-                  <button
-                    type="button"
-                    className={
-                      viewerMode === "preview"
-                        ? styles.redesignViewerSegmentActive
-                        : ""
-                    }
-                    onClick={() => onViewerModeChange("preview")}
-                  >
-                    <Eye /> Original
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      viewerMode === "data"
-                        ? styles.redesignViewerSegmentActive
-                        : ""
-                    }
-                    onClick={() => onViewerModeChange("data")}
-                  >
-                    <Database /> Extracted data
-                  </button>
+          <section className={styles.splitWorkspace}>
+            <div className={styles.splitPreviewPane}>
+              <div className={styles.splitPreviewHeader}>
+                <div className={styles.splitDocTitleBlock}>
+                  <span className={styles.splitDocRef} title={sourceReference}>{sourceReference}</span>
                 </div>
-                <span
-                  className={styles.redesignViewerReference}
-                  title={sourceReference}
-                >
-                  {sourceReference}
-                </span>
-                {previewFocusLabel && viewerMode === "preview" ? (
-                  <button
-                    type="button"
-                    className={styles.redesignFocusChip}
-                    onClick={onClearPreviewFocus}
-                    title="Clear PDF highlight"
-                  >
-                    <i /> {previewFocusLabel} <X />
-                  </button>
-                ) : null}
-                <span className={styles.redesignViewerSpacer} />
-                {viewerMode === "preview" ? (
-                  <>
-                    <div className={styles.redesignPageControls}>
-                      <button
-                        type="button"
-                        disabled={!canPreviousPage}
-                        onClick={onPreviousPage}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft />
-                      </button>
-                      <span>{pageLabel}</span>
-                      <button
-                        type="button"
-                        disabled={!canNextPage}
-                        onClick={onNextPage}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight />
-                      </button>
-                    </div>
-                    <div className={styles.redesignZoomControls}>
-                      <button
-                        type="button"
-                        disabled={!canZoomOut}
-                        onClick={onZoomOut}
-                        aria-label="Zoom out"
-                      >
-                        <ZoomOut />
-                      </button>
-                      <span>{Math.round(zoom * 100)}%</span>
-                      <button
-                        type="button"
-                        disabled={!canZoomIn}
-                        onClick={onZoomIn}
-                        aria-label="Zoom in"
-                      >
-                        <ZoomIn />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onResetZoom}
-                        disabled={zoom === 1}
-                        aria-label="Reset zoom"
-                      >
-                        <RotateCw />
-                      </button>
-                    </div>
-                  </>
-                ) : null}
+                <div className={styles.splitPreviewControls}>
+                  {showPageControls ? <div className={styles.redesignPageControls}>
+                    <button
+                      type="button"
+                      disabled={!canPreviousPage}
+                      onClick={onPreviousPage}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft />
+                    </button>
+                    <span>{pageLabel}</span>
+                    <button
+                      type="button"
+                      disabled={!canNextPage}
+                      onClick={onNextPage}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight />
+                    </button>
+                  </div> : null}
+                  <div className={styles.redesignZoomControls}>
+                    <button
+                      type="button"
+                      disabled={!canZoomOut}
+                      onClick={onZoomOut}
+                      aria-label="Zoom out"
+                    >
+                      <ZoomOut />
+                    </button>
+                    <span>{Math.round(zoom * 100)}%</span>
+                    <button
+                      type="button"
+                      disabled={!canZoomIn}
+                      onClick={onZoomIn}
+                      aria-label="Zoom in"
+                    >
+                      <ZoomIn />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onResetZoom}
+                      disabled={zoom === 1}
+                      aria-label="Reset zoom"
+                    >
+                      <RotateCw />
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div
-                className={styles.redesignViewerStage}
-                data-view={viewerMode}
-              >
-                {viewerMode === "preview" ? previewNode : dataNode}
+
+              <div className={styles.splitPreviewStage}>
+                {previewNode}
               </div>
-              <div className={styles.redesignViewerFooter}>
-                <span>{sourceLabel}</span>
-                <span>
-                  Click an extracted value to reveal it in the original PDF.
-                </span>
-              </div>
-            </main>
+            </div>
+
+            <div className={styles.splitDataPane}>
+              {dataNode}
+            </div>
           </section>
         </>
       ) : section === "compliance" ? (
@@ -529,8 +456,7 @@ export function CaseDetailRedesign({
           </div>
           {activityContent}
           <div className={styles.redesignAuditNote}>
-            <TriangleAlert /> Every extracted value, mismatch and decision
-            remains on record after the case is approved or rejected.
+            <TriangleAlert /> Every extracted value, mismatch and decision remains on record after the case is approved or rejected.
           </div>
         </main>
       )}

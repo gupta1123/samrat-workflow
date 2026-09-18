@@ -53,7 +53,7 @@ export function getAnalysisProgressNotice(
   }
 
   if (job.progress >= 88) {
-    return "The final AI review is active. Complex packets can take several minutes; worker activity is still being received.";
+    return "Almost done — giving your documents a final check.";
   }
 
   if (job.attemptCount > 1) {
