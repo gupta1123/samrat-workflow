@@ -3,6 +3,7 @@ import {
   readSapEnvironment,
   type SapEnvironment,
 } from "./config";
+import { sapFetch } from "./http";
 
 export type SapOpenPoRow = Record<string, unknown> & {
   DocEntry?: number;
@@ -34,7 +35,7 @@ async function getRows(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
   try {
-    const response = await fetch(`${connection.baseUrl}/SPAPI/${path}`, {
+    const response = await sapFetch(`${connection.baseUrl}/SPAPI/${path}`, {
       method: "GET",
       headers: {
         Authorization: basicAuth(connection.username, connection.password),

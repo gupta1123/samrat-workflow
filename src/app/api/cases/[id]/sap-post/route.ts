@@ -22,6 +22,7 @@ import {
   extractSapDocNum,
   type SapPacketLine,
 } from "@/server/sap/posting";
+import { sapFetch } from "@/server/sap/http";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -304,7 +305,7 @@ export async function POST(request: Request, context: Context) {
         const timeout = setTimeout(() => controller.abort(), 30_000);
         let response: globalThis.Response;
         try {
-          response = await fetch(url, {
+          response = await sapFetch(url, {
             method: "POST",
             headers: {
               Authorization: basicAuth(username, password),
