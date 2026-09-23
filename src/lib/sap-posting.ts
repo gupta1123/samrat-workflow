@@ -53,19 +53,16 @@ export async function fetchSapReadiness(caseId: string): Promise<SapReadiness> {
   return body as SapReadiness;
 }
 
-export async function postToSap(
+export async function createSapApDraft(
   caseId: string,
-  bases?: { basePoDocNum?: string | null; baseGrpoDocNum?: string | null },
+  baseGrpoDocNum?: string | null,
 ) {
   const response = await apiFetch(
-    `/api/cases/${encodeURIComponent(caseId)}/sap-post`,
+    `/api/cases/${encodeURIComponent(caseId)}/sap-ap-draft`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        basePoDocNum: bases?.basePoDocNum ?? null,
-        baseGrpoDocNum: bases?.baseGrpoDocNum ?? null,
-      }),
+      body: JSON.stringify({ baseGrpoDocNum: baseGrpoDocNum ?? null }),
     },
   );
   const body = await response.json().catch(() => ({}));

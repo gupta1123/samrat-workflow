@@ -1,6 +1,7 @@
 import { dbCheck, ownedCase, uuid, withUser } from "@/server/api/helpers";
 import { fetchSapOpenGRPOs, fetchSapOpenPOs } from "@/server/sap/client";
 import { readSapEnvironment } from "@/server/sap/config";
+import { fetchTestOpenGrpoRows } from "@/server/sap/service-layer";
 import {
   classifySapCase,
   matchSapReference,
@@ -50,22 +51,18 @@ export async function GET(request: Request, context: Context) {
     let openPOs: Record<string, unknown>[] = [];
     let openGRPOs: Record<string, unknown>[] = [];
     let sapError: string | null = null;
-    try {
-      [openPOs, openGRPOs] = await Promise.all([
-        fetchSapOpenPOs(sapEnv),
-        fetchSapOpenGRPOs(sapEnv),
-      ]);
-    } catch (error) {
-      sapError =
-        error instanceof Error ? error.message : "Could not reach SAP SPAPI.";
-    }
+    const [poResult, grpoResult] = await Promise.allSettled([
+      fetchSapOpenPOs(sapEnv),
+      sapEnv === "test" ? fetchTestOpenGrpoRows() : fetchSapOpenGRPOs(sapEnv),
+    ]);
+    if (poResult.status === "fulfilled") openPOs = poResult.value;
+    if (grpoResult.status === "fulfilled") openGRPOs = grpoResult.value;
+    else sapError = grpoResult.reason instanceof Error
+      ? grpoResult.reason.message
+      : "Could not reach SAP GRPOs.";
 
-    const matchedPoDocNum = sapError
-      ? null
-      : matchSapReference(classification.poNumber, docNums(openPOs));
-    const matchedGrpoDocNum = sapError
-      ? null
-      : matchSapReference(classification.poNumber, docNums(openGRPOs));
+    const matchedPoDocNum = matchSapReference(classification.poNumber, docNums(openPOs));
+    const matchedGrpoDocNum = matchSapReference(classification.poNumber, docNums(openGRPOs));
 
     // Real PO numbers never equal SAP's integer DocNums, so when the direct
     // match misses, rank open rows by vendor overlap + total proximity and
@@ -80,23 +77,19 @@ export async function GET(request: Request, context: Context) {
       parseSapAmount(primaryInvoice?.extractedFields.totalAmount) ??
       parseSapAmount(primaryInvoice?.extractedFields.subtotal);
     const toCandidateRows = (rows: Record<string, unknown>[]) =>
-      rows.map((r) => ({
+      [...new Map(rows.map((r) => [String(r.DocNum ?? ""), r])).values()].map((r) => ({
         docNum: (r.DocNum as string | number) ?? "",
         vendorName: r["BP Name"],
         totalAmount: r["Total Amount"],
         itemDescription: r.Dscription,
         docDate: r["Doc Date"],
       }));
-    const candidatePOs = sapError
-      ? []
-      : rankSapCandidates({
+    const candidatePOs = rankSapCandidates({
           caseVendor,
           caseTotal,
           rows: toCandidateRows(openPOs),
         });
-    const candidateGRPOs = sapError
-      ? []
-      : rankSapCandidates({
+    const candidateGRPOs = rankSapCandidates({
           caseVendor,
           caseTotal,
           rows: toCandidateRows(openGRPOs),
@@ -116,7 +109,7 @@ export async function GET(request: Request, context: Context) {
       postable: row.status === "accepted",
       classification,
       openPoCount: openPOs.length,
-      openGrpoCount: openGRPOs.length,
+      openGrpoCount: new Set(docNums(openGRPOs).map(String)).size,
       matchedPoDocNum,
       matchedGrpoDocNum,
       candidatePOs,

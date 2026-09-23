@@ -13,6 +13,7 @@ export type SapBaseRow = Record<string, unknown>;
 
 export type SapPacketLine = {
   documentType?: string;
+  itemCode?: string;
   description?: string;
   hsnSac?: string;
   quantity?: string | number;

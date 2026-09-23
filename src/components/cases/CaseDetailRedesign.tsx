@@ -281,12 +281,12 @@ export function CaseDetailRedesign({
             <Link
               href={mismatchCount > 0 ? `/cases/${caseId}/mismatches` : `/cases/${caseId}/mismatches?tab=sap`}
               className={`${styles.redesignButtonOutline} ${styles.compactMismatchAction}`}
-              aria-label={mismatchCount > 0 ? `Review ${mismatchCount} ${mismatchCount === 1 ? "mismatch" : "mismatches"}` : "Post to SAP"}
+              aria-label={mismatchCount > 0 ? `Review ${mismatchCount} ${mismatchCount === 1 ? "mismatch" : "mismatches"}` : "SAP Draft"}
             >
               {mismatchCount > 0 ? (
                 <><TriangleAlert /> {mismatchCount} {mismatchCount === 1 ? "mismatch" : "mismatches"}</>
               ) : (
-                <><Database /> Post to SAP</>
+                <><Database /> SAP Draft</>
               )}
             </Link>
             {showActions ? (

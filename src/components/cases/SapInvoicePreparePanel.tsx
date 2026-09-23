@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { apiFetch } from "@/lib/api-client";
 
 type MatchedLine = {
   description: string | null;
@@ -50,7 +51,11 @@ type ApPayload = {
 
 type PrepareResult = {
   matched: boolean;
+  caseStatus?: string;
+  sapEnv?: string;
   reason?: string;
+  sapDocument?: { kind: "PO" | "GRPO"; docNum?: number; docEntry?: number; vendor?: string };
+  postedInvoice?: { docNum?: number; docEntry?: number; vendorReference?: string | null } | null;
   baseSource?: "grpo" | "po";
   grpoDocNum?: string | number | null;
   poDocNum?: string | number | null;
@@ -107,11 +112,13 @@ export function SapInvoicePreparePanel({
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<string | null>(null);
+  const [saveFailed, setSaveFailed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/sap-invoice-prepare`);
+      const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/sap-invoice-prepare`);
       if (!response.ok) throw new Error("Failed");
       setData(await response.json());
     } catch {
@@ -133,28 +140,28 @@ export function SapInvoicePreparePanel({
   }
 
   async function handleSave() {
-    if (!data?.apPayload) return;
+    if (!data?.apPayload?.baseGrpoDocNum) return;
     setSaving(true);
     setSaveResult(null);
+    setSaveFailed(false);
     try {
-      const response = await fetch(`/api/cases/${encodeURIComponent(caseId)}/sap-post`, {
+      const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/sap-ap-draft`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          baseGrpoDocNum: data.apPayload.baseGrpoDocNum ?? null,
-          basePoDocNum: data.apPayload.basePoDocNum ?? null,
-        }),
+        body: JSON.stringify({ baseGrpoDocNum: data.apPayload.baseGrpoDocNum }),
       });
       const body = await response.json().catch(() => ({}));
+      setSaveFailed(!response.ok);
       setSaveResult(
-        response.ok || body.code === "SAP_CREATE_API_MISSING"
-          ? "Payload saved."
-          : body.error ?? "Save failed.",
+        response.ok ? body.message ?? "SAP Test AP Invoice Draft created."
+          : body.error ?? "Draft creation failed.",
       );
     } catch {
-      setSaveResult("Could not save.");
+      setSaveFailed(true);
+      setSaveResult("Could not create the SAP draft.");
     } finally {
       setSaving(false);
+      setConfirming(false);
     }
   }
 
@@ -176,17 +183,30 @@ export function SapInvoicePreparePanel({
   }
 
   if (!data?.matched || !data.apPayload) {
+    const documentLabel = data?.sapDocument
+      ? `${data.sapDocument.kind} ${data.sapDocument.docNum ?? "—"}`
+      : "SAP document";
     const reasonMessages: Record<string, string> = {
       no_invoice: "No vendor invoice found in this case.",
       sap_unavailable: "Could not reach SAP. Check the connection and try again.",
       no_match: "No matching GRPO or Open PO found in SAP. Check vendor name and PO number.",
+      unverified_po: "The PO returned by the legacy SAP list could not be verified in the SAP Test company.",
+      no_line_match: "A vendor or document number was found, but none of the invoice lines matched. Review the SAP document before proceeding.",
+      closed_po: `${documentLabel} exists in SAP Test but is closed. This check did not confirm a linked posted AP invoice; it cannot be used for a new draft.`,
+      closed_grpo: `${documentLabel} exists in SAP Test but is closed. This check did not confirm a linked posted AP invoice; it cannot be used for a new draft.`,
+      already_posted: `A posted SAP Test AP invoice ${data?.postedInvoice?.docNum ?? "—"} is linked to ${documentLabel}. SAP vendor reference: ${data?.postedInvoice?.vendorReference || "not recorded"}. Do not post this packet again.`,
       error: "Could not load SAP data. Try again.",
     };
     const message = reasonMessages[data?.reason ?? ""] ?? "No SAP match found for this case.";
+    const title = data?.reason === "already_posted" ? "Already posted in SAP"
+      : data?.reason === "closed_grpo" ? "GRPO found, but closed"
+      : data?.reason === "closed_po" ? "PO found, but closed"
+      : data?.reason === "no_line_match" ? "SAP lines do not match"
+      : "No SAP match";
     if (variant === "sidebar") {
       return (
         <div className="px-4 py-4">
-          <div className="text-[11px] font-medium text-[#3d3530]">No SAP match</div>
+          <div className="text-[11px] font-medium text-[#3d3530]">{title}</div>
           <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">{message}</div>
         </div>
       );
@@ -196,7 +216,7 @@ export function SapInvoicePreparePanel({
         <div className="flex items-start gap-2.5 rounded-lg border border-[#e0d8cc] bg-[#fbfaf8] px-4 py-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
           <div>
-            <div className="text-[12px] font-semibold text-[#3d3530]">No SAP match</div>
+            <div className="text-[12px] font-semibold text-[#3d3530]">{title}</div>
             <div className="mt-0.5 text-[11px] text-[#8a7f72]">{message}</div>
           </div>
         </div>
@@ -443,20 +463,38 @@ export function SapInvoicePreparePanel({
 
       {/* Actions */}
       {saveResult ? (
-        <div className="rounded-lg border border-[#c3dfcb] bg-[#ebf5ee] px-3 py-2 text-[11px] text-[#1b4332]">
+        <div className={`rounded-lg border px-3 py-2 text-[11px] ${saveFailed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}>
           {saveResult}
         </div>
       ) : null}
+      {data.caseStatus !== "accepted" ? (
+        <p className="text-[11px] text-[#8a7f72]">Approve this case before creating an SAP draft.</p>
+      ) : data.sapEnv !== "test" ? (
+        <p className="text-[11px] text-[#b45309]">Draft creation is enabled only in SAP Test.</p>
+      ) : baseSource !== "grpo" || !apPayload.baseGrpoDocNum ? (
+        <p className="text-[11px] text-[#b45309]">An open GRPO is required to create an AP Invoice Draft.</p>
+      ) : confirming ? (
+        <div className="flex items-center gap-2 text-[11px]">
+          <span>Create an AP Invoice Draft in SAP Test from GRPO {apPayload.baseGrpoDocNum}? No invoice will be posted.</span>
+          <Button size="sm" disabled={saving} onClick={() => void handleSave()}>
+            {saving ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Send className="mr-1.5 h-3 w-3" />}
+            Confirm draft
+          </Button>
+          <Button size="sm" variant="outline" disabled={saving} onClick={() => setConfirming(false)}>Cancel</Button>
+        </div>
+      ) : null}
       <div className="flex items-center gap-3">
-        <Button
-          size="sm"
-          className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white hover:bg-[#3b271a] shadow-sm"
-          disabled={saving}
-          onClick={() => void handleSave()}
-        >
-          {saving ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Send className="mr-1.5 h-3 w-3" />}
-          Save payload
-        </Button>
+        {data.caseStatus === "accepted" && data.sapEnv === "test" && baseSource === "grpo" && apPayload.baseGrpoDocNum && !confirming ? (
+          <Button
+            size="sm"
+            className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white hover:bg-[#3b271a] shadow-sm"
+            disabled={saving}
+            onClick={() => setConfirming(true)}
+          >
+            <Send className="mr-1.5 h-3 w-3" />
+            Create AP Invoice Draft in SAP Test
+          </Button>
+        ) : null}
         <Button
           size="sm"
           variant="outline"
