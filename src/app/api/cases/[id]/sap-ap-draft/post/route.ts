@@ -259,11 +259,29 @@ async function handle(
                 : await client.getGrpo(expectedBaseEntry);
             const draftFields = materialFormFields(draft);
             const baseFields = materialFormFields(baseDocument);
+            const userFields = (
+              await Promise.all([
+                client.listUserFields("OPCH"),
+                client.listUserFields("PCH1"),
+              ])
+            )
+              .flat()
+              .filter((field) => /material\s*form/i.test(JSON.stringify(field)))
+              .map((field) => ({
+                tableName: field.TableName,
+                name: field.Name,
+                description: field.Description,
+                validValues:
+                  field.ValidValuesMD ??
+                  field.ValidValues ??
+                  field.ValidValuesCollection,
+              }));
             console.error("SAP Test requires its custom Material Form field", {
               caseId: id,
               draftDocEntry,
               draftFields,
               baseFields,
+              userFields,
             });
             const fieldNames = [
               ...new Set([
@@ -272,11 +290,20 @@ async function handle(
               ]),
             ];
             throw new ApiError(
-              fieldNames.length > 0
-                ? `SAP Test requires its custom Material Form field before this draft can be posted. Relevant SAP field(s): ${fieldNames.join(", ")}. No final invoice was posted.`
-                : "SAP Test requires a client-specific Material Form value before this draft can be posted. The required field/value is not present on the PO or draft, so no final invoice was posted.",
+              userFields.length > 0
+                ? `SAP Test requires ${userFields
+                    .map(
+                      (field) =>
+                        `${String(field.description ?? "Material Form")} (${String(field.name ?? "unknown field")})`,
+                    )
+                    .join(
+                      ", ",
+                    )} before this draft can be posted. No final invoice was posted.`
+                : fieldNames.length > 0
+                  ? `SAP Test requires its custom Material Form field before this draft can be posted. Relevant SAP field(s): ${fieldNames.join(", ")}. No final invoice was posted.`
+                  : "SAP Test requires a client-specific Material Form value before this draft can be posted. The required field/value is not present on the PO or draft, so no final invoice was posted.",
               409,
-              { draftFields, baseFields },
+              { draftFields, baseFields, userFields },
             );
           }
           throw error;

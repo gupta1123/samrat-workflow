@@ -96,6 +96,7 @@ export async function withTestServiceLayer<T>(
     ) => Promise<SapDraftResponse>;
     getDraft: (docEntry: number) => Promise<SapDraftResponse>;
     finalizeDraft: (docEntry: number) => Promise<Record<string, unknown>>;
+    listUserFields: (tableName: string) => Promise<Record<string, unknown>[]>;
   }) => Promise<T>,
 ): Promise<T> {
   const config = testConfig();
@@ -390,6 +391,17 @@ export async function withTestServiceLayer<T>(
           body: JSON.stringify({ Document: { DocEntry: docEntry } }),
         });
         return body;
+      },
+      async listUserFields(tableName) {
+        const filter = encodeURIComponent(
+          `TableName eq '${tableName.replace(/'/g, "''")}'`,
+        );
+        const { body } = await request(
+          `/UserFieldsMD?$filter=${filter}&$top=200`,
+        );
+        return Array.isArray(body.value)
+          ? (body.value as Record<string, unknown>[])
+          : [];
       },
     });
   } finally {
