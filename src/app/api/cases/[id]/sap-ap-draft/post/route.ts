@@ -32,6 +32,16 @@ function dateOnly(value: unknown): string {
   return /^\d{4}-\d{2}-\d{2}/.test(valueText) ? valueText.slice(0, 10) : "";
 }
 
+function materialFormFields(value: unknown): Record<string, unknown> {
+  const source = record(value);
+  return Object.fromEntries(
+    Object.entries(source).filter(
+      ([key]) =>
+        key.startsWith("U_") && /material|mat.*form|form.*mat/i.test(key),
+    ),
+  );
+}
+
 async function handle(
   request: Request,
   context: Context,
@@ -238,7 +248,39 @@ async function handle(
           };
         }
 
-        const serviceResult = await client.finalizeDraft(draftDocEntry);
+        let serviceResult: Record<string, unknown>;
+        try {
+          serviceResult = await client.finalizeDraft(draftDocEntry);
+        } catch (error) {
+          if (/please select the material form/i.test(String(error))) {
+            const baseDocument =
+              expectedBaseType === 22
+                ? await client.getPurchaseOrder(expectedBaseEntry)
+                : await client.getGrpo(expectedBaseEntry);
+            const draftFields = materialFormFields(draft);
+            const baseFields = materialFormFields(baseDocument);
+            console.error("SAP Test requires its custom Material Form field", {
+              caseId: id,
+              draftDocEntry,
+              draftFields,
+              baseFields,
+            });
+            const fieldNames = [
+              ...new Set([
+                ...Object.keys(draftFields),
+                ...Object.keys(baseFields),
+              ]),
+            ];
+            throw new ApiError(
+              fieldNames.length > 0
+                ? `SAP Test requires its custom Material Form field before this draft can be posted. Relevant SAP field(s): ${fieldNames.join(", ")}. No final invoice was posted.`
+                : "SAP Test requires a client-specific Material Form value before this draft can be posted. The required field/value is not present on the PO or draft, so no final invoice was posted.",
+              409,
+              { draftFields, baseFields },
+            );
+          }
+          throw error;
+        }
         const invoice = await client.findInvoiceByReference(
           expectedVendorCode,
           expectedInvoiceNumber,
