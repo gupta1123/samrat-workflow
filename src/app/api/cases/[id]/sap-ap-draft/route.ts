@@ -159,6 +159,7 @@ export async function POST(request: Request, context: Context) {
         itemCode: line.itemCode,
         description: line.description,
         quantity: line.quantity,
+        rate: line.rate,
       }),
     );
 

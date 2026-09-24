@@ -4,6 +4,7 @@ export type InvoiceDraftLine = {
   itemCode?: string | null;
   description?: string | null;
   quantity?: string | number | null;
+  rate?: string | number | null;
 };
 
 export type SapGrpo = {
@@ -23,6 +24,7 @@ export type SapGrpo = {
     ItemCode?: string;
     ItemDescription?: string;
     Quantity?: number;
+    Price?: number;
     RemainingOpenQuantity?: number;
     LineStatus?: string;
   }>;
@@ -40,6 +42,16 @@ function quantity(value: unknown): number | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
   const parsed = Number(String(value).replace(/,/g, "").trim());
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function rate(value: unknown): number | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const parsed = Number(String(value).replace(/,/g, "").trim());
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function ratesMatch(left: number, right: number) {
+  return Math.abs(left - right) < 0.01;
 }
 
 type DraftParams = {
@@ -149,13 +161,23 @@ function buildBasedApInvoiceDraft(
     const exactQuantity = matches.filter(
       (line) => amount === line.RemainingOpenQuantity,
     );
-    const narrowed = exactQuantity.length === 1 ? exactQuantity : matches;
-    const match = narrowed[0];
+    let narrowed = exactQuantity.length > 0 ? exactQuantity : matches;
+    const invoiceRate = rate(invoiceLine.rate);
+    if (narrowed.length > 1 && invoiceRate !== null) {
+      const exactRate = narrowed.filter(
+        (line) =>
+          typeof line.Price === "number" &&
+          Number.isFinite(line.Price) &&
+          ratesMatch(invoiceRate, line.Price),
+      );
+      if (exactRate.length > 0) narrowed = exactRate;
+    }
     if (narrowed.length > 1) {
       throw new Error(
-        `Invoice line ${index + 1} matches multiple ${label} lines; select the correct base line in SAP.`,
+        `Invoice line ${index + 1} matches multiple ${label} lines with the same item, quantity, and rate; select the correct base line in SAP.`,
       );
     }
+    const match = narrowed[0];
     used.add(match.LineNum!);
     return {
       BaseType: baseKind === "GRPO" ? 20 : 22,
