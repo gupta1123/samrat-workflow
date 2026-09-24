@@ -493,10 +493,17 @@ export async function GET(request: Request, context: Context) {
     let poRows: Record<string, unknown>[] = [];
     try {
       [grpoRows, poRows] = await Promise.all([
-        sapEnv === "test" ? fetchTestOpenGrpoRows() : Promise.resolve([]),
+        sapEnv === "test"
+          ? fetchTestOpenGrpoRows({ basePoDocNum: poNumber })
+          : Promise.resolve([]),
         fetchSapOpenPOs(sapEnv).catch(() => []),
       ]);
-    } catch {
+    } catch (error) {
+      console.error("SAP invoice matching failed while loading open documents", {
+        caseId: id,
+        sapEnv,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return NextResponse.json({ matched: false, reason: "sap_unavailable" });
     }
 

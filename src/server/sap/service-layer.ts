@@ -70,9 +70,6 @@ export async function withTestServiceLayer<T>(
     getGrpo: (docEntry: number) => Promise<SapGrpo>;
     listGrposByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getPurchaseOrder: (docEntry: number) => Promise<SapReadDocument>;
-    listPurchaseOrdersByEntries: (
-      docEntries: number[],
-    ) => Promise<SapReadDocument[]>;
     listPurchaseOrdersByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getAdminCurrencies: () => Promise<{
       LocalCurrency?: string;
@@ -208,29 +205,6 @@ export async function withTestServiceLayer<T>(
       async getPurchaseOrder(docEntry) {
         const { body } = await request(`/PurchaseOrders(${docEntry})`);
         return body as SapReadDocument;
-      },
-      async listPurchaseOrdersByEntries(docEntries) {
-        const uniqueEntries = [
-          ...new Set(
-            docEntries.filter(
-              (entry) => Number.isInteger(entry) && entry > 0,
-            ),
-          ),
-        ];
-        const documents: SapReadDocument[] = [];
-        for (let offset = 0; offset < uniqueEntries.length; offset += 40) {
-          const chunk = uniqueEntries.slice(offset, offset + 40);
-          const filter = encodeURIComponent(
-            chunk.map((entry) => `DocEntry eq ${entry}`).join(" or "),
-          );
-          const { body } = await request(
-            `/PurchaseOrders?$select=DocEntry,DocNum&$filter=${filter}&$top=${chunk.length}`,
-          );
-          if (Array.isArray(body.value)) {
-            documents.push(...(body.value as SapReadDocument[]));
-          }
-        }
-        return documents;
       },
       async listPurchaseOrdersByDocNum(docNum) {
         const filter = encodeURIComponent(`DocNum eq ${docNum}`);
@@ -445,23 +419,15 @@ export async function withTestServiceLayer<T>(
   }
 }
 
-export async function fetchTestOpenGrpoRows(): Promise<
-  Record<string, unknown>[]
-> {
+export async function fetchTestOpenGrpoRows(options?: {
+  basePoDocNum?: string | number | null;
+}): Promise<Record<string, unknown>[]> {
   return withTestServiceLayer(async (client) => {
     const documents = await client.listOpenGrpos();
-    const basePoEntries = documents.flatMap((document) =>
-      (document.DocumentLines ?? [])
-        .filter(
-          (line) =>
-            line.BaseType === 22 &&
-            typeof line.BaseEntry === "number" &&
-            line.BaseEntry > 0,
-        )
-        .map((line) => line.BaseEntry as number),
-    );
-    const purchaseOrders =
-      await client.listPurchaseOrdersByEntries(basePoEntries);
+    const requestedPo = String(options?.basePoDocNum ?? "").trim();
+    const purchaseOrders = /^\d+$/.test(requestedPo)
+      ? await client.listPurchaseOrdersByDocNum(Number(requestedPo))
+      : [];
     const poDocNumByEntry = new Map(
       purchaseOrders.flatMap((document) =>
         typeof document.DocEntry === "number" &&
