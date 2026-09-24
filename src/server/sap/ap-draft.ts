@@ -11,6 +11,8 @@ export type SapGrpo = {
   DocNum?: number;
   CardCode?: string;
   CardName?: string;
+  DocType?: string;
+  DocCurrency?: string;
   DocumentStatus?: string;
   Cancelled?: string;
   DocumentLines?: Array<{
@@ -23,6 +25,8 @@ export type SapGrpo = {
   }>;
 };
 
+export type SapPurchaseOrder = SapGrpo;
+
 function normalized(value: unknown): string {
   return String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
@@ -33,8 +37,7 @@ function quantity(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-export function buildApInvoiceDraft(params: {
-  grpo: SapGrpo;
+type DraftParams = {
   expectedDocEntry: number;
   expectedDocNum: string;
   expectedCardCode: string;
@@ -42,20 +45,27 @@ export function buildApInvoiceDraft(params: {
   invoiceNumber: string;
   invoiceLines: InvoiceDraftLine[];
   caseId: string;
-}) {
-  const { grpo } = params;
+  postingDate: string;
+  invoiceDate: string;
+};
+
+function buildBasedApInvoiceDraft(
+  params: DraftParams & { base: SapGrpo; baseKind: "GRPO" | "PO" },
+) {
+  const { base, baseKind } = params;
+  const label = baseKind === "GRPO" ? "GRPO" : "purchase order";
   if (
-    grpo.DocEntry !== params.expectedDocEntry ||
-    String(grpo.DocNum ?? "") !== params.expectedDocNum ||
-    grpo.CardCode !== params.expectedCardCode
+    base.DocEntry !== params.expectedDocEntry ||
+    String(base.DocNum ?? "") !== params.expectedDocNum ||
+    base.CardCode !== params.expectedCardCode
   ) {
-    throw new Error("SAP GRPO identity does not match the selected goods receipt.");
+    throw new Error(`SAP ${label} identity does not match the selected base document.`);
   }
-  if (grpo.Cancelled !== "tNO" || grpo.DocumentStatus !== "bost_Open") {
-    throw new Error("The selected SAP GRPO is cancelled or no longer open.");
+  if (base.Cancelled !== "tNO" || base.DocumentStatus !== "bost_Open") {
+    throw new Error(`The selected SAP ${label} is cancelled or no longer open.`);
   }
-  if (!params.invoiceVendor.trim() || scoreVendorNames(params.invoiceVendor, grpo.CardName) < 0.8) {
-    throw new Error("The invoice vendor does not match the selected SAP GRPO vendor.");
+  if (!params.invoiceVendor.trim() || scoreVendorNames(params.invoiceVendor, base.CardName) < 0.8) {
+    throw new Error(`The invoice vendor does not match the selected SAP ${label} vendor.`);
   }
   if (!params.invoiceNumber.trim()) {
     throw new Error("A vendor invoice number is required before creating a draft.");
@@ -63,8 +73,15 @@ export function buildApInvoiceDraft(params: {
   if (params.invoiceLines.length === 0) {
     throw new Error("No invoice line items were extracted; review the invoice before creating a draft.");
   }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(params.postingDate) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(params.invoiceDate)) {
+    throw new Error("Valid posting and vendor invoice dates are required for an SAP draft.");
+  }
+  if (!base.DocCurrency) {
+    throw new Error(`The selected SAP ${label} has no currency; review it in SAP.`);
+  }
 
-  const available = (grpo.DocumentLines ?? []).filter(
+  const available = (base.DocumentLines ?? []).filter(
     (line) =>
       Number.isInteger(line.LineNum) &&
       line.LineStatus === "bost_Open" &&
@@ -82,26 +99,29 @@ export function buildApInvoiceDraft(params: {
     if (!code && !description) {
       throw new Error(`Invoice line ${index + 1} has no item code or description to match.`);
     }
-    const matches = available.filter((line) => {
+    const candidates = available.filter((line) => {
       if (used.has(line.LineNum!)) return false;
       const sapCode = normalized(line.ItemCode);
       const sapDescription = normalized(line.ItemDescription);
       return code ? sapCode === code : sapDescription === description;
     });
-    const match = matches[0];
-    if (!match || match.LineNum === undefined) {
-      throw new Error(`Invoice line ${index + 1} does not exactly match an open GRPO line.`);
+    if (candidates.length === 0) {
+      throw new Error(`Invoice line ${index + 1} does not exactly match an open ${label} line.`);
     }
-    if (matches.length > 1) {
-      throw new Error(`Invoice line ${index + 1} matches multiple GRPO lines; select the correct base line in SAP.`);
+    const matches = candidates.filter((line) => amount <= (line.RemainingOpenQuantity ?? 0));
+    if (matches.length === 0) {
+      throw new Error(`Invoice line ${index + 1} exceeds the ${label}'s remaining open quantity.`);
     }
-    if (amount > (match.RemainingOpenQuantity ?? 0)) {
-      throw new Error(`Invoice line ${index + 1} exceeds the GRPO's remaining open quantity.`);
+    const exactQuantity = matches.filter((line) => amount === line.RemainingOpenQuantity);
+    const narrowed = exactQuantity.length === 1 ? exactQuantity : matches;
+    const match = narrowed[0];
+    if (narrowed.length > 1) {
+      throw new Error(`Invoice line ${index + 1} matches multiple ${label} lines; select the correct base line in SAP.`);
     }
-    used.add(match.LineNum);
+    used.add(match.LineNum!);
     return {
-      BaseType: 20,
-      BaseEntry: grpo.DocEntry,
+      BaseType: baseKind === "GRPO" ? 20 : 22,
+      BaseEntry: base.DocEntry,
       BaseLine: match.LineNum,
       Quantity: amount,
     };
@@ -110,10 +130,21 @@ export function buildApInvoiceDraft(params: {
   return {
     DocObjectCode: "18",
     DocumentSubType: "bod_GSTTaxInvoice",
-    DocType: "dDocument_Items",
-    CardCode: grpo.CardCode,
+    DocType: base.DocType === "dDocument_Service" ? "dDocument_Service" : "dDocument_Items",
+    CardCode: base.CardCode,
+    DocCurrency: base.DocCurrency,
+    DocDate: params.postingDate,
+    TaxDate: params.invoiceDate,
     NumAtCard: params.invoiceNumber.trim(),
     Comments: `Samrat case ${params.caseId} AP invoice draft`,
     DocumentLines: documentLines,
   };
+}
+
+export function buildApInvoiceDraft(params: DraftParams & { grpo: SapGrpo }) {
+  return buildBasedApInvoiceDraft({ ...params, base: params.grpo, baseKind: "GRPO" });
+}
+
+export function buildPoApInvoiceDraft(params: DraftParams & { po: SapPurchaseOrder }) {
+  return buildBasedApInvoiceDraft({ ...params, base: params.po, baseKind: "PO" });
 }

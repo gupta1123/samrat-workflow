@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 
 import { ApiError, dbCheck, jsonBody, ownedCase, uuid, withUser } from "@/server/api/helpers";
 import { readStoredLineItems } from "@/server/line-items";
-import { classifySapCase, matchSapReference, parseSapAmount } from "@/lib/sap-decision";
+import { classifySapCase, matchSapReference, normalizeSapReference, parseSapAmount, scoreVendorNames } from "@/lib/sap-decision";
 import { readSapEnvironment } from "@/server/sap/config";
-import { buildApInvoiceDraft } from "@/server/sap/ap-draft";
+import { buildApInvoiceDraft, buildPoApInvoiceDraft } from "@/server/sap/ap-draft";
+import { sapInvoiceDate, sapPostingDate } from "@/server/sap/dates";
 import { fetchTestOpenGrpoRows, withTestServiceLayer } from "@/server/sap/service-layer";
 
 type Context = { params: Promise<{ id: string }> };
@@ -19,11 +20,29 @@ export async function POST(request: Request, context: Context) {
     if (row.status !== "accepted") {
       throw new ApiError("Approve the case before creating an SAP draft.", 409);
     }
-    const body = (await jsonBody(request)) as { baseGrpoDocNum?: unknown } | null;
-    const requestedDocNum =
+    const body = (await jsonBody(request)) as {
+      baseGrpoDocNum?: unknown;
+      baseGrpoDocEntry?: unknown;
+      basePoDocNum?: unknown;
+      basePoDocEntry?: unknown;
+    } | null;
+    const requestedGrpoDocNum =
       typeof body?.baseGrpoDocNum === "string" && body.baseGrpoDocNum.trim()
         ? body.baseGrpoDocNum.trim()
         : null;
+    const requestedPoDocNum =
+      typeof body?.basePoDocNum === "string" && body.basePoDocNum.trim()
+        ? body.basePoDocNum.trim()
+        : null;
+    if (requestedGrpoDocNum && requestedPoDocNum) {
+      throw new ApiError("Select either one SAP GRPO or one SAP purchase order, not both.", 409);
+    }
+    const baseKind = requestedPoDocNum ? "PO" : "GRPO";
+    const requestedEntry = Number(baseKind === "PO" ? body?.basePoDocEntry : body?.baseGrpoDocEntry);
+    if ((baseKind === "PO" ? body?.basePoDocEntry : body?.baseGrpoDocEntry) != null &&
+        (!Number.isInteger(requestedEntry) || requestedEntry <= 0)) {
+      throw new ApiError("The selected SAP document entry is invalid.", 409);
+    }
 
     const documentsResult = await db
       .from("packet_documents")
@@ -52,6 +71,15 @@ export async function POST(request: Request, context: Context) {
     if (!invoice) throw new ApiError("The case invoice number does not match an uploaded vendor invoice.", 409);
     const invoiceFields = (invoice.extracted_fields ?? {}) as Record<string, unknown>;
     const invoiceVendor = String(invoiceFields.vendorName ?? invoiceFields.supplierName ?? "").trim();
+    const invoiceDate = sapInvoiceDate(invoiceFields.documentDate);
+    if (!invoiceDate) {
+      throw new ApiError("The vendor invoice date is missing or unreadable. Review it before creating an SAP draft.", 409);
+    }
+    const postingDate = sapPostingDate();
+    const invoiceTotal = parseSapAmount(invoiceFields.totalAmount);
+    if (invoiceTotal === null || invoiceTotal <= 0) {
+      throw new ApiError("The vendor invoice needs a positive total before creating an SAP draft.", 409);
+    }
     const invoiceLines = readStoredLineItems(invoice.extracted_fields).map((line) => ({
       itemCode: line.itemCode,
       description: line.description,
@@ -80,74 +108,131 @@ export async function POST(request: Request, context: Context) {
       };
     }
 
-    const openRows = await fetchTestOpenGrpoRows();
-    const baseDocNum = requestedDocNum ?? matchSapReference(
+    const openRows = baseKind === "GRPO" ? await fetchTestOpenGrpoRows() : [];
+    const baseDocNum = requestedPoDocNum ?? requestedGrpoDocNum ?? matchSapReference(
       classification.poNumber,
       openRows.map((candidate) => candidate.DocNum).filter(
         (value): value is string | number => typeof value === "string" || typeof value === "number",
       ),
     );
     if (!baseDocNum) {
-      throw new ApiError("Select a matching open SAP GRPO before creating an AP draft.", 409);
+      throw new ApiError("Select a matching open SAP GRPO or purchase order before creating an AP draft.", 409);
     }
-    const baseRows = openRows.filter((candidate) => String(candidate.DocNum ?? "") === baseDocNum);
+    if (baseKind === "PO" && (!/^\d+$/.test(baseDocNum) ||
+        normalizeSapReference(classification.poNumber) !== normalizeSapReference(baseDocNum))) {
+      throw new ApiError("The selected SAP purchase order number must match the uploaded packet.", 409);
+    }
+    const baseRows = openRows.filter((candidate) =>
+      String(candidate.DocNum ?? "") === baseDocNum &&
+      (!Number.isInteger(requestedEntry) || Number(candidate.DocEntry) === requestedEntry),
+    );
     const entries = [...new Set(baseRows.map((candidate) => Number(candidate.DocEntry)))];
     const cardCodes = [...new Set(baseRows.map((candidate) => String(candidate["BP Code"] ?? "").trim()))];
-    if (entries.length !== 1 || !Number.isInteger(entries[0]) || entries[0] <= 0 ||
-        cardCodes.length !== 1 || !cardCodes[0]) {
+    if (baseKind === "GRPO" && (entries.length !== 1 || !Number.isInteger(entries[0]) || entries[0] <= 0 ||
+        cardCodes.length !== 1 || !cardCodes[0])) {
       throw new ApiError("The selected SAP GRPO has ambiguous document or vendor details.", 409);
     }
 
     const comment = `Samrat case ${id} AP invoice draft`;
     let result: { DocEntry?: number; DocNum?: number; CardCode?: string; Comments?: string };
     let alreadyCreated = false;
+    let selectedEntry = entries[0] ?? 0;
+    let selectedCardCode = cardCodes[0] ?? "";
     try {
       result = await withTestServiceLayer(async (client) => {
-        const grpo = await client.getGrpo(entries[0]);
-        const existingInvoice = await client.findInvoiceByReference(cardCodes[0], classification.invoiceNumber!);
+        const baseDocument = baseKind === "GRPO"
+          ? await client.getGrpo(selectedEntry)
+          : await (async () => {
+              const candidates = await client.listPurchaseOrdersByDocNum(Number(baseDocNum));
+              const openCandidates = candidates.filter((candidate) =>
+                candidate.Cancelled === "tNO" && candidate.DocumentStatus === "bost_Open" &&
+                scoreVendorNames(invoiceVendor, candidate.CardName) >= 0.8 &&
+                (!Number.isInteger(requestedEntry) || candidate.DocEntry === requestedEntry),
+              );
+              if (openCandidates.length !== 1 || !openCandidates[0].DocEntry) {
+                throw new ApiError("The selected open SAP purchase order is missing or ambiguous; review its document number and vendor.", 409);
+              }
+              selectedEntry = openCandidates[0].DocEntry;
+              selectedCardCode = openCandidates[0].CardCode ?? "";
+              return client.getPurchaseOrder(selectedEntry);
+            })();
+        if (String(baseDocument.DocNum ?? "") !== baseDocNum ||
+            baseDocument.DocEntry !== selectedEntry ||
+            baseDocument.CardCode !== selectedCardCode) {
+          throw new ApiError("The SAP base document changed since it was selected. Refresh the SAP match.", 409);
+        }
+        const invoiceCurrency = String(invoiceFields.currency ?? "").trim().toUpperCase();
+        if (invoiceCurrency && invoiceCurrency !== baseDocument.DocCurrency?.toUpperCase()) {
+          throw new ApiError("The vendor invoice currency differs from the selected SAP document.", 409);
+        }
+        const existingInvoice = await client.findInvoiceByReference(selectedCardCode, classification.invoiceNumber!);
         if (existingInvoice) {
           throw new ApiError(
             `A posted SAP Test AP invoice ${existingInvoice.DocNum ?? existingInvoice.DocEntry} already uses this vendor invoice number. No draft was created.`,
             409,
           );
         }
-        const invoiceTotal = parseSapAmount(invoiceFields.totalAmount);
-        if (invoiceTotal !== null) {
-          const sameAmount = await client.listInvoicesByAmount(cardCodes[0], invoiceTotal);
-          const basedOnGrpo = sameAmount.find((document) =>
+        {
+          const sameAmount = await client.listInvoicesByAmount(selectedCardCode, invoiceTotal);
+          const basedOnDocument = sameAmount.find((document) =>
             document.Cancelled === "tNO" && (document.DocumentLines ?? []).some(
-              (line) => line.BaseType === 20 && line.BaseEntry === entries[0],
+              (line) => line.BaseType === (baseKind === "GRPO" ? 20 : 22) && line.BaseEntry === selectedEntry,
             ),
           );
-          if (basedOnGrpo) {
+          if (basedOnDocument) {
             throw new ApiError(
-              `A posted SAP Test AP invoice ${basedOnGrpo.DocNum ?? basedOnGrpo.DocEntry} is already linked to this GRPO. No draft was created.`,
+              `A posted SAP Test AP invoice ${basedOnDocument.DocNum ?? basedOnDocument.DocEntry} is already linked to this ${baseKind}. No draft was created.`,
               409,
             );
           }
         }
         let payload: ReturnType<typeof buildApInvoiceDraft>;
         try {
-          payload = buildApInvoiceDraft({
-            grpo,
-            expectedDocEntry: entries[0],
+          const shared = {
+            expectedDocEntry: selectedEntry,
             expectedDocNum: baseDocNum,
-            expectedCardCode: cardCodes[0],
+            expectedCardCode: selectedCardCode,
             invoiceVendor,
             invoiceNumber: classification.invoiceNumber!,
             invoiceLines,
             caseId: id,
-          });
+            postingDate,
+            invoiceDate,
+          };
+          payload = baseKind === "GRPO"
+            ? buildApInvoiceDraft({ ...shared, grpo: baseDocument })
+            : buildPoApInvoiceDraft({ ...shared, po: baseDocument });
         } catch (error) {
-          throw new ApiError(error instanceof Error ? error.message : "Invoice and GRPO do not match.", 409);
+          throw new ApiError(error instanceof Error ? error.message : "Invoice and SAP document do not match.", 409);
         }
         const previous = await client.findDraft(comment);
         if (previous) {
-          if (previous.CardCode !== cardCodes[0]) {
+          if (previous.CardCode !== selectedCardCode) {
             throw new ApiError("An SAP draft for this case has a different vendor; review it in SAP.", 409);
           }
           alreadyCreated = true;
           return previous;
+        }
+        const currencies = await client.getAdminCurrencies();
+        if (!currencies.LocalCurrency || !currencies.SystemCurrency) {
+          throw new ApiError("SAP Test did not return its local and system currencies; no draft was created.", 409);
+        }
+        const requiredRates = new Set(
+          [currencies.SystemCurrency, baseDocument.DocCurrency]
+            .filter((currency): currency is string => Boolean(currency) && currency !== currencies.LocalCurrency),
+        );
+        for (const currency of requiredRates) {
+          try {
+            await client.getCurrencyRate(currency, postingDate);
+          } catch (error) {
+            if (/update the exchange rate|no valid .* exchange rate/i.test(String(error))) {
+              throw new ApiError(
+                `SAP Test is missing the ${currency} exchange rate for posting date ${postingDate}. Ask the SAP administrator to maintain that day's rate, then retry. No draft was created.`,
+                409,
+              );
+            }
+            throw error;
+          }
         }
         return client.createDraft(payload);
       });
@@ -176,9 +261,12 @@ export async function POST(request: Request, context: Context) {
         payload: {
           documentType: "APInvoiceDraft",
           caseId: id,
-          baseGrpoDocNum: baseDocNum,
-          baseGrpoDocEntry: entries[0],
+          baseKind,
+          baseDocNum,
+          baseDocEntry: selectedEntry,
           invoiceNumber: classification.invoiceNumber,
+          postingDate,
+          invoiceDate,
         },
         response: {
           DocEntry: result.DocEntry,
@@ -194,7 +282,7 @@ export async function POST(request: Request, context: Context) {
       case_id: id,
       owner_user_id: user,
       action: alreadyCreated ? "sap_ap_draft_linked" : "sap_ap_draft_created",
-      details: { sapEnv: "test", docEntry: result.DocEntry, baseGrpoDocNum: baseDocNum },
+      details: { sapEnv: "test", docEntry: result.DocEntry, baseKind, baseDocNum, baseDocEntry: selectedEntry },
     });
     if (event.error) console.error("Could not record SAP draft event:", event.error.message);
 

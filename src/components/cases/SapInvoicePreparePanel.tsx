@@ -31,7 +31,9 @@ type ApPayload = {
   documentType: string;
   vendor: { cardCode: string | null; cardName: string | null };
   baseGrpoDocNum: string | null;
+  baseGrpoDocEntry: number | null;
   basePoDocNum: string | null;
+  basePoDocEntry: number | null;
   poNumber: string | null;
   invoiceNumber: string | null;
   caseId: string;
@@ -46,7 +48,7 @@ type ApPayload = {
     taxAmount: number | null;
     baseGrpoLine: { docEntry: string | number; poLineNum: number; openQty: number | null } | null;
   }>;
-  totals: { taxable: number; tax: number };
+  totals: { taxable: number | null; tax: number | null; total: number | null };
 };
 
 type PrepareResult = {
@@ -140,7 +142,10 @@ export function SapInvoicePreparePanel({
   }
 
   async function handleSave() {
-    if (!data?.apPayload?.baseGrpoDocNum) return;
+    if (!data?.apPayload) return;
+    const base = data.baseSource === "po"
+      ? { basePoDocNum: data.apPayload.basePoDocNum, basePoDocEntry: data.apPayload.basePoDocEntry }
+      : { baseGrpoDocNum: data.apPayload.baseGrpoDocNum, baseGrpoDocEntry: data.apPayload.baseGrpoDocEntry };
     setSaving(true);
     setSaveResult(null);
     setSaveFailed(false);
@@ -148,7 +153,7 @@ export function SapInvoicePreparePanel({
       const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/sap-ap-draft`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseGrpoDocNum: data.apPayload.baseGrpoDocNum }),
+        body: JSON.stringify(base),
       });
       const body = await response.json().catch(() => ({}));
       setSaveFailed(!response.ok);
@@ -228,6 +233,11 @@ export function SapInvoicePreparePanel({
   const baseSource = data.baseSource ?? "grpo";
   const baseDocNum = baseSource === "po" ? poDocNum : grpoDocNum;
   const baseLabel = baseSource === "po" ? "PO" : "GRPO";
+  const canCreateDraft = data.caseStatus === "accepted" && data.sapEnv === "test" &&
+    apPayload.totals.total !== null && apPayload.totals.total > 0 &&
+    (baseSource === "po"
+      ? Boolean(apPayload.basePoDocNum && apPayload.basePoDocEntry)
+      : Boolean(apPayload.baseGrpoDocNum && apPayload.baseGrpoDocEntry));
 
   if (variant === "sidebar") {
     return (
@@ -259,11 +269,11 @@ export function SapInvoicePreparePanel({
       {/* Two-column layout: Invoice (left) | SAP Match (right) */}
       <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
         
-        {/* LEFT: Invoice to Post */}
+        {/* LEFT: Invoice draft preview */}
         <div className="rounded-lg border border-[#e0d8cc] bg-white">
           <div className="border-b border-[#e0d8cc] bg-[#fbfaf8] px-4 py-2.5">
-            <div className="text-[11px] font-semibold text-[#3d3530]">Invoice to Post</div>
-            <div className="text-[10px] text-[#8a7f72]">AP Invoice → SAP</div>
+            <div className="text-[11px] font-semibold text-[#3d3530]">Invoice Draft Preview</div>
+            <div className="text-[10px] text-[#8a7f72]">AP Invoice Draft → SAP Test</div>
           </div>
           
           <div className="p-4 space-y-3">
@@ -334,7 +344,7 @@ export function SapInvoicePreparePanel({
               </div>
               <div className="flex justify-between text-[11px] border-t border-[#ece6dc] pt-1.5">
                 <span className="font-semibold text-[#3d3530]">Total</span>
-                <span className="font-semibold text-[#111827]">{formatMoney(apPayload.totals.taxable + apPayload.totals.tax)}</span>
+                <span className="font-semibold text-[#111827]">{formatMoney(apPayload.totals.total)}</span>
               </div>
             </div>
           </div>
@@ -471,11 +481,11 @@ export function SapInvoicePreparePanel({
         <p className="text-[11px] text-[#8a7f72]">Approve this case before creating an SAP draft.</p>
       ) : data.sapEnv !== "test" ? (
         <p className="text-[11px] text-[#b45309]">Draft creation is enabled only in SAP Test.</p>
-      ) : baseSource !== "grpo" || !apPayload.baseGrpoDocNum ? (
-        <p className="text-[11px] text-[#b45309]">An open GRPO is required to create an AP Invoice Draft.</p>
+      ) : !canCreateDraft ? (
+        <p className="text-[11px] text-[#b45309]">A verified open {baseLabel}, invoice total, and approved case are required for an AP Invoice Draft.</p>
       ) : confirming ? (
         <div className="flex items-center gap-2 text-[11px]">
-          <span>Create an AP Invoice Draft in SAP Test from GRPO {apPayload.baseGrpoDocNum}? No invoice will be posted.</span>
+          <span>Create an AP Invoice Draft in SAP Test from {baseLabel} {baseDocNum}? No invoice will be posted.</span>
           <Button size="sm" disabled={saving} onClick={() => void handleSave()}>
             {saving ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Send className="mr-1.5 h-3 w-3" />}
             Confirm draft
@@ -483,8 +493,14 @@ export function SapInvoicePreparePanel({
           <Button size="sm" variant="outline" disabled={saving} onClick={() => setConfirming(false)}>Cancel</Button>
         </div>
       ) : null}
+      {baseSource === "po" && canCreateDraft ? (
+        <p className="text-[11px] text-[#b45309]">This draft is based directly on a PO. Review goods receipt and inventory impact in SAP before posting the draft as a final invoice.</p>
+      ) : null}
+      {canCreateDraft ? (
+        <p className="text-[11px] text-[#8a7f72]">These are the extracted vendor invoice amounts. SAP calculates the draft from its base document; verify the draft rate, tax, and total before final posting.</p>
+      ) : null}
       <div className="flex items-center gap-3">
-        {data.caseStatus === "accepted" && data.sapEnv === "test" && baseSource === "grpo" && apPayload.baseGrpoDocNum && !confirming ? (
+        {canCreateDraft && !confirming ? (
           <Button
             size="sm"
             className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white hover:bg-[#3b271a] shadow-sm"

@@ -42,6 +42,9 @@ export async function withTestServiceLayer<T>(
     getGrpo: (docEntry: number) => Promise<SapGrpo>;
     listGrposByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getPurchaseOrder: (docEntry: number) => Promise<SapReadDocument>;
+    listPurchaseOrdersByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
+    getAdminCurrencies: () => Promise<{ LocalCurrency?: string; SystemCurrency?: string }>;
+    getCurrencyRate: (currency: string, date: string) => Promise<number>;
     listInvoicesByAmount: (cardCode: string, amount: number) => Promise<SapReadDocument[]>;
     findInvoiceByReference: (cardCode: string, vendorReference: string) => Promise<SapReadDocument | null>;
     findDraft: (comment: string) => Promise<SapDraftResponse | null>;
@@ -125,6 +128,34 @@ export async function withTestServiceLayer<T>(
       async getPurchaseOrder(docEntry) {
         const { body } = await request(`/PurchaseOrders(${docEntry})`);
         return body as SapReadDocument;
+      },
+      async listPurchaseOrdersByDocNum(docNum) {
+        const filter = encodeURIComponent(`DocNum eq ${docNum}`);
+        const { body } = await request(
+          `/PurchaseOrders?$select=DocEntry,DocNum,CardCode,CardName,DocumentStatus,Cancelled&$filter=${filter}&$top=100`,
+        );
+        return Array.isArray(body.value) ? body.value as SapReadDocument[] : [];
+      },
+      async getAdminCurrencies() {
+        const { body } = await request("/CompanyService_GetAdminInfo", {
+          method: "POST",
+          body: "{}",
+        });
+        return {
+          LocalCurrency: typeof body.LocalCurrency === "string" ? body.LocalCurrency : undefined,
+          SystemCurrency: typeof body.SystemCurrency === "string" ? body.SystemCurrency : undefined,
+        };
+      },
+      async getCurrencyRate(currency, date) {
+        const { body } = await request("/SBOBobService_GetCurrencyRate", {
+          method: "POST",
+          body: JSON.stringify({ Currency: currency, Date: date.replaceAll("-", "") }),
+        });
+        const rate = Number(body);
+        if (!Number.isFinite(rate) || rate <= 0) {
+          throw new Error(`SAP has no valid ${currency} exchange rate for ${date}.`);
+        }
+        return rate;
       },
       async listInvoicesByAmount(cardCode, amount) {
         // SAP rounds document totals in some branches, so allow up to two rupees.

@@ -16,6 +16,7 @@ import {
   scoreVendorNames,
 } from "@/lib/sap-decision";
 import type { SapPacketLine } from "@/server/sap/posting";
+import { invoiceMoneyPreview } from "@/server/sap/preview";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -352,6 +353,7 @@ export async function GET(request: Request, context: Context) {
         rate: item.rate,
         taxableAmount: item.taxableAmount,
         taxAmount: item.taxAmount,
+        lineTotal: item.lineTotal,
       })),
     );
 
@@ -461,6 +463,7 @@ export async function GET(request: Request, context: Context) {
     }
 
     // Build AP payload
+    const money = invoiceMoneyPreview(invoiceDocuments, packetLines);
     const apPayload = {
       documentType: "APInvoice",
       vendor: {
@@ -468,19 +471,21 @@ export async function GET(request: Request, context: Context) {
         cardName: (baseSource === "grpo" ? bestGrpo?.bpName : bestPo?.bpName) ?? null,
       },
       baseGrpoDocNum: baseSource === "grpo" && bestGrpo ? String(bestGrpo.docNum) : null,
+      baseGrpoDocEntry: baseSource === "grpo" && bestGrpo ? Number(bestGrpo.lines[0]?.docEntry) : null,
       basePoDocNum: baseSource === "po" && bestPo ? String(bestPo.docNum) : null,
+      basePoDocEntry: baseSource === "po" && bestPo ? bestPo.docEntry : null,
       poNumber,
       invoiceNumber: classification.invoiceNumber,
       caseId: id,
       caseName: row.display_name,
-      lines: matchedLines.map((line) => ({
+      lines: matchedLines.map((line, index) => ({
         description: line.description,
         hsnSac: line.hsnSac,
         quantity: line.quantity,
         unit: line.unit,
-        rate: line.rate,
-        taxableAmount: line.taxableAmount,
-        taxAmount: line.taxAmount,
+        rate: money.lines[index]?.rate ?? null,
+        taxableAmount: money.lines[index]?.taxableAmount ?? null,
+        taxAmount: money.lines[index]?.taxAmount ?? null,
         baseGrpoLine: line.matchedGrpoLine
           ? {
               docEntry: line.matchedGrpoLine.docEntry,
@@ -489,10 +494,7 @@ export async function GET(request: Request, context: Context) {
             }
           : null,
       })),
-      totals: {
-        taxable: packetLines.reduce((s, l) => s + (parseSapAmount(l.taxableAmount) ?? 0), 0),
-        tax: packetLines.reduce((s, l) => s + (parseSapAmount(l.taxAmount) ?? 0), 0),
-      },
+      totals: money.totals,
     };
 
     return NextResponse.json({

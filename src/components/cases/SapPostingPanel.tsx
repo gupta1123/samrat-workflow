@@ -34,6 +34,7 @@ export function SapPostingPanel({
   const [result, setResult] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [baseGrpoDocNum, setBaseGrpoDocNum] = useState<string>("");
+  const [basePoDocNum, setBasePoDocNum] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,7 +62,10 @@ export function SapPostingPanel({
     setPosting(true);
     setResult(null);
     try {
-      const { ok, body } = await createSapApDraft(caseId, baseGrpoDocNum || null);
+      const grpo = baseGrpoDocNum || readiness?.matchedGrpoDocNum;
+      const po = basePoDocNum || readiness?.matchedPoDocNum;
+      const { ok, body } = await createSapApDraft(caseId,
+        grpo ? { baseGrpoDocNum: grpo } : { basePoDocNum: po ?? null });
       if (ok) {
         setResult(
           typeof body.message === "string" && body.message
@@ -113,7 +117,7 @@ export function SapPostingPanel({
   );
   const remaining = classification.plan.filter((kind) => kind === "AP" && !apDraftExists);
   const canCreateDraft = postable && readiness.sapEnv === "test" &&
-    Boolean(baseGrpoDocNum || readiness.matchedGrpoDocNum);
+    Boolean(baseGrpoDocNum || readiness.matchedGrpoDocNum || basePoDocNum || readiness.matchedPoDocNum);
 
   return (
     <section
@@ -193,15 +197,34 @@ export function SapPostingPanel({
         </label>
       ) : null}
 
-      {!readiness.matchedGrpoDocNum &&
-      readiness.candidateGRPOs.length === 0 &&
+      {!readiness.matchedGrpoDocNum && !readiness.matchedPoDocNum &&
+      readiness.candidatePOs.length > 0 && remaining.includes("AP") ? (
+        <label className="mt-3 block text-sm text-slate-700">
+          Or base the AP invoice draft on an open SAP purchase order
+          <select
+            className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm"
+            value={basePoDocNum}
+            onChange={(event) => setBasePoDocNum(event.target.value)}
+          >
+            <option value="">No base purchase order selected</option>
+            {readiness.candidatePOs.map((candidate) => (
+              <option key={candidate.docNum} value={candidate.docNum}>
+                PO {candidate.docNum}{candidate.vendorName ? ` · ${candidate.vendorName}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      {!readiness.matchedGrpoDocNum && !readiness.matchedPoDocNum &&
+      readiness.candidateGRPOs.length === 0 && readiness.candidatePOs.length === 0 &&
       !readiness.sapError &&
       remaining.length > 0 ? (
         <p className="mt-3 text-sm text-slate-500">
           No open SAP GRPO resembles this packet (vendor{" "}
           {readiness.caseVendor || "unknown"}
           {readiness.caseTotal !== null ? `, total ₹${readiness.caseTotal.toLocaleString("en-IN")}` : ""}).
-          Select an open GRPO before attempting an AP draft.
+          Select an open GRPO or purchase order before attempting an AP draft.
         </p>
       ) : null}
 

@@ -21,6 +21,7 @@ export type SapPacketLine = {
   rate?: string | number;
   taxableAmount?: string | number;
   taxAmount?: string | number;
+  lineTotal?: string | number;
 };
 
 export type SapPayloadInput = {
