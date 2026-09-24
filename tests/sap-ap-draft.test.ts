@@ -27,7 +27,7 @@ function input(overrides: Record<string, unknown> = {}) {
     invoiceNumber: "INV-TEST-001",
     invoiceLines: [{ itemCode: "VIV10796", description: "Steel Coil", quantity: 2 }],
     caseId: "e6c78cf6-c797-4654-803d-a768880c46ba",
-    postingDate: "2026-09-24",
+    postingDate: "2026-06-15",
     invoiceDate: "2026-06-15",
     ...overrides,
   };
@@ -38,7 +38,7 @@ test("builds a Test AP Invoice Draft based on a verified open GRPO line", () => 
   assert.equal(draft.DocObjectCode, "18");
   assert.equal(draft.CardCode, "VENTG1077");
   assert.equal(draft.NumAtCard, "INV-TEST-001");
-  assert.equal(draft.DocDate, "2026-09-24");
+  assert.equal(draft.DocDate, "2026-06-15");
   assert.equal(draft.TaxDate, "2026-06-15");
   assert.equal(draft.DocCurrency, "INR");
   assert.deepEqual(draft.DocumentLines, [{ BaseType: 20, BaseEntry: 8574, BaseLine: 0, Quantity: 2 }]);

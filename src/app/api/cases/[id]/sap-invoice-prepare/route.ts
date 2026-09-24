@@ -17,6 +17,7 @@ import {
 } from "@/lib/sap-decision";
 import type { SapPacketLine } from "@/server/sap/posting";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
+import { sapInvoiceDate, sapPostingDate } from "@/server/sap/dates";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -341,6 +342,12 @@ export async function GET(request: Request, context: Context) {
     const invoiceTotal = parseSapAmount(
       (invoiceDocuments[0]?.extracted_fields as Record<string, unknown> | undefined)?.totalAmount,
     );
+    const invoiceFields = (invoiceDocuments[0]?.extracted_fields ?? {}) as Record<string, unknown>;
+    const invoiceDate = sapInvoiceDate(invoiceFields.documentDate);
+    const postingDate = invoiceDate && invoiceDate <= sapPostingDate() ? invoiceDate : null;
+    const invoiceCurrency = typeof invoiceFields.currency === "string" && invoiceFields.currency.trim()
+      ? invoiceFields.currency.trim().toUpperCase()
+      : null;
     // Preserve separate rows even when a vendor repeats one description at different rates.
     const packetLines: SapPacketLine[] = invoiceDocuments.flatMap((document) =>
       readStoredLineItems(document.extracted_fields).map((item) => ({
@@ -476,6 +483,9 @@ export async function GET(request: Request, context: Context) {
       basePoDocEntry: baseSource === "po" && bestPo ? bestPo.docEntry : null,
       poNumber,
       invoiceNumber: classification.invoiceNumber,
+      currency: invoiceCurrency,
+      invoiceDate,
+      postingDate,
       caseId: id,
       caseName: row.display_name,
       lines: matchedLines.map((line, index) => ({

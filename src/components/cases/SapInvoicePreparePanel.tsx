@@ -36,6 +36,9 @@ type ApPayload = {
   basePoDocEntry: number | null;
   poNumber: string | null;
   invoiceNumber: string | null;
+  currency: string | null;
+  invoiceDate: string | null;
+  postingDate: string | null;
   caseId: string;
   caseName: string;
   lines: Array<{
@@ -234,6 +237,7 @@ export function SapInvoicePreparePanel({
   const baseDocNum = baseSource === "po" ? poDocNum : grpoDocNum;
   const baseLabel = baseSource === "po" ? "PO" : "GRPO";
   const canCreateDraft = data.caseStatus === "accepted" && data.sapEnv === "test" &&
+    Boolean(apPayload.postingDate) &&
     apPayload.totals.total !== null && apPayload.totals.total > 0 &&
     (baseSource === "po"
       ? Boolean(apPayload.basePoDocNum && apPayload.basePoDocEntry)
@@ -297,6 +301,14 @@ export function SapInvoicePreparePanel({
               <div>
                 <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">PO #</div>
                 <div className="text-[11px] font-medium text-[#111827]">{apPayload.poNumber ?? "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">Currency</div>
+                <div className="text-[11px] font-medium text-[#111827]">{apPayload.currency ?? "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">SAP Test posting date</div>
+                <div className="text-[11px] font-medium text-[#111827]">{apPayload.postingDate ?? "—"}</div>
               </div>
             </div>
 
@@ -481,6 +493,8 @@ export function SapInvoicePreparePanel({
         <p className="text-[11px] text-[#8a7f72]">Approve this case before creating an SAP draft.</p>
       ) : data.sapEnv !== "test" ? (
         <p className="text-[11px] text-[#b45309]">Draft creation is enabled only in SAP Test.</p>
+      ) : !apPayload.postingDate ? (
+        <p className="text-[11px] text-[#b45309]">A valid vendor invoice date that is not in the future is required for the SAP Test posting date.</p>
       ) : !canCreateDraft ? (
         <p className="text-[11px] text-[#b45309]">A verified open {baseLabel}, invoice total, and approved case are required for an AP Invoice Draft.</p>
       ) : confirming ? (

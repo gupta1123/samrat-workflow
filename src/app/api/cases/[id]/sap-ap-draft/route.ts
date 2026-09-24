@@ -75,7 +75,14 @@ export async function POST(request: Request, context: Context) {
     if (!invoiceDate) {
       throw new ApiError("The vendor invoice date is missing or unreadable. Review it before creating an SAP draft.", 409);
     }
-    const postingDate = sapPostingDate();
+    const today = sapPostingDate();
+    if (invoiceDate > today) {
+      throw new ApiError("The vendor invoice date is in the future. Review it before creating an SAP draft.", 409);
+    }
+    // This integration creates a reviewable draft in the historical SAP Test
+    // company. Keep its accounting date aligned with the vendor transaction
+    // instead of assigning the server's current date to an older test invoice.
+    const postingDate = invoiceDate;
     const invoiceTotal = parseSapAmount(invoiceFields.totalAmount);
     if (invoiceTotal === null || invoiceTotal <= 0) {
       throw new ApiError("The vendor invoice needs a positive total before creating an SAP draft.", 409);
@@ -227,7 +234,7 @@ export async function POST(request: Request, context: Context) {
           } catch (error) {
             if (/update the exchange rate|no valid .* exchange rate/i.test(String(error))) {
               throw new ApiError(
-                `SAP Test is missing the ${currency} exchange rate for posting date ${postingDate}. Ask the SAP administrator to maintain that day's rate, then retry. No draft was created.`,
+                `This invoice is in ${baseDocument.DocCurrency}, but SAP Test also records every document in its ${currency} system reporting currency. SAP has no ${currency} rate for the invoice posting date ${postingDate}, so no draft was created.`,
                 409,
               );
             }
@@ -294,7 +301,7 @@ export async function POST(request: Request, context: Context) {
       docNum: result.DocNum,
       message: alreadyCreated
         ? `Existing SAP Test AP Invoice Draft ${result.DocEntry} linked to this case.`
-        : `SAP Test AP Invoice Draft ${result.DocEntry} created. No invoice was posted.`,
+        : `SAP Test AP Invoice Draft ${result.DocEntry} created with posting date ${postingDate}. No invoice was posted.`,
     };
   });
 }
