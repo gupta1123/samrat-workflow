@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import {
-  dbCheck,
-  ownedCase,
-  withUser,
-} from "@/server/api/helpers";
+import { dbCheck, ownedCase, withUser } from "@/server/api/helpers";
 import { readStoredLineItems } from "@/server/line-items";
 import { fetchSapOpenPOs } from "@/server/sap/client";
 import { readSapEnvironment } from "@/server/sap/config";
-import { fetchTestOpenGrpoRows, withTestServiceLayer, type SapReadDocument } from "@/server/sap/service-layer";
+import {
+  fetchTestOpenGrpoRows,
+  withTestServiceLayer,
+  type SapReadDocument,
+} from "@/server/sap/service-layer";
 import { normalizeSapItem, selectSapLine } from "@/lib/sap-line-match";
 import {
   classifySapCase,
@@ -44,16 +44,29 @@ type PoDoc = {
 };
 
 function groupPoByDoc(rows: Record<string, unknown>[]): PoDoc[] {
-  const byDoc = new Map<string, { docNum: string | number; docEntry: number | null; bpCode: string | null; bpName: string | null; lines: PoLine[] }>();
+  const byDoc = new Map<
+    string,
+    {
+      docNum: string | number;
+      docEntry: number | null;
+      bpCode: string | null;
+      bpName: string | null;
+      lines: PoLine[];
+    }
+  >();
   for (const row of rows) {
     const docNum = row.DocNum as string | number;
     if (!docNum) continue;
     const bpCode = typeof row["BP Code"] === "string" ? row["BP Code"] : null;
     const bpName = typeof row["BP Name"] === "string" ? row["BP Name"] : null;
-    const key = typeof row.DocEntry === "number" ? `entry:${row.DocEntry}` : `${bpCode ?? ""}:${docNum}`;
+    const key =
+      typeof row.DocEntry === "number"
+        ? `entry:${row.DocEntry}`
+        : `${bpCode ?? ""}:${docNum}`;
     const line: PoLine = {
       docNum,
-      poLineNum: typeof row["PO Line Num"] === "number" ? row["PO Line Num"] : 0,
+      poLineNum:
+        typeof row["PO Line Num"] === "number" ? row["PO Line Num"] : 0,
       itemCode: typeof row.ItemCode === "string" ? row.ItemCode : null,
       description: typeof row.Dscription === "string" ? row.Dscription : null,
       quantity: parseSapAmount(row.Quantity),
@@ -68,7 +81,13 @@ function groupPoByDoc(rows: Record<string, unknown>[]): PoDoc[] {
     if (existing) {
       existing.lines.push(line);
     } else {
-      byDoc.set(key, { docNum, docEntry: typeof row.DocEntry === "number" ? row.DocEntry : null, bpCode, bpName, lines: [line] });
+      byDoc.set(key, {
+        docNum,
+        docEntry: typeof row.DocEntry === "number" ? row.DocEntry : null,
+        bpCode,
+        bpName,
+        lines: [line],
+      });
     }
   }
   return Array.from(byDoc.values()).map((data) => ({
@@ -101,14 +120,20 @@ function findBestPoDoc(
         if (poNumber) {
           const normalizedPo = normalizeSapReference(poNumber);
           const normalizedDocNum = normalizeSapReference(doc.docNum);
-          if (normalizedPo && normalizedDocNum && normalizedPo === normalizedDocNum) {
+          if (
+            normalizedPo &&
+            normalizedDocNum &&
+            normalizedPo === normalizedDocNum
+          ) {
             score += 50;
           } else {
             // No PO match - significantly reduce score to prevent false matches
             score = Math.max(0, score - 40);
           }
         }
-        const hasOpenQty = doc.lines.some((l) => l.openQty !== null && l.openQty > 0);
+        const hasOpenQty = doc.lines.some(
+          (l) => l.openQty !== null && l.openQty > 0,
+        );
         if (hasOpenQty) score += 10;
         return Math.round(score);
       })(),
@@ -165,9 +190,12 @@ type GrpoDoc = {
   lines: MatchedGrpoLine[];
 };
 
-function extractVendorName(documents: Array<{ extractedFields: Record<string, unknown> }>): string | null {
+function extractVendorName(
+  documents: Array<{ extractedFields: Record<string, unknown> }>,
+): string | null {
   for (const doc of documents) {
-    const vendor = doc.extractedFields.vendorName ?? doc.extractedFields.supplierName;
+    const vendor =
+      doc.extractedFields.vendorName ?? doc.extractedFields.supplierName;
     if (typeof vendor === "string" && vendor.trim()) return vendor.trim();
   }
   return null;
@@ -177,23 +205,29 @@ function extractPoNumber(
   casePoNumber: unknown,
   documents: Array<{ extractedFields: Record<string, unknown> }>,
 ): string | null {
-  if (typeof casePoNumber === "string" && casePoNumber.trim()) return casePoNumber.trim();
+  if (typeof casePoNumber === "string" && casePoNumber.trim())
+    return casePoNumber.trim();
   for (const doc of documents) {
-    const val = doc.extractedFields.poNumber ?? doc.extractedFields.purchaseOrderNumber;
+    const val =
+      doc.extractedFields.poNumber ?? doc.extractedFields.purchaseOrderNumber;
     if (typeof val === "string" && val.trim()) return val.trim();
   }
   return null;
 }
 
 function groupGrpoByDoc(rows: Record<string, unknown>[]): GrpoDoc[] {
-  const byDoc = new Map<string, { docNum: string | number; lines: MatchedGrpoLine[] }>();
+  const byDoc = new Map<
+    string,
+    { docNum: string | number; lines: MatchedGrpoLine[] }
+  >();
   for (const row of rows) {
     const docNum = row.DocNum as string | number;
     if (!docNum) continue;
     const line: MatchedGrpoLine = {
       docNum,
       docEntry: row.DocEntry as string | number,
-      poLineNum: typeof row["PO Line Num"] === "number" ? row["PO Line Num"] : 0,
+      poLineNum:
+        typeof row["PO Line Num"] === "number" ? row["PO Line Num"] : 0,
       itemCode: typeof row.ItemCode === "string" ? row.ItemCode : null,
       description: typeof row.Dscription === "string" ? row.Dscription : null,
       quantity: parseSapAmount(row.Quantity),
@@ -248,9 +282,14 @@ function scoreGrpoDoc(
   }
 
   const lineMatches = invoiceDescriptions.filter((description) =>
-    doc.lines.some((line) => line.description && normalizeSapItem(line.description) === normalizeSapItem(description)),
+    doc.lines.some(
+      (line) =>
+        line.description &&
+        normalizeSapItem(line.description) === normalizeSapItem(description),
+    ),
   ).length;
-  if (invoiceDescriptions.length > 0) score += (lineMatches / invoiceDescriptions.length) * 60;
+  if (invoiceDescriptions.length > 0)
+    score += (lineMatches / invoiceDescriptions.length) * 60;
   if (!exactDocNum && (vendorScore < 0.8 || lineMatches === 0)) return 0;
 
   const hasOpenQty = doc.lines.some((l) => l.openQty !== null && l.openQty > 0);
@@ -272,8 +311,11 @@ function invoiceBasedOn(
   baseType: 20 | 22,
   baseEntry: number,
 ): boolean {
-  return invoice.Cancelled === "tNO" && (invoice.DocumentLines ?? []).some(
-    (line) => line.BaseType === baseType && line.BaseEntry === baseEntry,
+  return (
+    invoice.Cancelled === "tNO" &&
+    (invoice.DocumentLines ?? []).some(
+      (line) => line.BaseType === baseType && line.BaseEntry === baseEntry,
+    )
   );
 }
 
@@ -283,8 +325,13 @@ function matchingClosedGrpo(
   packetLines: SapPacketLine[],
 ): SapReadDocument | null {
   const candidates = documents.filter((document) => {
-    if (document.Cancelled !== "tNO" || document.DocumentStatus !== "bost_Close") return false;
-    if (!vendorName || scoreVendorNames(vendorName, document.CardName) < 0.8) return false;
+    if (
+      document.Cancelled !== "tNO" ||
+      document.DocumentStatus !== "bost_Close"
+    )
+      return false;
+    if (!vendorName || scoreVendorNames(vendorName, document.CardName) < 0.8)
+      return false;
     const used = new Set<number>();
     const sapLines = (document.DocumentLines ?? []).map((line) => ({
       itemCode: line.ItemCode,
@@ -292,10 +339,13 @@ function matchingClosedGrpo(
       quantity: line.Quantity,
       price: line.Price,
     }));
-    return packetLines.length > 0 && packetLines.every((line) => {
-      const match = selectSapLine(line, sapLines, used);
-      return match && Number(line.quantity) === Number(match.line.quantity);
-    });
+    return (
+      packetLines.length > 0 &&
+      packetLines.every((line) => {
+        const match = selectSapLine(line, sapLines, used);
+        return match && Number(line.quantity) === Number(match.line.quantity);
+      })
+    );
   });
   return candidates.length === 1 ? candidates[0] : null;
 }
@@ -337,23 +387,33 @@ export async function GET(request: Request, context: Context) {
     const vendorName = extractVendorName(documents);
     const poNumber = extractPoNumber(row.po_number, documents);
     const invoiceDocuments = (documentsResult.data ?? []).filter(
-      (document) => document.document_type === "Invoice" || document.document_type === "Tax Invoice",
+      (document) =>
+        document.document_type === "Invoice" ||
+        document.document_type === "Tax Invoice",
     );
     const invoiceTotal = parseSapAmount(
-      (invoiceDocuments[0]?.extracted_fields as Record<string, unknown> | undefined)?.totalAmount,
+      (
+        invoiceDocuments[0]?.extracted_fields as
+          Record<string, unknown> | undefined
+      )?.totalAmount,
     );
-    const invoiceFields = (invoiceDocuments[0]?.extracted_fields ?? {}) as Record<string, unknown>;
+    const invoiceFields = (invoiceDocuments[0]?.extracted_fields ??
+      {}) as Record<string, unknown>;
     const invoiceDate = sapInvoiceDate(invoiceFields.documentDate);
-    const postingDate = invoiceDate && invoiceDate <= sapPostingDate() ? invoiceDate : null;
-    const invoiceCurrency = typeof invoiceFields.currency === "string" && invoiceFields.currency.trim()
-      ? invoiceFields.currency.trim().toUpperCase()
-      : null;
+    const postingDate =
+      invoiceDate && invoiceDate <= sapPostingDate() ? invoiceDate : null;
+    const invoiceCurrency =
+      typeof invoiceFields.currency === "string" &&
+      invoiceFields.currency.trim()
+        ? invoiceFields.currency.trim().toUpperCase()
+        : null;
     // Preserve separate rows even when a vendor repeats one description at different rates.
     const packetLines: SapPacketLine[] = invoiceDocuments.flatMap((document) =>
       readStoredLineItems(document.extracted_fields).map((item) => ({
         documentType: String(document.document_type ?? ""),
         itemCode: typeof item.itemCode === "string" ? item.itemCode : undefined,
-        description: typeof item.description === "string" ? item.description : undefined,
+        description:
+          typeof item.description === "string" ? item.description : undefined,
         hsnSac: typeof item.hsnSac === "string" ? item.hsnSac : undefined,
         quantity: item.quantity,
         unit: typeof item.unit === "string" ? item.unit : undefined,
@@ -383,46 +443,93 @@ export async function GET(request: Request, context: Context) {
       .map((line) => line.description?.trim() ?? "")
       .filter(Boolean);
     const scored = grpoDocs
-      .map((doc) => ({ doc, score: scoreGrpoDoc(doc, vendorName, poNumber, invoiceDescriptions) }))
+      .map((doc) => ({
+        doc,
+        score: scoreGrpoDoc(doc, vendorName, poNumber, invoiceDescriptions),
+      }))
       .filter((entry) => entry.score > 20) // minimum threshold
       .sort((a, b) => b.score - a.score);
 
     // GRPO first, OpenPO fallback for the base document
     let bestPo = findBestPoDoc(groupPoByDoc(poRows), poNumber, vendorName);
-    const unambiguousGrpo = scored.length > 0 && (scored.length === 1 || scored[0].score > scored[1].score);
+    const unambiguousGrpo =
+      scored.length > 0 &&
+      (scored.length === 1 || scored[0].score > scored[1].score);
 
     if (sapEnv === "test") {
       try {
         const inspection = await withTestServiceLayer(async (client) => {
           if (!unambiguousGrpo && bestPo?.docEntry) {
             const po = await client.getPurchaseOrder(bestPo.docEntry);
-            if (po.CardCode !== bestPo.bpCode || String(po.DocNum) !== String(bestPo.docNum)) {
+            if (
+              po.CardCode !== bestPo.bpCode ||
+              String(po.DocNum) !== String(bestPo.docNum)
+            ) {
               return { reason: "unverified_po" as const };
             }
             if (po.DocumentStatus !== "bost_Open" || po.Cancelled !== "tNO") {
-              const invoices = invoiceTotal !== null && po.CardCode
-                ? await client.listInvoicesByAmount(po.CardCode, invoiceTotal)
-                : [];
-              const posted = invoices.find((invoice) => invoiceBasedOn(invoice, 22, po.DocEntry!));
+              const invoices =
+                invoiceTotal !== null && po.CardCode
+                  ? await client.listInvoicesByAmount(po.CardCode, invoiceTotal)
+                  : [];
+              const posted = invoices.find((invoice) =>
+                invoiceBasedOn(invoice, 22, po.DocEntry!),
+              );
               return {
-                reason: posted ? "already_posted" as const : "closed_po" as const,
-                sapDocument: { kind: "PO", docNum: po.DocNum, docEntry: po.DocEntry, vendor: po.CardName },
-                postedInvoice: posted ? { docNum: posted.DocNum, docEntry: posted.DocEntry, vendorReference: posted.NumAtCard } : null,
+                reason: posted
+                  ? ("already_posted" as const)
+                  : ("closed_po" as const),
+                sapDocument: {
+                  kind: "PO",
+                  docNum: po.DocNum,
+                  docEntry: po.DocEntry,
+                  vendor: po.CardName,
+                },
+                postedInvoice: posted
+                  ? {
+                      docNum: posted.DocNum,
+                      docEntry: posted.DocEntry,
+                      vendorReference: posted.NumAtCard,
+                    }
+                  : null,
               };
             }
           }
           if (!unambiguousGrpo && poNumber && /^\d+$/.test(poNumber)) {
             const candidates = await client.listGrposByDocNum(Number(poNumber));
-            const closed = matchingClosedGrpo(candidates, vendorName, packetLines);
+            const closed = matchingClosedGrpo(
+              candidates,
+              vendorName,
+              packetLines,
+            );
             if (closed && closed.DocEntry) {
-              const invoices = invoiceTotal !== null && closed.CardCode
-                ? await client.listInvoicesByAmount(closed.CardCode, invoiceTotal)
-                : [];
-              const posted = invoices.find((invoice) => invoiceBasedOn(invoice, 20, closed.DocEntry!));
+              const invoices =
+                invoiceTotal !== null && closed.CardCode
+                  ? await client.listInvoicesByAmount(
+                      closed.CardCode,
+                      invoiceTotal,
+                    )
+                  : [];
+              const posted = invoices.find((invoice) =>
+                invoiceBasedOn(invoice, 20, closed.DocEntry!),
+              );
               return {
-                reason: posted ? "already_posted" as const : "closed_grpo" as const,
-                sapDocument: { kind: "GRPO", docNum: closed.DocNum, docEntry: closed.DocEntry, vendor: closed.CardName },
-                postedInvoice: posted ? { docNum: posted.DocNum, docEntry: posted.DocEntry, vendorReference: posted.NumAtCard } : null,
+                reason: posted
+                  ? ("already_posted" as const)
+                  : ("closed_grpo" as const),
+                sapDocument: {
+                  kind: "GRPO",
+                  docNum: closed.DocNum,
+                  docEntry: closed.DocEntry,
+                  vendor: closed.CardName,
+                },
+                postedInvoice: posted
+                  ? {
+                      docNum: posted.DocNum,
+                      docEntry: posted.DocEntry,
+                      vendorReference: posted.NumAtCard,
+                    }
+                  : null,
               };
             }
           }
@@ -447,8 +554,12 @@ export async function GET(request: Request, context: Context) {
     const grpoUsedIndices = new Set<number>();
     const poUsedIndices = new Set<number>();
     const matchedLines: MatchedPacketLine[] = packetLines.map((line) => {
-      const grpoMatch = bestGrpo ? matchPacketLineToGrpoLine(line, bestGrpo.lines, grpoUsedIndices) : null;
-      const poMatch = bestPo ? matchPacketLineToPoLine(line, bestPo.lines, poUsedIndices) : null;
+      const grpoMatch = bestGrpo
+        ? matchPacketLineToGrpoLine(line, bestGrpo.lines, grpoUsedIndices)
+        : null;
+      const poMatch = bestPo
+        ? matchPacketLineToPoLine(line, bestPo.lines, poUsedIndices)
+        : null;
       const primary = baseSource === "grpo" ? grpoMatch : poMatch;
       return {
         description: line.description,
@@ -464,22 +575,62 @@ export async function GET(request: Request, context: Context) {
       };
     });
 
-    const matchCount = matchedLines.filter((l) => l.matchConfidence !== "none").length;
+    const matchCount = matchedLines.filter(
+      (l) => l.matchConfidence !== "none",
+    ).length;
     if (matchCount === 0) {
       return NextResponse.json({ matched: false, reason: "no_line_match" });
     }
+
+    const postingResult = await db
+      .from("sap_postings")
+      .select("status, sap_docnum, payload")
+      .eq("case_id", id)
+      .eq("owner_user_id", user)
+      .eq("kind", "AP")
+      .eq("sap_env", "test")
+      .maybeSingle();
+    dbCheck(postingResult.error);
+    const storedPosting = postingResult.data;
+    const storedPayload =
+      storedPosting?.payload && typeof storedPosting.payload === "object"
+        ? (storedPosting.payload as Record<string, unknown>)
+        : {};
+    const sapPosting =
+      storedPosting?.sap_docnum &&
+      (storedPosting.status === "prepared" || storedPosting.status === "posted")
+        ? {
+            status: storedPosting.status,
+            documentNumber: storedPosting.sap_docnum,
+            postingDate:
+              typeof storedPayload.postingDate === "string"
+                ? storedPayload.postingDate
+                : null,
+            invoiceDate:
+              typeof storedPayload.invoiceDate === "string"
+                ? storedPayload.invoiceDate
+                : null,
+          }
+        : null;
 
     // Build AP payload
     const money = invoiceMoneyPreview(invoiceDocuments, packetLines);
     const apPayload = {
       documentType: "APInvoice",
       vendor: {
-        cardCode: (baseSource === "grpo" ? bestGrpo?.bpCode : bestPo?.bpCode) ?? null,
-        cardName: (baseSource === "grpo" ? bestGrpo?.bpName : bestPo?.bpName) ?? null,
+        cardCode:
+          (baseSource === "grpo" ? bestGrpo?.bpCode : bestPo?.bpCode) ?? null,
+        cardName:
+          (baseSource === "grpo" ? bestGrpo?.bpName : bestPo?.bpName) ?? null,
       },
-      baseGrpoDocNum: baseSource === "grpo" && bestGrpo ? String(bestGrpo.docNum) : null,
-      baseGrpoDocEntry: baseSource === "grpo" && bestGrpo ? Number(bestGrpo.lines[0]?.docEntry) : null,
-      basePoDocNum: baseSource === "po" && bestPo ? String(bestPo.docNum) : null,
+      baseGrpoDocNum:
+        baseSource === "grpo" && bestGrpo ? String(bestGrpo.docNum) : null,
+      baseGrpoDocEntry:
+        baseSource === "grpo" && bestGrpo
+          ? Number(bestGrpo.lines[0]?.docEntry)
+          : null,
+      basePoDocNum:
+        baseSource === "po" && bestPo ? String(bestPo.docNum) : null,
       basePoDocEntry: baseSource === "po" && bestPo ? bestPo.docEntry : null,
       poNumber,
       invoiceNumber: classification.invoiceNumber,
@@ -519,6 +670,7 @@ export async function GET(request: Request, context: Context) {
       poLineCount: bestPo?.lines.length ?? 0,
       matchCount,
       packetLineCount: packetLines.length,
+      sapPosting,
       apPayload,
       matchedLines: matchedLines.map((l) => ({
         description: l.description,

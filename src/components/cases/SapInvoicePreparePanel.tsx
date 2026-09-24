@@ -74,6 +74,12 @@ type PrepareResult = {
     docEntry?: number;
     vendorReference?: string | null;
   } | null;
+  sapPosting?: {
+    status: "prepared" | "posted";
+    documentNumber: string;
+    postingDate?: string | null;
+    invoiceDate?: string | null;
+  } | null;
   baseSource?: "grpo" | "po";
   grpoDocNum?: string | number | null;
   poDocNum?: string | number | null;
@@ -192,15 +198,33 @@ export function SapInvoicePreparePanel({
       );
       const body = await response.json().catch(() => ({}));
       setSaveFailed(!response.ok);
-      if (response.ok && typeof body.postingDate === "string") {
+      if (response.ok) {
         setData((current) =>
           current?.apPayload
             ? {
                 ...current,
                 apPayload: {
                   ...current.apPayload,
-                  postingDate: body.postingDate,
+                  postingDate:
+                    typeof body.postingDate === "string"
+                      ? body.postingDate
+                      : current.apPayload.postingDate,
                 },
+                sapPosting:
+                  body.draft && body.docEntry
+                    ? {
+                        status: "prepared",
+                        documentNumber: String(body.docEntry),
+                        postingDate:
+                          typeof body.postingDate === "string"
+                            ? body.postingDate
+                            : current.apPayload.postingDate,
+                        invoiceDate:
+                          typeof body.invoiceDate === "string"
+                            ? body.invoiceDate
+                            : current.apPayload.invoiceDate,
+                      }
+                    : current.sapPosting,
               }
             : current,
         );
@@ -303,6 +327,8 @@ export function SapInvoicePreparePanel({
   const baseSource = data.baseSource ?? "grpo";
   const baseDocNum = baseSource === "po" ? poDocNum : grpoDocNum;
   const baseLabel = baseSource === "po" ? "PO" : "GRPO";
+  const sapPosting = data.sapPosting ?? null;
+  const draftCreated = sapPosting?.status === "prepared";
   const canCreateDraft =
     data.caseStatus === "accepted" &&
     data.sapEnv === "test" &&
@@ -650,14 +676,38 @@ export function SapInvoicePreparePanel({
       </div>
 
       {/* Actions */}
-      {saveResult ? (
+      {sapPosting ? (
+        <div className="rounded-lg border border-[#c3dfcb] bg-[#ebf5ee] px-4 py-3 text-[#1b4332]">
+          <div className="flex items-start gap-2.5">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <div className="text-[12px] font-semibold">
+                {draftCreated
+                  ? "Draft created in SAP Test — not posted"
+                  : "Final AP invoice posted in SAP"}
+              </div>
+              <div className="mt-0.5 text-[11px] leading-4">
+                {draftCreated
+                  ? `Draft ${sapPosting.documentNumber} is saved in SAP Test. It is not a final AP invoice.`
+                  : `AP invoice ${sapPosting.documentNumber} has already been posted. Do not create or post it again.`}
+              </div>
+              {draftCreated ? (
+                <div className="mt-1 text-[11px] font-medium">
+                  Next step: Review Draft {sapPosting.documentNumber} in SAP
+                  Test, then post it there when it is correct.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : saveResult ? (
         <div
           className={`rounded-lg border px-3 py-2 text-[11px] ${saveFailed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}
         >
           {saveResult}
         </div>
       ) : null}
-      {data.caseStatus !== "accepted" ? (
+      {sapPosting ? null : data.caseStatus !== "accepted" ? (
         <p className="text-[11px] text-[#8a7f72]">
           Approve this case before creating an SAP draft.
         </p>
@@ -699,13 +749,13 @@ export function SapInvoicePreparePanel({
           </Button>
         </div>
       ) : null}
-      {baseSource === "po" && canCreateDraft ? (
+      {baseSource === "po" && canCreateDraft && !sapPosting ? (
         <p className="text-[11px] text-[#b45309]">
           This draft is based directly on a PO. Review goods receipt and
           inventory impact in SAP before posting the draft as a final invoice.
         </p>
       ) : null}
-      {canCreateDraft ? (
+      {canCreateDraft && !sapPosting ? (
         <p className="text-[11px] text-[#8a7f72]">
           These are the extracted vendor invoice amounts. SAP calculates the
           draft from its base document; verify the draft rate, tax, and total
@@ -713,7 +763,7 @@ export function SapInvoicePreparePanel({
         </p>
       ) : null}
       <div className="flex items-center gap-3">
-        {canCreateDraft && !confirming ? (
+        {canCreateDraft && !confirming && !sapPosting ? (
           <Button
             size="sm"
             className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white hover:bg-[#3b271a] shadow-sm"
@@ -724,19 +774,21 @@ export function SapInvoicePreparePanel({
             Create AP Invoice Draft in SAP Test
           </Button>
         ) : null}
-        <Button
-          size="sm"
-          variant="outline"
-          className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-[11px] font-medium text-[#3d3530] shadow-sm"
-          onClick={() => void handleCopy()}
-        >
-          {copied ? (
-            <Check className="mr-1.5 h-3 w-3 text-[#1b4332]" />
-          ) : (
-            <Copy className="mr-1.5 h-3 w-3" />
-          )}
-          {copied ? "Copied" : "Copy JSON"}
-        </Button>
+        {!sapPosting ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-[11px] font-medium text-[#3d3530] shadow-sm"
+            onClick={() => void handleCopy()}
+          >
+            {copied ? (
+              <Check className="mr-1.5 h-3 w-3 text-[#1b4332]" />
+            ) : (
+              <Copy className="mr-1.5 h-3 w-3" />
+            )}
+            {copied ? "Copied" : "Copy draft details"}
+          </Button>
+        ) : null}
       </div>
     </div>
   );
