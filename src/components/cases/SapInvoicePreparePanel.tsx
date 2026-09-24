@@ -164,6 +164,7 @@ export function SapInvoicePreparePanel({
     try {
       const response = await apiFetch(
         `/api/cases/${encodeURIComponent(caseId)}/sap-invoice-prepare`,
+        { cache: "no-store" },
       );
       if (!response.ok) throw new Error("Failed");
       setData(await response.json());
