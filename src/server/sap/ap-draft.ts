@@ -13,6 +13,7 @@ export type SapGrpo = {
   CardName?: string;
   DocType?: string;
   DocCurrency?: string;
+  Series?: number;
   BPL_IDAssignedToInvoice?: number | null;
   DocumentStatus?: string;
   Cancelled?: string;

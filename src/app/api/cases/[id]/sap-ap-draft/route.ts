@@ -253,13 +253,14 @@ export async function POST(request: Request, context: Context) {
             postingDate,
           });
 
-          const series = await client.findGstApInvoiceSeries(
+          const series = await client.resolveGstApInvoiceSeries(
             postingDate,
             baseDocument.BPL_IDAssignedToInvoice,
+            baseDocument.Series,
           );
           if (!series) {
             throw new ApiError(
-              `SAP Test has no existing GST A/P Invoice numbering series for the ${postingDate} financial year and branch. No draft was created.`,
+              `SAP Test has no usable GST A/P Invoice numbering series for the ${postingDate} financial year and branch. No draft was created.`,
               409,
             );
           }

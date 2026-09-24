@@ -2,7 +2,13 @@ import "server-only";
 
 import { sapFetch } from "./http";
 import type { SapGrpo } from "./ap-draft";
-import { indianFinancialYear, selectExistingGstApInvoiceSeries, type SapNumberedApInvoice } from "./numbering-series";
+import {
+  indianFinancialYear,
+  selectConfiguredGstApInvoiceSeries,
+  selectExistingGstApInvoiceSeries,
+  type SapNumberedApInvoice,
+  type SapNumberingSeries,
+} from "./numbering-series";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -49,7 +55,11 @@ export async function withTestServiceLayer<T>(
     listInvoicesByAmount: (cardCode: string, amount: number) => Promise<SapReadDocument[]>;
     findInvoiceByReference: (cardCode: string, vendorReference: string) => Promise<SapReadDocument | null>;
     findDraft: (comment: string) => Promise<SapDraftResponse | null>;
-    findGstApInvoiceSeries: (postingDate: string, branchId: number | null | undefined) => Promise<number | null>;
+    resolveGstApInvoiceSeries: (
+      postingDate: string,
+      branchId: number | null | undefined,
+      baseSeries: number | undefined,
+    ) => Promise<number | null>;
     createDraft: (payload: Record<string, unknown>) => Promise<SapDraftResponse>;
     getDraft: (docEntry: number) => Promise<SapDraftResponse>;
   }) => Promise<T>,
@@ -99,6 +109,21 @@ export async function withTestServiceLayer<T>(
   }
   const routeId = login.response.headers.get("set-cookie")?.match(/ROUTEID=[^;\s,]+/)?.[0];
   cookie = [`B1SESSION=${sessionId}`, routeId].filter(Boolean).join("; ");
+
+  function seriesRows(body: Record<string, unknown>): SapNumberingSeries[] {
+    if (Array.isArray(body.value)) return body.value as SapNumberingSeries[];
+    const collection = body.SeriesCollection;
+    if (Array.isArray(collection)) return collection as SapNumberingSeries[];
+    if (collection && typeof collection === "object") {
+      const nested = (collection as { Series?: unknown }).Series;
+      if (Array.isArray(nested)) return nested as SapNumberingSeries[];
+      if (nested && typeof nested === "object") return [nested as SapNumberingSeries];
+    }
+    if (body.Series && typeof body.Series === "object") {
+      return [body.Series as SapNumberingSeries];
+    }
+    return Number.isInteger(body.Series) ? [body as SapNumberingSeries] : [];
+  }
 
   try {
     return await action({
@@ -186,7 +211,42 @@ export async function withTestServiceLayer<T>(
         const rows = Array.isArray(body.value) ? (body.value as SapDraftResponse[]) : [];
         return rows.find((row) => row.Comments === comment && row.DocObjectCode === "oPurchaseInvoices") ?? null;
       },
-      async findGstApInvoiceSeries(postingDate, branchId) {
+      async resolveGstApInvoiceSeries(postingDate, branchId, baseSeries) {
+        let periodIndicator: string | null = null;
+        if (Number.isInteger(baseSeries) && baseSeries! > 0) {
+          try {
+            const { body } = await request("/SeriesService_GetSeries", {
+              method: "POST",
+              body: JSON.stringify({ SeriesParams: { Series: baseSeries } }),
+            });
+            periodIndicator = seriesRows(body)[0]?.PeriodIndicator ?? null;
+          } catch (error) {
+            console.warn("Could not read the base SAP numbering period", String(error));
+          }
+        }
+
+        let configured: SapNumberingSeries[] = [];
+        let defaultSeries: number | null = null;
+        try {
+          const params = { Document: "18", DocumentSubType: "GA" };
+          const available = await request("/SeriesService_GetDocumentSeries", {
+            method: "POST",
+            body: JSON.stringify({ DocumentTypeParams: params }),
+          });
+          configured = seriesRows(available.body);
+          try {
+            const preferred = await request("/SeriesService_GetDefaultSeries", {
+              method: "POST",
+              body: JSON.stringify({ DocumentTypeParams: params }),
+            });
+            defaultSeries = seriesRows(preferred.body)[0]?.Series ?? null;
+          } catch {
+            // The original SAP 10000521 response commonly means this user has no default.
+          }
+        } catch (error) {
+          console.warn("Could not list SAP GST A/P Invoice numbering series", String(error));
+        }
+
         const financialYear = indianFinancialYear(postingDate);
         const filter = encodeURIComponent(
           `DocDate ge '${financialYear.start}' and DocDate le '${financialYear.end}'`,
@@ -200,7 +260,18 @@ export async function withTestServiceLayer<T>(
           invoices.push(...page);
           if (page.length < 100) break;
         }
-        return selectExistingGstApInvoiceSeries({ postingDate, branchId, invoices });
+        const historicalSeries = selectExistingGstApInvoiceSeries({
+          postingDate,
+          branchId,
+          invoices,
+        });
+        return selectConfiguredGstApInvoiceSeries({
+          branchId,
+          periodIndicator,
+          defaultSeries,
+          historicalSeries,
+          series: configured,
+        }) ?? historicalSeries;
       },
       async createDraft(payload) {
         const { body } = await request("/Drafts", {

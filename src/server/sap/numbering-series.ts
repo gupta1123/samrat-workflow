@@ -7,10 +7,29 @@ export type SapNumberedApInvoice = {
   Cancelled?: string;
 };
 
+export type SapNumberingSeries = {
+  Series?: number;
+  Document?: string;
+  DocumentSubType?: string;
+  Locked?: string;
+  PeriodIndicator?: string;
+  BPLID?: number | null;
+  NextNumber?: number;
+  LastNumber?: number | null;
+};
+
 type SeriesSelection = {
   postingDate: string;
   branchId?: number | null;
   invoices: SapNumberedApInvoice[];
+};
+
+type ConfiguredSeriesSelection = {
+  branchId?: number | null;
+  periodIndicator?: string | null;
+  defaultSeries?: number | null;
+  historicalSeries?: number | null;
+  series: SapNumberingSeries[];
 };
 
 function dateValue(value: unknown): number | null {
@@ -79,6 +98,57 @@ export function selectExistingGstApInvoiceSeries({
     return null;
   }
   return candidates[0]?.series ?? null;
+}
+
+function validConfiguredSeries(
+  candidate: SapNumberingSeries,
+  periodIndicator?: string | null,
+): candidate is SapNumberingSeries & { Series: number } {
+  const number = Number(candidate.Series);
+  const next = Number(candidate.NextNumber);
+  const last = candidate.LastNumber == null ? null : Number(candidate.LastNumber);
+  return (
+    Number.isInteger(number) &&
+    number > 0 &&
+    (candidate.Document == null || String(candidate.Document) === "18") &&
+    candidate.DocumentSubType?.toUpperCase() === "GA" &&
+    candidate.Locked !== "tYES" &&
+    (!periodIndicator || candidate.PeriodIndicator === periodIndicator) &&
+    (last === null || last <= 0 || !Number.isFinite(next) || next <= last)
+  );
+}
+
+/** Select only a configured, unlocked GST A/P Invoice series for the right period and branch. */
+export function selectConfiguredGstApInvoiceSeries({
+  branchId,
+  periodIndicator,
+  defaultSeries,
+  historicalSeries,
+  series,
+}: ConfiguredSeriesSelection): number | null {
+  const valid = series.filter((candidate) =>
+    validConfiguredSeries(candidate, periodIndicator),
+  );
+  const exactBranch = Number.isInteger(branchId)
+    ? valid.filter((candidate) => candidate.BPLID === branchId)
+    : [];
+  const global = valid.filter(
+    (candidate) => candidate.BPLID == null || candidate.BPLID === -1,
+  );
+  const candidates = exactBranch.length > 0
+    ? exactBranch
+    : Number.isInteger(branchId)
+      ? global
+      : valid;
+  if (candidates.length === 1) return candidates[0].Series;
+
+  for (const preferred of [defaultSeries, historicalSeries]) {
+    if (!Number.isInteger(preferred)) continue;
+    if (candidates.some((candidate) => candidate.Series === preferred)) {
+      return preferred!;
+    }
+  }
+  return null;
 }
 
 export function indianFinancialYear(date: string): {

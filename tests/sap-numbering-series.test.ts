@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   indianFinancialYear,
+  selectConfiguredGstApInvoiceSeries,
   selectExistingGstApInvoiceSeries,
 } from "../src/server/sap/numbering-series";
 
@@ -109,4 +110,57 @@ test("derives the Indian financial year used for the series search", () => {
     start: "2026-04-01",
     end: "2027-03-31",
   });
+});
+
+test("selects the configured GA series for the base document period and branch", () => {
+  const selected = selectConfiguredGstApInvoiceSeries({
+    branchId: 2,
+    periodIndicator: "FY26",
+    defaultSeries: null,
+    historicalSeries: null,
+    series: [
+      { Series: 10, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY25", BPLID: 2 },
+      { Series: 11, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY26", BPLID: 3 },
+      { Series: 12, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY26", BPLID: 2 },
+    ],
+  });
+  assert.equal(selected, 12);
+});
+
+test("prefers the branch series, then a configured default, without guessing", () => {
+  const common = [
+    { Series: 21, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY26", BPLID: 2 },
+    { Series: 22, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY26", BPLID: 2 },
+    { Series: 23, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY26", BPLID: null },
+  ];
+  assert.equal(selectConfiguredGstApInvoiceSeries({
+    branchId: 2,
+    periodIndicator: "FY26",
+    defaultSeries: 22,
+    historicalSeries: null,
+    series: common,
+  }), 22);
+  assert.equal(selectConfiguredGstApInvoiceSeries({
+    branchId: 2,
+    periodIndicator: "FY26",
+    defaultSeries: null,
+    historicalSeries: null,
+    series: common,
+  }), null);
+});
+
+test("rejects locked, exhausted, wrong-period, and non-GST configured series", () => {
+  const selected = selectConfiguredGstApInvoiceSeries({
+    branchId: 2,
+    periodIndicator: "FY26",
+    defaultSeries: null,
+    historicalSeries: null,
+    series: [
+      { Series: 31, Document: "18", DocumentSubType: "GA", Locked: "tYES", PeriodIndicator: "FY26", BPLID: 2 },
+      { Series: 32, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY26", BPLID: 2, NextNumber: 101, LastNumber: 100 },
+      { Series: 33, Document: "18", DocumentSubType: "GA", Locked: "tNO", PeriodIndicator: "FY25", BPLID: 2 },
+      { Series: 34, Document: "18", DocumentSubType: "--", Locked: "tNO", PeriodIndicator: "FY26", BPLID: 2 },
+    ],
+  });
+  assert.equal(selected, null);
 });
