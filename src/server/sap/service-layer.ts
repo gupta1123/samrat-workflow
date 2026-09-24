@@ -2,6 +2,7 @@ import "server-only";
 
 import { sapFetch } from "./http";
 import type { SapGrpo } from "./ap-draft";
+import { indianFinancialYear, selectExistingGstApInvoiceSeries, type SapNumberedApInvoice } from "./numbering-series";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -48,6 +49,7 @@ export async function withTestServiceLayer<T>(
     listInvoicesByAmount: (cardCode: string, amount: number) => Promise<SapReadDocument[]>;
     findInvoiceByReference: (cardCode: string, vendorReference: string) => Promise<SapReadDocument | null>;
     findDraft: (comment: string) => Promise<SapDraftResponse | null>;
+    findGstApInvoiceSeries: (postingDate: string, branchId: number | null | undefined) => Promise<number | null>;
     createDraft: (payload: Record<string, unknown>) => Promise<SapDraftResponse>;
     getDraft: (docEntry: number) => Promise<SapDraftResponse>;
   }) => Promise<T>,
@@ -183,6 +185,22 @@ export async function withTestServiceLayer<T>(
         const { body } = await request(`/Drafts?$filter=${filter}&$top=5`);
         const rows = Array.isArray(body.value) ? (body.value as SapDraftResponse[]) : [];
         return rows.find((row) => row.Comments === comment && row.DocObjectCode === "oPurchaseInvoices") ?? null;
+      },
+      async findGstApInvoiceSeries(postingDate, branchId) {
+        const financialYear = indianFinancialYear(postingDate);
+        const filter = encodeURIComponent(
+          `DocDate ge '${financialYear.start}' and DocDate le '${financialYear.end}'`,
+        );
+        const invoices: SapNumberedApInvoice[] = [];
+        for (let skip = 0; skip < 1000; skip += 100) {
+          const { body } = await request(
+            `/PurchaseInvoices?$select=DocEntry,DocDate,Series,DocumentSubType,BPL_IDAssignedToInvoice,Cancelled&$filter=${filter}&$orderby=DocDate%20desc,DocEntry%20desc&$top=100&$skip=${skip}`,
+          );
+          const page = Array.isArray(body.value) ? body.value as SapNumberedApInvoice[] : [];
+          invoices.push(...page);
+          if (page.length < 100) break;
+        }
+        return selectExistingGstApInvoiceSeries({ postingDate, branchId, invoices });
       },
       async createDraft(payload) {
         const { body } = await request("/Drafts", {

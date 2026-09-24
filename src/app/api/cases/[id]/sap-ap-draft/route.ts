@@ -143,6 +143,7 @@ export async function POST(request: Request, context: Context) {
     const comment = `Samrat case ${id} AP invoice draft`;
     let result: { DocEntry?: number; DocNum?: number; CardCode?: string; Comments?: string };
     let alreadyCreated = false;
+    let selectedSeries: number | null = null;
     let selectedEntry = entries[0] ?? 0;
     let selectedCardCode = cardCodes[0] ?? "";
     try {
@@ -241,10 +242,57 @@ export async function POST(request: Request, context: Context) {
             throw error;
           }
         }
-        return client.createDraft(payload);
+        try {
+          return await client.createDraft(payload);
+        } catch (error) {
+          if (!/10000521|define the numbering series/i.test(String(error))) throw error;
+          console.warn("SAP Test AP draft has no usable default GST numbering series", {
+            caseId: id,
+            baseKind,
+            baseDocNum,
+            postingDate,
+          });
+
+          const series = await client.findGstApInvoiceSeries(
+            postingDate,
+            baseDocument.BPL_IDAssignedToInvoice,
+          );
+          if (!series) {
+            throw new ApiError(
+              `SAP Test has no existing GST A/P Invoice numbering series for the ${postingDate} financial year and branch. No draft was created.`,
+              409,
+            );
+          }
+          selectedSeries = series;
+          console.info("Retrying SAP Test AP draft with an existing GST numbering series", {
+            caseId: id,
+            baseKind,
+            baseDocNum,
+            postingDate,
+            series,
+          });
+          try {
+            return await client.createDraft({ ...payload, Series: series });
+          } catch (retryError) {
+            if (/10000521|define the numbering series/i.test(String(retryError))) {
+              throw new ApiError(
+                `SAP Test rejected its existing GST A/P Invoice series ${series} for posting date ${postingDate}. No draft was created.`,
+                409,
+              );
+            }
+            throw retryError;
+          }
+        }
       });
     } catch (error) {
       if (error instanceof ApiError) throw error;
+      console.error("SAP Test AP draft creation failed", {
+        caseId: id,
+        baseKind,
+        baseDocNum,
+        postingDate,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return NextResponse.json(
         { ok: false, error: error instanceof Error ? error.message : "SAP Test draft creation failed." },
         { status: 502 },
@@ -274,6 +322,7 @@ export async function POST(request: Request, context: Context) {
           invoiceNumber: classification.invoiceNumber,
           postingDate,
           invoiceDate,
+          numberingSeries: selectedSeries,
         },
         response: {
           DocEntry: result.DocEntry,
@@ -289,7 +338,7 @@ export async function POST(request: Request, context: Context) {
       case_id: id,
       owner_user_id: user,
       action: alreadyCreated ? "sap_ap_draft_linked" : "sap_ap_draft_created",
-      details: { sapEnv: "test", docEntry: result.DocEntry, baseKind, baseDocNum, baseDocEntry: selectedEntry },
+      details: { sapEnv: "test", docEntry: result.DocEntry, baseKind, baseDocNum, baseDocEntry: selectedEntry, numberingSeries: selectedSeries },
     });
     if (event.error) console.error("Could not record SAP draft event:", event.error.message);
 
