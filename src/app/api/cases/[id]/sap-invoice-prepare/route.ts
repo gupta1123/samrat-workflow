@@ -383,6 +383,45 @@ export async function GET(request: Request, context: Context) {
       return NextResponse.json({ matched: false, reason: "no_invoice" });
     }
 
+    const postingResult = await db
+      .from("sap_postings")
+      .select("status, sap_docnum, payload, response")
+      .eq("case_id", id)
+      .eq("owner_user_id", user)
+      .eq("kind", "AP")
+      .eq("sap_env", "test")
+      .maybeSingle();
+    dbCheck(postingResult.error);
+    const storedPosting = postingResult.data;
+    const storedPayload =
+      storedPosting?.payload && typeof storedPosting.payload === "object"
+        ? (storedPosting.payload as Record<string, unknown>)
+        : {};
+    const storedResponse =
+      storedPosting?.response && typeof storedPosting.response === "object"
+        ? (storedPosting.response as Record<string, unknown>)
+        : {};
+    if (storedPosting?.status === "posted" && storedPosting.sap_docnum) {
+      const baseKind = storedPayload.baseKind === "PO" ? "PO" : "GRPO";
+      return NextResponse.json({
+        matched: false,
+        reason: "already_posted",
+        sapDocument: {
+          kind: baseKind,
+          docNum: storedPayload.baseDocNum ?? null,
+          docEntry: storedPayload.baseDocEntry ?? null,
+        },
+        postedInvoice: {
+          docNum: storedResponse.FinalDocNum ?? storedPosting.sap_docnum,
+          docEntry: storedResponse.FinalDocEntry ?? null,
+          vendorReference:
+            typeof storedPayload.invoiceNumber === "string"
+              ? storedPayload.invoiceNumber
+              : null,
+        },
+      });
+    }
+
     const sapEnv = readSapEnvironment();
     const vendorName = extractVendorName(documents);
     const poNumber = extractPoNumber(row.po_number, documents);
@@ -582,20 +621,6 @@ export async function GET(request: Request, context: Context) {
       return NextResponse.json({ matched: false, reason: "no_line_match" });
     }
 
-    const postingResult = await db
-      .from("sap_postings")
-      .select("status, sap_docnum, payload")
-      .eq("case_id", id)
-      .eq("owner_user_id", user)
-      .eq("kind", "AP")
-      .eq("sap_env", "test")
-      .maybeSingle();
-    dbCheck(postingResult.error);
-    const storedPosting = postingResult.data;
-    const storedPayload =
-      storedPosting?.payload && typeof storedPosting.payload === "object"
-        ? (storedPosting.payload as Record<string, unknown>)
-        : {};
     const sapPosting =
       storedPosting?.sap_docnum &&
       (storedPosting.status === "prepared" || storedPosting.status === "posted")

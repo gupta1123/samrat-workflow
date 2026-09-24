@@ -143,6 +143,8 @@ export function SapInvoicePreparePanel({
   const [saveResult, setSaveResult] = useState<string | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [finalPosting, setFinalPosting] = useState(false);
+  const [confirmingFinalPost, setConfirmingFinalPost] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -240,6 +242,45 @@ export function SapInvoicePreparePanel({
     } finally {
       setSaving(false);
       setConfirming(false);
+    }
+  }
+
+  async function handleFinalPost() {
+    if (!data?.sapPosting || data.sapPosting.status !== "prepared") return;
+    setFinalPosting(true);
+    setSaveResult(null);
+    setSaveFailed(false);
+    try {
+      const response = await apiFetch(
+        `/api/cases/${encodeURIComponent(caseId)}/sap-ap-draft/post`,
+        { method: "POST" },
+      );
+      const body = await response.json().catch(() => ({}));
+      setSaveFailed(!response.ok);
+      setSaveResult(
+        response.ok
+          ? (body.message ?? "SAP Test AP Invoice posted successfully.")
+          : (body.error ?? "Final SAP posting failed."),
+      );
+      if (response.ok && body.posted && body.docNum) {
+        setData((current) =>
+          current
+            ? {
+                ...current,
+                sapPosting: {
+                  status: "posted",
+                  documentNumber: String(body.docNum),
+                },
+              }
+            : current,
+        );
+      }
+    } catch {
+      setSaveFailed(true);
+      setSaveResult("Could not post the final AP invoice in SAP Test.");
+    } finally {
+      setFinalPosting(false);
+      setConfirmingFinalPost(false);
     }
   }
 
@@ -692,10 +733,55 @@ export function SapInvoicePreparePanel({
                   : `AP invoice ${sapPosting.documentNumber} has already been posted. Do not create or post it again.`}
               </div>
               {draftCreated ? (
-                <div className="mt-1 text-[11px] font-medium">
-                  Next step: Review Draft {sapPosting.documentNumber} in SAP
-                  Test, then post it there when it is correct.
-                </div>
+                <>
+                  <div className="mt-1 text-[11px] font-medium">
+                    Next step: Review Draft {sapPosting.documentNumber}, then
+                    post it as the final AP invoice when it is correct.
+                  </div>
+                  {confirmingFinalPost ? (
+                    <div className="mt-3 rounded-md border border-[#d8c5b6] bg-white/70 p-3 text-[#3d3530]">
+                      <div className="text-[11px] font-semibold">
+                        Post Draft {sapPosting.documentNumber} as the final AP
+                        invoice in SAP Test?
+                      </div>
+                      <div className="mt-0.5 text-[10px] leading-4 text-[#6b5f55]">
+                        This creates a final accounting document in SAP Test. It
+                        cannot be undone from this app.
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          disabled={finalPosting}
+                          onClick={() => void handleFinalPost()}
+                        >
+                          {finalPosting ? (
+                            <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Send className="mr-1.5 h-3 w-3" />
+                          )}
+                          Confirm final posting
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={finalPosting}
+                          onClick={() => setConfirmingFinalPost(false)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      className="mt-3"
+                      onClick={() => setConfirmingFinalPost(true)}
+                    >
+                      <Send className="mr-1.5 h-3 w-3" />
+                      Post Draft {sapPosting.documentNumber} as Final AP Invoice
+                    </Button>
+                  )}
+                </>
               ) : null}
             </div>
           </div>
@@ -704,6 +790,11 @@ export function SapInvoicePreparePanel({
         <div
           className={`rounded-lg border px-3 py-2 text-[11px] ${saveFailed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}
         >
+          {saveResult}
+        </div>
+      ) : null}
+      {saveResult && saveFailed && sapPosting ? (
+        <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">
           {saveResult}
         </div>
       ) : null}

@@ -13,9 +13,24 @@ import {
 type SapDraftResponse = {
   DocEntry?: number;
   DocNum?: number;
+  DocDate?: string;
+  TaxDate?: string;
   CardCode?: string;
+  CardName?: string;
+  NumAtCard?: string | null;
+  DocTotal?: number;
+  DocCurrency?: string;
   Comments?: string;
   DocObjectCode?: string;
+  DocumentLines?: Array<{
+    LineNum?: number;
+    ItemCode?: string;
+    ItemDescription?: string;
+    Quantity?: number;
+    BaseType?: number;
+    BaseEntry?: number | null;
+    BaseLine?: number | null;
+  }>;
 };
 
 export type SapReadDocument = Omit<SapGrpo, "DocumentLines"> & {
@@ -80,6 +95,7 @@ export async function withTestServiceLayer<T>(
       payload: Record<string, unknown>,
     ) => Promise<SapDraftResponse>;
     getDraft: (docEntry: number) => Promise<SapDraftResponse>;
+    finalizeDraft: (docEntry: number) => Promise<Record<string, unknown>>;
   }) => Promise<T>,
 ): Promise<T> {
   const config = testConfig();
@@ -367,6 +383,13 @@ export async function withTestServiceLayer<T>(
       async getDraft(docEntry) {
         const { body } = await request(`/Drafts(${docEntry})`);
         return body as SapDraftResponse;
+      },
+      async finalizeDraft(docEntry) {
+        const { body } = await request("/DraftsService_SaveDraftToDocument", {
+          method: "POST",
+          body: JSON.stringify({ Document: { DocEntry: docEntry } }),
+        });
+        return body;
       },
     });
   } finally {
