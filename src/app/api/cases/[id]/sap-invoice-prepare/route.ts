@@ -636,7 +636,7 @@ export async function GET(request: Request, context: Context) {
       invoiceNumber: classification.invoiceNumber,
       currency: invoiceCurrency,
       invoiceDate,
-      postingDate,
+      postingDate: sapPosting?.postingDate ?? postingDate,
       caseId: id,
       caseName: row.display_name,
       lines: matchedLines.map((line, index) => ({
