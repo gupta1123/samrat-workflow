@@ -70,6 +70,9 @@ export async function withTestServiceLayer<T>(
     getGrpo: (docEntry: number) => Promise<SapGrpo>;
     listGrposByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getPurchaseOrder: (docEntry: number) => Promise<SapReadDocument>;
+    listPurchaseOrdersByEntries: (
+      docEntries: number[],
+    ) => Promise<SapReadDocument[]>;
     listPurchaseOrdersByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getAdminCurrencies: () => Promise<{
       LocalCurrency?: string;
@@ -205,6 +208,29 @@ export async function withTestServiceLayer<T>(
       async getPurchaseOrder(docEntry) {
         const { body } = await request(`/PurchaseOrders(${docEntry})`);
         return body as SapReadDocument;
+      },
+      async listPurchaseOrdersByEntries(docEntries) {
+        const uniqueEntries = [
+          ...new Set(
+            docEntries.filter(
+              (entry) => Number.isInteger(entry) && entry > 0,
+            ),
+          ),
+        ];
+        const documents: SapReadDocument[] = [];
+        for (let offset = 0; offset < uniqueEntries.length; offset += 40) {
+          const chunk = uniqueEntries.slice(offset, offset + 40);
+          const filter = encodeURIComponent(
+            chunk.map((entry) => `DocEntry eq ${entry}`).join(" or "),
+          );
+          const { body } = await request(
+            `/PurchaseOrders?$select=DocEntry,DocNum&$filter=${filter}&$top=${chunk.length}`,
+          );
+          if (Array.isArray(body.value)) {
+            documents.push(...(body.value as SapReadDocument[]));
+          }
+        }
+        return documents;
       },
       async listPurchaseOrdersByDocNum(docNum) {
         const filter = encodeURIComponent(`DocNum eq ${docNum}`);
@@ -424,6 +450,26 @@ export async function fetchTestOpenGrpoRows(): Promise<
 > {
   return withTestServiceLayer(async (client) => {
     const documents = await client.listOpenGrpos();
+    const basePoEntries = documents.flatMap((document) =>
+      (document.DocumentLines ?? [])
+        .filter(
+          (line) =>
+            line.BaseType === 22 &&
+            typeof line.BaseEntry === "number" &&
+            line.BaseEntry > 0,
+        )
+        .map((line) => line.BaseEntry as number),
+    );
+    const purchaseOrders =
+      await client.listPurchaseOrdersByEntries(basePoEntries);
+    const poDocNumByEntry = new Map(
+      purchaseOrders.flatMap((document) =>
+        typeof document.DocEntry === "number" &&
+        typeof document.DocNum === "number"
+          ? [[document.DocEntry, document.DocNum] as const]
+          : [],
+      ),
+    );
     return documents.flatMap((document) =>
       (document.DocumentLines ?? [])
         .filter(
@@ -436,11 +482,17 @@ export async function fetchTestOpenGrpoRows(): Promise<
           DocNum: document.DocNum,
           "BP Code": document.CardCode,
           "BP Name": document.CardName,
-          "PO Line Num": line.LineNum,
+          "Base PO DocEntry": line.BaseEntry,
+          "Base PO DocNum":
+            typeof line.BaseEntry === "number"
+              ? poDocNumByEntry.get(line.BaseEntry)
+              : undefined,
+          "PO Line Num": line.BaseLine ?? line.LineNum,
           ItemCode: line.ItemCode,
           Dscription: line.ItemDescription,
           Quantity: line.Quantity,
           OpenQty: line.RemainingOpenQuantity,
+          Price: line.Price,
         })),
     );
   });

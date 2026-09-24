@@ -2,6 +2,7 @@ export type ComparableSapLine = {
   itemCode?: string | null;
   description?: string | null;
   quantity?: number | null;
+  openQty?: number | null;
   price?: number | null;
 };
 
@@ -42,13 +43,28 @@ export function selectSapLine<T extends ComparableSapLine>(
       (description.includes(sapDescription) || sapDescription.includes(description)),
     );
     if (!itemExact && !descriptionExact && !descriptionSimilar) return [];
-    const qtyExact = quantity !== null && line.quantity !== null && line.quantity !== undefined &&
-      Math.abs(quantity - line.quantity) < 0.0001;
-    const rateExact = rate !== null && line.price !== null && line.price !== undefined &&
-      Math.abs(rate - line.price) < 0.01;
+    const sapQuantity = numeric(line.openQty ?? line.quantity);
+    const sapRate = numeric(line.price);
+    const qtyComparable = quantity !== null && sapQuantity !== null;
+    const rateComparable = rate !== null && sapRate !== null;
+    const qtyExact = qtyComparable && Math.abs(quantity - sapQuantity) < 0.0001;
+    const rateExact = rateComparable && Math.abs(rate - sapRate) < 0.01;
+
+    // A partial invoice quantity is valid, but an over-quantity line or a
+    // different SAP base price is not the same purchasable line. Reject these
+    // conflicts instead of allowing an item/description match to hide them.
+    if (qtyComparable && quantity > sapQuantity + 0.0001) return [];
+    if (rateComparable && !rateExact) return [];
+
     const score = (itemExact ? 100 : 0) + (descriptionExact ? 40 : descriptionSimilar ? 15 : 0) +
       (qtyExact ? 20 : 0) + (rateExact ? 30 : 0);
-    return [{ index, line, score, confidence: itemExact || descriptionExact ? "exact" as const : "fuzzy" as const }];
+    const confidence =
+      (itemExact || descriptionExact) &&
+      (!qtyComparable || qtyExact) &&
+      (!rateComparable || rateExact)
+        ? "exact" as const
+        : "fuzzy" as const;
+    return [{ index, line, score, confidence }];
   }).sort((a, b) => b.score - a.score || a.index - b.index);
   const best = candidates[0];
   if (!best) return null;

@@ -8,7 +8,7 @@ import {
   withTestServiceLayer,
   type SapReadDocument,
 } from "@/server/sap/service-layer";
-import { normalizeSapItem, selectSapLine } from "@/lib/sap-line-match";
+import { selectSapLine } from "@/lib/sap-line-match";
 import {
   classifySapCase,
   normalizeSapReference,
@@ -168,6 +168,8 @@ type MatchedGrpoLine = {
   project: string | null;
   bpCode: string | null;
   bpName: string | null;
+  basePoDocEntry: number | null;
+  basePoDocNum: string | number | null;
 };
 
 type MatchedPacketLine = {
@@ -241,6 +243,15 @@ function groupGrpoByDoc(rows: Record<string, unknown>[]): GrpoDoc[] {
       project: typeof row.Project === "string" ? row.Project : null,
       bpCode: typeof row["BP Code"] === "string" ? row["BP Code"] : null,
       bpName: typeof row["BP Name"] === "string" ? row["BP Name"] : null,
+      basePoDocEntry:
+        typeof row["Base PO DocEntry"] === "number"
+          ? row["Base PO DocEntry"]
+          : null,
+      basePoDocNum:
+        typeof row["Base PO DocNum"] === "string" ||
+        typeof row["Base PO DocNum"] === "number"
+          ? row["Base PO DocNum"]
+          : null,
     };
     const key = `entry:${String(row.DocEntry ?? `${line.bpCode ?? ""}:${docNum}`)}`;
     const existing = byDoc.get(key) ?? { docNum, lines: [] };
@@ -259,7 +270,7 @@ function scoreGrpoDoc(
   doc: GrpoDoc,
   vendorName: string | null,
   poNumber: string | null,
-  invoiceDescriptions: string[],
+  packetLines: SapPacketLine[],
 ): number {
   let score = 0;
 
@@ -271,26 +282,40 @@ function scoreGrpoDoc(
   }
   if (vendorName && vendorScore < 0.8) return 0;
 
-  let exactDocNum = false;
+  let exactReference = false;
   if (poNumber) {
     const normalizedPo = normalizeSapReference(poNumber);
     const normalizedDocNum = normalizeSapReference(doc.docNum);
-    if (normalizedPo && normalizedDocNum && normalizedPo === normalizedDocNum) {
-      exactDocNum = true;
-      score += 50;
-    }
+    const basePoNumbers = doc.lines
+      .map((line) => normalizeSapReference(line.basePoDocNum))
+      .filter(Boolean);
+    const exactBasePo = Boolean(
+      normalizedPo && basePoNumbers.includes(normalizedPo),
+    );
+    const exactGrpoDoc = Boolean(
+      normalizedPo && normalizedDocNum && normalizedPo === normalizedDocNum,
+    );
+    // Vendor invoices normally carry the purchase-order number, while SAP's
+    // receipt has its own DocNum. If SAP exposes the base PO relationship, it
+    // is authoritative and a different PO must disqualify this GRPO.
+    exactReference =
+      basePoNumbers.length > 0 ? exactBasePo : exactGrpoDoc;
+    if (!exactReference) return 0;
+    score += exactBasePo ? 100 : 50;
   }
 
-  const lineMatches = invoiceDescriptions.filter((description) =>
-    doc.lines.some(
-      (line) =>
-        line.description &&
-        normalizeSapItem(line.description) === normalizeSapItem(description),
-    ),
-  ).length;
-  if (invoiceDescriptions.length > 0)
-    score += (lineMatches / invoiceDescriptions.length) * 60;
-  if (!exactDocNum && (vendorScore < 0.8 || lineMatches === 0)) return 0;
+  const used = new Set<number>();
+  let exactLineMatches = 0;
+  for (const packetLine of packetLines) {
+    const match = selectSapLine(packetLine, doc.lines, used);
+    if (!match) return 0;
+    if (match.confidence === "exact") {
+      exactLineMatches += 1;
+    }
+  }
+  if (packetLines.length === 0) return 0;
+  score += 60 + (exactLineMatches / packetLines.length) * 20;
+  if (!exactReference && vendorScore < 0.8) return 0;
 
   const hasOpenQty = doc.lines.some((l) => l.openQty !== null && l.openQty > 0);
   if (hasOpenQty) score += 10;
@@ -477,14 +502,10 @@ export async function GET(request: Request, context: Context) {
 
     // Group by GRPO document and score
     const grpoDocs = groupGrpoByDoc(grpoRows);
-    const invoiceDescriptions = invoiceDocuments
-      .flatMap((document) => readStoredLineItems(document.extracted_fields))
-      .map((line) => line.description?.trim() ?? "")
-      .filter(Boolean);
     const scored = grpoDocs
       .map((doc) => ({
         doc,
-        score: scoreGrpoDoc(doc, vendorName, poNumber, invoiceDescriptions),
+        score: scoreGrpoDoc(doc, vendorName, poNumber, packetLines),
       }))
       .filter((entry) => entry.score > 20) // minimum threshold
       .sort((a, b) => b.score - a.score);

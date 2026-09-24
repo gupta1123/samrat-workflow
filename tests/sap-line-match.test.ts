@@ -26,3 +26,40 @@ test("matches a Tata receipt by item and quantity, not document number alone", (
   assert.equal(selectSapLine(packet, wrong, new Set()), null);
   assert.equal(selectSapLine(packet, right, new Set())?.index, 0);
 });
+
+test("rejects the same item when SAP has a different base price", () => {
+  const packet = {
+    itemCode: "TTR028",
+    description: "TATA TISCON 12MM FE 550 SD",
+    quantity: "46.736",
+    rate: "62374",
+  };
+  const wrongReceipt = [{
+    itemCode: "TTR028",
+    description: "TATA TISCON 12MM FE 550 SD",
+    quantity: 200,
+    openQty: 200,
+    price: 54978,
+  }];
+  assert.equal(selectSapLine(packet, wrongReceipt, new Set()), null);
+});
+
+test("marks a valid partial-quantity invoice as fuzzy instead of exact", () => {
+  const packet = {
+    itemCode: "TTR028",
+    description: "TATA TISCON 12MM FE 550 SD",
+    quantity: "46.736",
+    rate: "62374",
+  };
+  const receipt = [{
+    itemCode: "TTR028",
+    description: "TATA TISCON 12MM FE 550 SD",
+    quantity: 200,
+    openQty: 200,
+    price: 62374,
+  }];
+  assert.equal(
+    selectSapLine(packet, receipt, new Set())?.confidence,
+    "fuzzy",
+  );
+});

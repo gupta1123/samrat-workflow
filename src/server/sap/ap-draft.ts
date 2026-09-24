@@ -27,6 +27,9 @@ export type SapGrpo = {
     Price?: number;
     RemainingOpenQuantity?: number;
     LineStatus?: string;
+    BaseType?: number;
+    BaseEntry?: number | null;
+    BaseLine?: number | null;
   }>;
 };
 
@@ -158,20 +161,31 @@ function buildBasedApInvoiceDraft(
         `Invoice line ${index + 1} exceeds the ${label}'s remaining open quantity.`,
       );
     }
-    const exactQuantity = matches.filter(
-      (line) => amount === line.RemainingOpenQuantity,
-    );
-    let narrowed = exactQuantity.length > 0 ? exactQuantity : matches;
+    let narrowed = matches;
     const invoiceRate = rate(invoiceLine.rate);
-    if (narrowed.length > 1 && invoiceRate !== null) {
+    if (
+      invoiceRate !== null &&
+      narrowed.some(
+        (line) => typeof line.Price === "number" && Number.isFinite(line.Price),
+      )
+    ) {
       const exactRate = narrowed.filter(
         (line) =>
           typeof line.Price === "number" &&
           Number.isFinite(line.Price) &&
           ratesMatch(invoiceRate, line.Price),
       );
-      if (exactRate.length > 0) narrowed = exactRate;
+      if (exactRate.length === 0) {
+        throw new Error(
+          `Invoice line ${index + 1} rate does not match the selected ${label} line.`,
+        );
+      }
+      narrowed = exactRate;
     }
+    const exactQuantity = narrowed.filter(
+      (line) => amount === line.RemainingOpenQuantity,
+    );
+    if (exactQuantity.length > 0) narrowed = exactQuantity;
     if (narrowed.length > 1) {
       throw new Error(
         `Invoice line ${index + 1} matches multiple ${label} lines with the same item, quantity, and rate; select the correct base line in SAP.`,

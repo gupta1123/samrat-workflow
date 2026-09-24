@@ -222,3 +222,28 @@ test("rejects unmatched and over-quantity invoice lines", () => {
     /multiple GRPO lines/,
   );
 });
+
+test("rejects a uniquely identified SAP line when its base price differs", () => {
+  assert.throws(
+    () =>
+      buildApInvoiceDraft(
+        input({
+          invoiceLines: [
+            {
+              itemCode: "VIV10796",
+              description: "Steel Coil",
+              quantity: 2,
+              rate: 62374,
+            },
+          ],
+          grpo: {
+            ...grpo,
+            DocumentLines: grpo.DocumentLines!.map((line, index) =>
+              index === 0 ? { ...line, Price: 54978 } : line,
+            ),
+          },
+        }),
+      ),
+    /rate does not match/,
+  );
+});
