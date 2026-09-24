@@ -42,6 +42,27 @@ function materialFormFields(value: unknown): Record<string, unknown> {
   );
 }
 
+function configuredFieldValues(value: unknown): string[] {
+  const source = Array.isArray(value)
+    ? value
+    : Array.isArray(record(value).value)
+      ? (record(value).value as unknown[])
+      : [];
+
+  return source
+    .map((candidate) => {
+      const entry = record(candidate);
+      const code = text(entry.Value) || text(entry.value);
+      const description =
+        text(entry.Description) || text(entry.description);
+      if (code && description && code !== description) {
+        return `${code} — ${description}`;
+      }
+      return code || description;
+    })
+    .filter((value): value is string => Boolean(value));
+}
+
 async function handle(
   request: Request,
   context: Context,
@@ -292,10 +313,16 @@ async function handle(
             throw new ApiError(
               userFields.length > 0
                 ? `SAP Test requires ${userFields
-                    .map(
-                      (field) =>
-                        `${String(field.description ?? "Material Form")} (${String(field.name ?? "unknown field")})`,
-                    )
+                    .map((field) => {
+                      const allowedValues = configuredFieldValues(
+                        field.validValues,
+                      );
+                      const valuesText =
+                        allowedValues.length > 0
+                          ? `; allowed values: ${allowedValues.join(", ")}`
+                          : "; SAP has not exposed any allowed values";
+                      return `${String(field.description ?? "Material Form")} (${String(field.name ?? "unknown field")}${valuesText})`;
+                    })
                     .join(
                       ", ",
                     )} before this draft can be posted. No final invoice was posted.`
