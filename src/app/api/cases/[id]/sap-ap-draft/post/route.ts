@@ -48,6 +48,7 @@ type MaterialFormOption = {
 };
 
 type MaterialFormConfig = {
+  tableName: "OPCH" | "PCH1";
   fieldName: string;
   propertyName: string;
   description: string;
@@ -74,14 +75,22 @@ function configuredFieldOptions(value: unknown): MaterialFormOption[] {
 async function loadMaterialFormConfig(
   listUserFields: (tableName: string) => Promise<Record<string, unknown>[]>,
 ): Promise<MaterialFormConfig | null> {
-  const fields = await listUserFields("OPCH");
-  const field = fields.find((candidate) =>
+  const [headerFields, lineFields] = await Promise.all([
+    listUserFields("OPCH"),
+    listUserFields("PCH1"),
+  ]);
+  const headerField = headerFields.find((candidate) =>
     /material\s*form/i.test(JSON.stringify(candidate)),
   );
+  const lineField = lineFields.find((candidate) =>
+    /material\s*form/i.test(JSON.stringify(candidate)),
+  );
+  const field = headerField ?? lineField;
   const fieldName = text(field?.Name);
   if (!fieldName) return null;
 
   return {
+    tableName: headerField ? "OPCH" : "PCH1",
     fieldName,
     propertyName: `U_${fieldName}`,
     description: text(field?.Description) || "Material Form",
@@ -91,6 +100,26 @@ async function loadMaterialFormConfig(
         field?.ValidValuesCollection,
     ),
   };
+}
+
+function readMaterialFormValue(
+  draft: Record<string, unknown>,
+  config: MaterialFormConfig,
+): string {
+  if (config.tableName === "OPCH") {
+    return text(draft[config.propertyName]).toUpperCase();
+  }
+  const lines = Array.isArray(draft.DocumentLines)
+    ? draft.DocumentLines.map(record)
+    : [];
+  const values = [
+    ...new Set(
+      lines
+        .map((line) => text(line[config.propertyName]).toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
+  return values.length === 1 && values[0] ? values[0] : "";
 }
 
 async function handle(
@@ -305,15 +334,22 @@ async function handle(
             );
           }
           if (
-            text(record(draft)[materialForm.propertyName]).toUpperCase() !==
+            readMaterialFormValue(record(draft), materialForm) !==
             selectedOption.value
           ) {
-            await client.updateDraft(draftDocEntry, {
-              [materialForm.propertyName]: selectedOption.value,
-            });
+            const updatePayload =
+              materialForm.tableName === "OPCH"
+                ? { [materialForm.propertyName]: selectedOption.value }
+                : {
+                    DocumentLines: lines.map((line, index) => ({
+                      LineNum: line.LineNum ?? index,
+                      [materialForm.propertyName]: selectedOption.value,
+                    })),
+                  };
+            await client.updateDraft(draftDocEntry, updatePayload);
             draft = await client.getDraft(draftDocEntry);
             if (
-              text(record(draft)[materialForm.propertyName]).toUpperCase() !==
+              readMaterialFormValue(record(draft), materialForm) !==
               selectedOption.value
             ) {
               throw new ApiError(
@@ -339,9 +375,7 @@ async function handle(
         const materialFormState = materialForm
           ? {
               ...materialForm,
-              selectedValue: text(
-                record(draft)[materialForm.propertyName],
-              ).toUpperCase(),
+              selectedValue: readMaterialFormValue(record(draft), materialForm),
             }
           : null;
         if (!convertToFinalInvoice) {
