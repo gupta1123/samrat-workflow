@@ -145,115 +145,130 @@ async function handle(
       );
     }
 
-    const result = await withTestServiceLayer(async (client) => {
-      const existingInvoice = await client.findInvoiceByReference(
-        expectedVendorCode,
-        expectedInvoiceNumber,
-      );
-      if (existingInvoice) {
-        return {
-          alreadyPosted: true,
-          invoice: existingInvoice,
-          draft: null,
-          serviceResult: {},
+    let result;
+    try {
+      result = await withTestServiceLayer(async (client) => {
+        const existingInvoice = await client.findInvoiceByReference(
+          expectedVendorCode,
+          expectedInvoiceNumber,
+        );
+        if (existingInvoice) {
+          return {
+            alreadyPosted: true,
+            invoice: existingInvoice,
+            draft: null,
+            serviceResult: {},
+          };
+        }
+
+        const draft = await client.getDraft(draftDocEntry);
+        const actualObject = text(draft.DocObjectCode);
+        if (actualObject !== "18" && actualObject !== "oPurchaseInvoices") {
+          throw new ApiError(
+            "SAP Draft is not an A/P Invoice. No final invoice was posted.",
+            409,
+          );
+        }
+        if (
+          draft.DocEntry !== draftDocEntry ||
+          text(draft.Comments) !== `Samrat case ${id} AP invoice draft` ||
+          text(draft.CardCode) !== expectedVendorCode ||
+          text(draft.NumAtCard) !== expectedInvoiceNumber ||
+          dateOnly(draft.DocDate) !== expectedPostingDate ||
+          dateOnly(draft.TaxDate) !== expectedInvoiceDate
+        ) {
+          throw new ApiError(
+            "SAP Draft no longer matches this case. No final invoice was posted.",
+            409,
+          );
+        }
+        if (
+          expectedCurrency &&
+          text(draft.DocCurrency).toUpperCase() !== expectedCurrency
+        ) {
+          throw new ApiError(
+            "SAP Draft currency differs from the vendor invoice. No final invoice was posted.",
+            409,
+          );
+        }
+        const actualTotal = Number(draft.DocTotal);
+        const totalTolerance = Math.max(1, expectedTotal * 0.00001);
+        if (
+          !Number.isFinite(actualTotal) ||
+          Math.abs(actualTotal - expectedTotal) > totalTolerance
+        ) {
+          throw new ApiError(
+            `SAP Draft total ${Number.isFinite(actualTotal) ? actualTotal.toFixed(2) : "is missing"} does not match the vendor invoice total ${expectedTotal.toFixed(2)}. No final invoice was posted.`,
+            409,
+          );
+        }
+        const lines = draft.DocumentLines ?? [];
+        if (
+          lines.length === 0 ||
+          !lines.every(
+            (line) =>
+              line.BaseType === expectedBaseType &&
+              line.BaseEntry === expectedBaseEntry,
+          )
+        ) {
+          throw new ApiError(
+            "SAP Draft is not based entirely on the selected PO/GRPO. No final invoice was posted.",
+            409,
+          );
+        }
+
+        const summary = {
+          docEntry: draftDocEntry,
+          vendorCode: draft.CardCode,
+          vendorName: draft.CardName,
+          invoiceNumber: draft.NumAtCard,
+          currency: draft.DocCurrency,
+          total: actualTotal,
+          postingDate: expectedPostingDate,
+          invoiceDate: expectedInvoiceDate,
+          baseKind: payload.baseKind,
+          baseDocument: payload.baseDocNum,
         };
-      }
+        if (!convertToFinalInvoice) {
+          return {
+            alreadyPosted: false,
+            invoice: null,
+            draft: summary,
+            serviceResult: {},
+          };
+        }
 
-      const draft = await client.getDraft(draftDocEntry);
-      const actualObject = text(draft.DocObjectCode);
-      if (actualObject !== "18" && actualObject !== "oPurchaseInvoices") {
-        throw new ApiError(
-          "SAP Draft is not an A/P Invoice. No final invoice was posted.",
-          409,
+        const serviceResult = await client.finalizeDraft(draftDocEntry);
+        const invoice = await client.findInvoiceByReference(
+          expectedVendorCode,
+          expectedInvoiceNumber,
         );
-      }
-      if (
-        draft.DocEntry !== draftDocEntry ||
-        text(draft.Comments) !== `Samrat case ${id} AP invoice draft` ||
-        text(draft.CardCode) !== expectedVendorCode ||
-        text(draft.NumAtCard) !== expectedInvoiceNumber ||
-        dateOnly(draft.DocDate) !== expectedPostingDate ||
-        dateOnly(draft.TaxDate) !== expectedInvoiceDate
-      ) {
-        throw new ApiError(
-          "SAP Draft no longer matches this case. No final invoice was posted.",
-          409,
-        );
-      }
-      if (
-        expectedCurrency &&
-        text(draft.DocCurrency).toUpperCase() !== expectedCurrency
-      ) {
-        throw new ApiError(
-          "SAP Draft currency differs from the vendor invoice. No final invoice was posted.",
-          409,
-        );
-      }
-      const actualTotal = Number(draft.DocTotal);
-      const totalTolerance = Math.max(1, expectedTotal * 0.00001);
-      if (
-        !Number.isFinite(actualTotal) ||
-        Math.abs(actualTotal - expectedTotal) > totalTolerance
-      ) {
-        throw new ApiError(
-          `SAP Draft total ${Number.isFinite(actualTotal) ? actualTotal.toFixed(2) : "is missing"} does not match the vendor invoice total ${expectedTotal.toFixed(2)}. No final invoice was posted.`,
-          409,
-        );
-      }
-      const lines = draft.DocumentLines ?? [];
-      if (
-        lines.length === 0 ||
-        !lines.every(
-          (line) =>
-            line.BaseType === expectedBaseType &&
-            line.BaseEntry === expectedBaseEntry,
-        )
-      ) {
-        throw new ApiError(
-          "SAP Draft is not based entirely on the selected PO/GRPO. No final invoice was posted.",
-          409,
-        );
-      }
-
-      const summary = {
-        docEntry: draftDocEntry,
-        vendorCode: draft.CardCode,
-        vendorName: draft.CardName,
-        invoiceNumber: draft.NumAtCard,
-        currency: draft.DocCurrency,
-        total: actualTotal,
-        postingDate: expectedPostingDate,
-        invoiceDate: expectedInvoiceDate,
-        baseKind: payload.baseKind,
-        baseDocument: payload.baseDocNum,
-      };
-      if (!convertToFinalInvoice) {
+        if (!invoice?.DocEntry) {
+          throw new ApiError(
+            "SAP accepted the draft conversion, but the final A/P Invoice could not be confirmed. Do not retry until it is checked in SAP Test.",
+            502,
+          );
+        }
         return {
           alreadyPosted: false,
-          invoice: null,
+          invoice,
           draft: summary,
-          serviceResult: {},
+          serviceResult,
         };
-      }
-
-      const serviceResult = await client.finalizeDraft(draftDocEntry);
-      const invoice = await client.findInvoiceByReference(
-        expectedVendorCode,
-        expectedInvoiceNumber,
-      );
-      if (!invoice?.DocEntry) {
-        throw new ApiError(
-          "SAP accepted the draft conversion, but the final A/P Invoice could not be confirmed. Do not retry until it is checked in SAP Test.",
-          502,
-        );
-      }
-      return {
-        alreadyPosted: false,
-        invoice,
-        draft: summary,
-        serviceResult,
-      };
-    });
+      });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      const detail =
+        error instanceof Error
+          ? error.message
+          : "SAP Test did not complete the final posting.";
+      console.error("SAP Test final AP invoice operation failed", {
+        caseId: id,
+        draftDocEntry,
+        detail,
+      });
+      throw new ApiError(detail, 502);
+    }
 
     if (!convertToFinalInvoice && result.draft) {
       return {
