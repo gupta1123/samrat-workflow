@@ -42,7 +42,19 @@ function materialFormFields(value: unknown): Record<string, unknown> {
   );
 }
 
-function configuredFieldValues(value: unknown): string[] {
+type MaterialFormOption = {
+  value: string;
+  label: string;
+};
+
+type MaterialFormConfig = {
+  fieldName: string;
+  propertyName: string;
+  description: string;
+  options: MaterialFormOption[];
+};
+
+function configuredFieldOptions(value: unknown): MaterialFormOption[] {
   const source = Array.isArray(value)
     ? value
     : Array.isArray(record(value).value)
@@ -52,15 +64,33 @@ function configuredFieldValues(value: unknown): string[] {
   return source
     .map((candidate) => {
       const entry = record(candidate);
-      const code = text(entry.Value) || text(entry.value);
-      const description =
-        text(entry.Description) || text(entry.description);
-      if (code && description && code !== description) {
-        return `${code} — ${description}`;
-      }
-      return code || description;
+      const code = (text(entry.Value) || text(entry.value)).toUpperCase();
+      const description = text(entry.Description) || text(entry.description);
+      return code ? { value: code, label: description || code } : null;
     })
-    .filter((value): value is string => Boolean(value));
+    .filter((option): option is MaterialFormOption => Boolean(option));
+}
+
+async function loadMaterialFormConfig(
+  listUserFields: (tableName: string) => Promise<Record<string, unknown>[]>,
+): Promise<MaterialFormConfig | null> {
+  const fields = await listUserFields("OPCH");
+  const field = fields.find((candidate) =>
+    /material\s*form/i.test(JSON.stringify(candidate)),
+  );
+  const fieldName = text(field?.Name);
+  if (!fieldName) return null;
+
+  return {
+    fieldName,
+    propertyName: `U_${fieldName}`,
+    description: text(field?.Description) || "Material Form",
+    options: configuredFieldOptions(
+      field?.ValidValuesMD ??
+        field?.ValidValues ??
+        field?.ValidValuesCollection,
+    ),
+  };
 }
 
 async function handle(
@@ -69,6 +99,11 @@ async function handle(
   convertToFinalInvoice: boolean,
 ) {
   return withUser(request, async (db, user) => {
+    const requestBody = convertToFinalInvoice
+      ? record(await request.json().catch(() => ({})))
+      : {};
+    const requestedMaterialForm = text(requestBody.materialForm).toUpperCase();
+
     if (readSapEnvironment() !== "test") {
       throw new ApiError(
         "Final draft posting through this app is enabled only in SAP Test.",
@@ -192,7 +227,7 @@ async function handle(
           };
         }
 
-        const draft = await client.getDraft(draftDocEntry);
+        let draft = await client.getDraft(draftDocEntry);
         const actualObject = text(draft.DocObjectCode);
         if (actualObject !== "18" && actualObject !== "oPurchaseInvoices") {
           throw new ApiError(
@@ -248,6 +283,47 @@ async function handle(
           );
         }
 
+        const materialForm = await loadMaterialFormConfig(
+          client.listUserFields,
+        );
+        if (convertToFinalInvoice && materialForm) {
+          if (!requestedMaterialForm) {
+            throw new ApiError(
+              `Select ${materialForm.description} before posting the final AP invoice.`,
+              409,
+              { materialForm },
+            );
+          }
+          const selectedOption = materialForm.options.find(
+            (option) => option.value === requestedMaterialForm,
+          );
+          if (!selectedOption) {
+            throw new ApiError(
+              `The selected ${materialForm.description} is not allowed by SAP Test.`,
+              409,
+              { materialForm },
+            );
+          }
+          if (
+            text(record(draft)[materialForm.propertyName]).toUpperCase() !==
+            selectedOption.value
+          ) {
+            await client.updateDraft(draftDocEntry, {
+              [materialForm.propertyName]: selectedOption.value,
+            });
+            draft = await client.getDraft(draftDocEntry);
+            if (
+              text(record(draft)[materialForm.propertyName]).toUpperCase() !==
+              selectedOption.value
+            ) {
+              throw new ApiError(
+                `SAP Test did not save ${materialForm.description}. No final invoice was posted.`,
+                502,
+              );
+            }
+          }
+        }
+
         const summary = {
           docEntry: draftDocEntry,
           vendorCode: draft.CardCode,
@@ -260,11 +336,20 @@ async function handle(
           baseKind: payload.baseKind,
           baseDocument: payload.baseDocNum,
         };
+        const materialFormState = materialForm
+          ? {
+              ...materialForm,
+              selectedValue: text(
+                record(draft)[materialForm.propertyName],
+              ).toUpperCase(),
+            }
+          : null;
         if (!convertToFinalInvoice) {
           return {
             alreadyPosted: false,
             invoice: null,
             draft: summary,
+            materialForm: materialFormState,
             serviceResult: {},
           };
         }
@@ -314,9 +399,9 @@ async function handle(
               userFields.length > 0
                 ? `SAP Test requires ${userFields
                     .map((field) => {
-                      const allowedValues = configuredFieldValues(
+                      const allowedValues = configuredFieldOptions(
                         field.validValues,
-                      );
+                      ).map((option) => `${option.value} — ${option.label}`);
                       const valuesText =
                         allowedValues.length > 0
                           ? `; allowed values: ${allowedValues.join(", ")}`
@@ -349,6 +434,7 @@ async function handle(
           alreadyPosted: false,
           invoice,
           draft: summary,
+          materialForm: materialFormState,
           serviceResult,
         };
       });
@@ -372,6 +458,7 @@ async function handle(
         verified: true,
         posted: false,
         draft: result.draft,
+        materialForm: result.materialForm,
         message: `SAP Test Draft ${draftDocEntry} exists and matches this case. It is ready for final posting.`,
       };
     }
@@ -385,6 +472,10 @@ async function handle(
         502,
       );
     }
+    const savedMaterialForm =
+      text(record(record(result).materialForm).selectedValue) ||
+      requestedMaterialForm ||
+      null;
     const saved = await db
       .from("sap_postings")
       .update({
@@ -396,6 +487,7 @@ async function handle(
           FinalDocEntry: result.invoice?.DocEntry,
           FinalDocNum: result.invoice?.DocNum,
           FinalizeResponse: result.serviceResult,
+          MaterialForm: savedMaterialForm,
         },
         error: null,
       })
@@ -417,6 +509,7 @@ async function handle(
         finalDocEntry: result.invoice?.DocEntry,
         finalDocNum: result.invoice?.DocNum,
         invoiceNumber: expectedInvoiceNumber,
+        materialForm: savedMaterialForm,
       },
     });
     dbCheck(event.error);

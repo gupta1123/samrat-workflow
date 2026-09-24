@@ -92,6 +92,14 @@ type PrepareResult = {
   matchedLines?: MatchedLine[];
 };
 
+type MaterialFormConfig = {
+  fieldName: string;
+  propertyName: string;
+  description: string;
+  selectedValue?: string;
+  options: Array<{ value: string; label: string }>;
+};
+
 function formatMoney(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value))
     return "—";
@@ -145,6 +153,11 @@ export function SapInvoicePreparePanel({
   const [confirming, setConfirming] = useState(false);
   const [finalPosting, setFinalPosting] = useState(false);
   const [confirmingFinalPost, setConfirmingFinalPost] = useState(false);
+  const [loadingFinalPostOptions, setLoadingFinalPostOptions] = useState(false);
+  const [materialForm, setMaterialForm] = useState<MaterialFormConfig | null>(
+    null,
+  );
+  const [selectedMaterialForm, setSelectedMaterialForm] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -253,7 +266,11 @@ export function SapInvoicePreparePanel({
     try {
       const response = await apiFetch(
         `/api/cases/${encodeURIComponent(caseId)}/sap-ap-draft/post`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ materialForm: selectedMaterialForm }),
+        },
       );
       const body = await response.json().catch(() => ({}));
       setSaveFailed(!response.ok);
@@ -274,13 +291,53 @@ export function SapInvoicePreparePanel({
               }
             : current,
         );
+        setConfirmingFinalPost(false);
       }
     } catch {
       setSaveFailed(true);
       setSaveResult("Could not post the final AP invoice in SAP Test.");
     } finally {
       setFinalPosting(false);
-      setConfirmingFinalPost(false);
+    }
+  }
+
+  async function openFinalPostConfirmation() {
+    setLoadingFinalPostOptions(true);
+    setSaveResult(null);
+    setSaveFailed(false);
+    try {
+      const response = await apiFetch(
+        `/api/cases/${encodeURIComponent(caseId)}/sap-ap-draft/post`,
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setSaveFailed(true);
+        setSaveResult(body.error ?? "Could not verify the SAP Test draft.");
+        return;
+      }
+      const config = body.materialForm as MaterialFormConfig | null;
+      if (
+        config &&
+        (!Array.isArray(config.options) || config.options.length === 0)
+      ) {
+        setSaveFailed(true);
+        setSaveResult(
+          "SAP Test did not provide the allowed Material Form choices. No final invoice was posted.",
+        );
+        return;
+      }
+      setMaterialForm(config);
+      setSelectedMaterialForm(
+        config?.options.some((option) => option.value === config.selectedValue)
+          ? (config.selectedValue ?? "")
+          : "",
+      );
+      setConfirmingFinalPost(true);
+    } catch {
+      setSaveFailed(true);
+      setSaveResult("Could not verify the SAP Test draft.");
+    } finally {
+      setLoadingFinalPostOptions(false);
     }
   }
 
@@ -748,10 +805,33 @@ export function SapInvoicePreparePanel({
                         This creates a final accounting document in SAP Test. It
                         cannot be undone from this app.
                       </div>
+                      {materialForm ? (
+                        <label className="mt-3 block text-[10px] font-semibold text-[#3d3530]">
+                          {materialForm.description}
+                          <select
+                            className="mt-1 block h-9 w-full rounded-md border border-[#cfc4b8] bg-white px-2 text-[11px] font-normal text-[#111827] outline-none focus:border-[#2d6a4f] focus:ring-1 focus:ring-[#2d6a4f]"
+                            value={selectedMaterialForm}
+                            disabled={finalPosting}
+                            onChange={(event) =>
+                              setSelectedMaterialForm(event.target.value)
+                            }
+                          >
+                            <option value="">Select material form</option>
+                            {materialForm.options.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label} ({option.value})
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
                       <div className="mt-2 flex items-center gap-2">
                         <Button
                           size="sm"
-                          disabled={finalPosting}
+                          disabled={
+                            finalPosting ||
+                            Boolean(materialForm && !selectedMaterialForm)
+                          }
                           onClick={() => void handleFinalPost()}
                         >
                           {finalPosting ? (
@@ -775,9 +855,14 @@ export function SapInvoicePreparePanel({
                     <Button
                       size="sm"
                       className="mt-3"
-                      onClick={() => setConfirmingFinalPost(true)}
+                      disabled={loadingFinalPostOptions}
+                      onClick={() => void openFinalPostConfirmation()}
                     >
-                      <Send className="mr-1.5 h-3 w-3" />
+                      {loadingFinalPostOptions ? (
+                        <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                      ) : (
+                        <Send className="mr-1.5 h-3 w-3" />
+                      )}
                       Post Draft {sapPosting.documentNumber} as Final AP Invoice
                     </Button>
                   )}

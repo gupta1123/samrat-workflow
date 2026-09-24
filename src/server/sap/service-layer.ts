@@ -95,6 +95,10 @@ export async function withTestServiceLayer<T>(
       payload: Record<string, unknown>,
     ) => Promise<SapDraftResponse>;
     getDraft: (docEntry: number) => Promise<SapDraftResponse>;
+    updateDraft: (
+      docEntry: number,
+      payload: Record<string, unknown>,
+    ) => Promise<void>;
     finalizeDraft: (docEntry: number) => Promise<Record<string, unknown>>;
     listUserFields: (tableName: string) => Promise<Record<string, unknown>[]>;
   }) => Promise<T>,
@@ -384,6 +388,12 @@ export async function withTestServiceLayer<T>(
       async getDraft(docEntry) {
         const { body } = await request(`/Drafts(${docEntry})`);
         return body as SapDraftResponse;
+      },
+      async updateDraft(docEntry, payload) {
+        await request(`/Drafts(${docEntry})`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
       },
       async finalizeDraft(docEntry) {
         const { body } = await request("/DraftsService_SaveDraftToDocument", {
