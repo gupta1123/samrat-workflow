@@ -175,6 +175,16 @@ export function SapInvoicePreparePanel({
   }, [caseId]);
 
   useEffect(() => {
+    setCopied(false);
+    setSaving(false);
+    setSaveResult(null);
+    setSaveFailed(false);
+    setConfirming(false);
+    setFinalPosting(false);
+    setConfirmingFinalPost(false);
+    setLoadingFinalPostOptions(false);
+    setMaterialForm(null);
+    setSelectedMaterialForm("");
     void load();
   }, [load]);
 
@@ -812,9 +822,11 @@ export function SapInvoicePreparePanel({
                             className="mt-1 block h-9 w-full rounded-md border border-[#cfc4b8] bg-white px-2 text-[11px] font-normal text-[#111827] outline-none focus:border-[#2d6a4f] focus:ring-1 focus:ring-[#2d6a4f]"
                             value={selectedMaterialForm}
                             disabled={finalPosting}
-                            onChange={(event) =>
-                              setSelectedMaterialForm(event.target.value)
-                            }
+                            onChange={(event) => {
+                              setSelectedMaterialForm(event.target.value);
+                              setSaveResult(null);
+                              setSaveFailed(false);
+                            }}
                           >
                             <option value="">Select material form</option>
                             {materialForm.options.map((option) => (
