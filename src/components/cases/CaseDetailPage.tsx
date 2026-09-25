@@ -3134,7 +3134,9 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           onResetZoom={() => setPreviewZoom(DEFAULT_PREVIEW_ZOOM)}
         />
 
-        {detail.case.status === "accepted" ? (
+        {["completed", "accepted", "rejected"].includes(
+          detail.case.status,
+        ) ? (
           <div className="mx-auto w-full max-w-6xl px-6 pb-6">
             <SapPostingPanel caseId={caseId} />
           </div>

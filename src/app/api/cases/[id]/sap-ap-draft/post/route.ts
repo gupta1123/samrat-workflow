@@ -10,6 +10,7 @@ import { readSapEnvironment } from "@/server/sap/config";
 import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { sapBaseRequiresMaterialForm } from "@/lib/sap-material-form";
 import {
   sapTransportFieldUpdates,
   transportFieldsMatch,
@@ -199,6 +200,7 @@ async function handle(
     const expectedInvoiceDate = dateOnly(payload.invoiceDate);
     const expectedBaseEntry = positiveInteger(payload.baseDocEntry);
     const expectedBaseType = payload.baseKind === "PO" ? 22 : 20;
+    const requiresMaterialForm = sapBaseRequiresMaterialForm(payload.baseKind);
     if (
       !expectedVendorCode ||
       !expectedInvoiceNumber ||
@@ -325,9 +327,9 @@ async function handle(
           );
         }
 
-        const materialForm = await loadMaterialFormConfig(
-          client.listUserFields,
-        );
+        const materialForm = requiresMaterialForm
+          ? await loadMaterialFormConfig(client.listUserFields)
+          : null;
         if (convertToFinalInvoice && materialForm) {
           if (!requestedMaterialForm) {
             throw new ApiError(
@@ -435,6 +437,12 @@ async function handle(
             );
           }
           if (/please select the material form/i.test(String(error))) {
+            if (!requiresMaterialForm) {
+              throw new ApiError(
+                "SAP Test is incorrectly requiring Material Form for this purchase-order-based invoice. No final invoice was posted.",
+                409,
+              );
+            }
             const baseDocument =
               expectedBaseType === 22
                 ? await client.getPurchaseOrder(expectedBaseEntry)

@@ -41,6 +41,7 @@ export type SapReadiness = {
 export async function fetchSapReadiness(caseId: string): Promise<SapReadiness> {
   const response = await apiFetch(
     `/api/cases/${encodeURIComponent(caseId)}/sap-readiness`,
+    { cache: "no-store" },
   );
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
