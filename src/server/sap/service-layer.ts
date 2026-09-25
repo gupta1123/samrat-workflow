@@ -9,6 +9,7 @@ import {
   type SapNumberedApInvoice,
   type SapNumberingSeries,
 } from "./numbering-series";
+import type { SapWithholdingTaxRow } from "./draft-total";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -22,6 +23,7 @@ type SapDraftResponse = {
   DocCurrency?: string;
   Comments?: string;
   DocObjectCode?: string;
+  WithholdingTaxDataCollection?: SapWithholdingTaxRow[];
   DocumentLines?: Array<{
     LineNum?: number;
     ItemCode?: string;

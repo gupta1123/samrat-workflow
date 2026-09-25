@@ -7,6 +7,7 @@ import {
 } from "@/server/api/helpers";
 import { readStoredLineItems } from "@/server/line-items";
 import { readSapEnvironment } from "@/server/sap/config";
+import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 
@@ -286,14 +287,22 @@ async function handle(
             409,
           );
         }
-        const actualTotal = Number(draft.DocTotal);
         const totalTolerance = Math.max(1, expectedTotal * 0.00001);
-        if (
-          !Number.isFinite(actualTotal) ||
-          Math.abs(actualTotal - expectedTotal) > totalTolerance
-        ) {
+        const totalReconciliation = reconcileSapDraftTotal({
+          docTotal: draft.DocTotal,
+          withholdingTaxes: draft.WithholdingTaxDataCollection,
+          expectedInvoiceTotal: expectedTotal,
+          tolerance: totalTolerance,
+        });
+        if (!totalReconciliation?.matches) {
+          const actualTotal = Number(draft.DocTotal);
+          const withholdingTax = totalReconciliation?.withholdingTax ?? 0;
+          const withholdingText =
+            withholdingTax > 0
+              ? ` after adding SAP withholding tax ${withholdingTax.toFixed(2)}`
+              : "";
           throw new ApiError(
-            `SAP Draft total ${Number.isFinite(actualTotal) ? actualTotal.toFixed(2) : "is missing"} does not match the vendor invoice total ${expectedTotal.toFixed(2)}. No final invoice was posted.`,
+            `SAP Draft total ${Number.isFinite(actualTotal) ? actualTotal.toFixed(2) : "is missing"}${withholdingText} does not match the vendor invoice total ${expectedTotal.toFixed(2)}. No final invoice was posted.`,
             409,
           );
         }
@@ -366,7 +375,9 @@ async function handle(
           vendorName: draft.CardName,
           invoiceNumber: draft.NumAtCard,
           currency: draft.DocCurrency,
-          total: actualTotal,
+          total: totalReconciliation.invoiceTotal,
+          netPayable: totalReconciliation.netPayable,
+          withholdingTax: totalReconciliation.withholdingTax,
           postingDate: expectedPostingDate,
           invoiceDate: expectedInvoiceDate,
           baseKind: payload.baseKind,
