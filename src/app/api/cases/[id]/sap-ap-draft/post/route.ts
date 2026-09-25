@@ -10,6 +10,10 @@ import { readSapEnvironment } from "@/server/sap/config";
 import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
+import {
+  sapTransportFieldUpdates,
+  transportFieldsMatch,
+} from "@/server/sap/transport-fields";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -369,6 +373,27 @@ async function handle(
           }
         }
 
+        if (convertToFinalInvoice) {
+          const baseDocument =
+            expectedBaseType === 22
+              ? await client.getPurchaseOrder(expectedBaseEntry)
+              : await client.getGrpo(expectedBaseEntry);
+          const transportUpdates = sapTransportFieldUpdates(
+            record(draft),
+            record(baseDocument),
+          );
+          if (Object.keys(transportUpdates).length > 0) {
+            await client.updateDraft(draftDocEntry, transportUpdates);
+            draft = await client.getDraft(draftDocEntry);
+            if (!transportFieldsMatch(record(draft), transportUpdates)) {
+              throw new ApiError(
+                "SAP Test did not save the Transport Name from the matched SAP document. No final invoice was posted.",
+                502,
+              );
+            }
+          }
+        }
+
         const summary = {
           docEntry: draftDocEntry,
           vendorCode: draft.CardCode,
@@ -403,6 +428,12 @@ async function handle(
         try {
           serviceResult = await client.finalizeDraft(draftDocEntry);
         } catch (error) {
+          if (/transport name is mandatory/i.test(String(error))) {
+            throw new ApiError(
+              `SAP Test requires Transport Name, but the matched ${expectedBaseType === 22 ? "purchase order" : "GRPO"} does not provide a usable value. No final invoice was posted.`,
+              409,
+            );
+          }
           if (/please select the material form/i.test(String(error))) {
             const baseDocument =
               expectedBaseType === 22
