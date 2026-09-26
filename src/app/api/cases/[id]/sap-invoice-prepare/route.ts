@@ -564,6 +564,7 @@ export async function GET(request: Request, context: Context) {
 
     // GRPO first, OpenPO fallback for the base document
     let bestPo = findBestPoDoc(groupPoByDoc(poRows), poNumber, vendorName);
+    let exactPoAssignments: number[] | null = null;
     const unambiguousGrpo =
       scored.length > 0 &&
       (scored.length === 1 || scored[0].score > scored[1].score);
@@ -587,13 +588,23 @@ export async function GET(request: Request, context: Context) {
             );
             if (header?.DocEntry) {
               const document = await client.getPurchaseOrder(header.DocEntry);
-              const assignments = assignExactOpenPoLines(
-                packetLines,
-                document.DocumentLines ?? [],
-              );
-              const poDoc = assignments ? serviceLayerPoDoc(document) : null;
-              if (poDoc) {
-                return { reason: "exact_open_po" as const, poDoc };
+              const poDoc = serviceLayerPoDoc(document);
+              const assignments = poDoc
+                ? assignExactOpenPoLines(
+                    packetLines,
+                    poDoc.lines.map((line) => ({
+                      ItemCode: line.itemCode,
+                      RemainingOpenQuantity: line.openQty,
+                      Price: line.price,
+                    })),
+                  )
+                : null;
+              if (poDoc && assignments) {
+                return {
+                  reason: "exact_open_po" as const,
+                  poDoc,
+                  assignments,
+                };
               }
             }
           }
@@ -675,6 +686,7 @@ export async function GET(request: Request, context: Context) {
         });
         if (inspection?.reason === "exact_open_po") {
           bestPo = inspection.poDoc;
+          exactPoAssignments = inspection.assignments;
         } else if (inspection) {
           return NextResponse.json({ matched: false, ...inspection });
         }
@@ -693,13 +705,20 @@ export async function GET(request: Request, context: Context) {
     // Match packet lines against both documents; confidence comes from the base
     const grpoUsedIndices = new Set<number>();
     const poUsedIndices = new Set<number>();
-    const matchedLines: MatchedPacketLine[] = packetLines.map((line) => {
+    const matchedLines: MatchedPacketLine[] = packetLines.map((line, index) => {
       const grpoMatch = bestGrpo
         ? matchPacketLineToGrpoLine(line, bestGrpo.lines, grpoUsedIndices)
         : null;
-      const poMatch = bestPo
-        ? matchPacketLineToPoLine(line, bestPo.lines, poUsedIndices)
-        : null;
+      const exactPoLineIndex = exactPoAssignments?.[index];
+      const poMatch =
+        bestPo && exactPoLineIndex !== undefined
+          ? {
+              line: bestPo.lines[exactPoLineIndex],
+              confidence: "exact" as const,
+            }
+          : bestPo
+            ? matchPacketLineToPoLine(line, bestPo.lines, poUsedIndices)
+            : null;
       const primary = baseSource === "grpo" ? grpoMatch : poMatch;
       return {
         description: line.description,
