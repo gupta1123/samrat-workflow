@@ -10,6 +10,11 @@ import {
 } from "@/server/sap/service-layer";
 import { selectSapLine } from "@/lib/sap-line-match";
 import {
+  assignExactOpenPoLines,
+  sapDocumentNumber,
+  selectUniqueExactOpenPurchaseOrder,
+} from "@/lib/sap-exact-po-match";
+import {
   classifySapCase,
   normalizeSapReference,
   parseSapAmount,
@@ -149,6 +154,46 @@ function matchPacketLineToPoLine(
   usedIndices: Set<number>,
 ): { line: PoLine; confidence: "exact" | "fuzzy" } | null {
   return selectSapLine(packetLine, poLines, usedIndices);
+}
+
+function serviceLayerPoDoc(document: SapReadDocument): PoDoc | null {
+  if (
+    typeof document.DocEntry !== "number" ||
+    typeof document.DocNum !== "number" ||
+    typeof document.CardCode !== "string" ||
+    typeof document.CardName !== "string"
+  ) {
+    return null;
+  }
+
+  const lines: PoLine[] = (document.DocumentLines ?? [])
+    .filter(
+      (line) =>
+        line.LineStatus === "bost_Open" &&
+        typeof line.RemainingOpenQuantity === "number" &&
+        line.RemainingOpenQuantity > 0,
+    )
+    .map((line) => ({
+      docNum: document.DocNum!,
+      poLineNum: line.LineNum ?? 0,
+      itemCode: line.ItemCode ?? null,
+      description: line.ItemDescription ?? null,
+      quantity: line.Quantity ?? null,
+      openQty: line.RemainingOpenQuantity ?? null,
+      price: line.Price ?? null,
+      taxCode: null,
+      lineTotal: null,
+      taxAmount: null,
+      totalAmount: null,
+    }));
+
+  return {
+    docEntry: document.DocEntry,
+    docNum: document.DocNum,
+    bpCode: document.CardCode,
+    bpName: document.CardName,
+    lines,
+  };
 }
 
 type MatchedGrpoLine = {
@@ -526,6 +571,32 @@ export async function GET(request: Request, context: Context) {
     if (sapEnv === "test") {
       try {
         const inspection = await withTestServiceLayer(async (client) => {
+          const requestedPo = sapDocumentNumber(poNumber);
+          if (
+            !unambiguousGrpo &&
+            !bestPo &&
+            requestedPo !== null &&
+            vendorName
+          ) {
+            const candidates =
+              await client.listPurchaseOrdersByDocNum(requestedPo);
+            const header = selectUniqueExactOpenPurchaseOrder(
+              candidates,
+              requestedPo,
+              vendorName,
+            );
+            if (header?.DocEntry) {
+              const document = await client.getPurchaseOrder(header.DocEntry);
+              const assignments = assignExactOpenPoLines(
+                packetLines,
+                document.DocumentLines ?? [],
+              );
+              const poDoc = assignments ? serviceLayerPoDoc(document) : null;
+              if (poDoc) {
+                return { reason: "exact_open_po" as const, poDoc };
+              }
+            }
+          }
           if (!unambiguousGrpo && bestPo?.docEntry) {
             const po = await client.getPurchaseOrder(bestPo.docEntry);
             if (
@@ -602,7 +673,9 @@ export async function GET(request: Request, context: Context) {
           }
           return null;
         });
-        if (inspection) {
+        if (inspection?.reason === "exact_open_po") {
+          bestPo = inspection.poDoc;
+        } else if (inspection) {
           return NextResponse.json({ matched: false, ...inspection });
         }
       } catch (error) {
