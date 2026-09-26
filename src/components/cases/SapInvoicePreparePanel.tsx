@@ -16,8 +16,8 @@ import { apiFetch } from "@/lib/api-client";
 
 type MatchedLine = {
   description: string | null;
-  quantity: number | null;
-  rate: number | null;
+  quantity: string | number | null;
+  rate: string | number | null;
   matchConfidence: "exact" | "fuzzy" | "none";
   grpoItemCode: string | null;
   poRate: number | null;
@@ -44,7 +44,7 @@ type ApPayload = {
   lines: Array<{
     description: string | null;
     hsnSac: string | null;
-    quantity: number | null;
+    quantity: string | number | null;
     unit: string | null;
     rate: number | null;
     taxableAmount: number | null;
@@ -100,14 +100,17 @@ type MaterialFormConfig = {
   options: Array<{ value: string; label: string }>;
 };
 
-function formatMoney(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value))
-    return "—";
+function formatMoney(
+  value: string | number | null | undefined,
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) return "—";
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(numericValue);
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -121,11 +124,14 @@ function formatDate(value: string | null | undefined): string {
   }).format(date);
 }
 
-function formatQuantity(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value))
-    return "—";
+function formatQuantity(
+  value: string | number | null | undefined,
+): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) return "—";
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 }).format(
-    value,
+    numericValue,
   );
 }
 
