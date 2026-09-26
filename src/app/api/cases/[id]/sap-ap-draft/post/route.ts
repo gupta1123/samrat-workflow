@@ -10,7 +10,10 @@ import { readSapEnvironment } from "@/server/sap/config";
 import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
-import { sapBaseRequiresMaterialForm } from "@/lib/sap-material-form";
+import {
+  sapAutomaticMaterialForm,
+  sapBaseRequiresMaterialForm,
+} from "@/lib/sap-material-form";
 import {
   sapTransportFieldUpdates,
   transportFieldsMatch,
@@ -201,6 +204,7 @@ async function handle(
     const expectedBaseEntry = positiveInteger(payload.baseDocEntry);
     const expectedBaseType = payload.baseKind === "PO" ? 22 : 20;
     const requiresMaterialForm = sapBaseRequiresMaterialForm(payload.baseKind);
+    const automaticMaterialForm = sapAutomaticMaterialForm(payload.baseKind);
     if (
       !expectedVendorCode ||
       !expectedInvoiceNumber ||
@@ -327,11 +331,24 @@ async function handle(
           );
         }
 
-        const materialForm = requiresMaterialForm
-          ? await loadMaterialFormConfig(client.listUserFields)
-          : null;
-        if (convertToFinalInvoice && materialForm) {
-          if (!requestedMaterialForm) {
+        const materialForm =
+          requiresMaterialForm ||
+          (convertToFinalInvoice && Boolean(automaticMaterialForm))
+            ? await loadMaterialFormConfig(client.listUserFields)
+            : null;
+        if (
+          convertToFinalInvoice &&
+          (requiresMaterialForm || automaticMaterialForm)
+        ) {
+          if (!materialForm) {
+            throw new ApiError(
+              "SAP Test did not expose its Material Form configuration. No final invoice was posted.",
+              502,
+            );
+          }
+          const selectedMaterialForm =
+            automaticMaterialForm || requestedMaterialForm;
+          if (!selectedMaterialForm) {
             throw new ApiError(
               `Select ${materialForm.description} before posting the final AP invoice.`,
               409,
@@ -339,11 +356,13 @@ async function handle(
             );
           }
           const selectedOption = materialForm.options.find(
-            (option) => option.value === requestedMaterialForm,
+            (option) => option.value === selectedMaterialForm,
           );
           if (!selectedOption) {
             throw new ApiError(
-              `The selected ${materialForm.description} is not allowed by SAP Test.`,
+              automaticMaterialForm
+                ? `SAP Test does not allow the confirmed non-material value STRAIGHT (${automaticMaterialForm}) for ${materialForm.description}. No final invoice was posted.`
+                : `The selected ${materialForm.description} is not allowed by SAP Test.`,
               409,
               { materialForm },
             );
@@ -437,9 +456,9 @@ async function handle(
             );
           }
           if (/please select the material form/i.test(String(error))) {
-            if (!requiresMaterialForm) {
+            if (automaticMaterialForm) {
               throw new ApiError(
-                "SAP Test is incorrectly requiring Material Form for this purchase-order-based invoice. No final invoice was posted.",
+                `SAP Test still rejected Material Form after STRAIGHT (${automaticMaterialForm}) was saved on this non-material invoice draft. No final invoice was posted.`,
                 409,
               );
             }
