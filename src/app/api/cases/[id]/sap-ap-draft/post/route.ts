@@ -38,16 +38,6 @@ function dateOnly(value: unknown): string {
   return /^\d{4}-\d{2}-\d{2}/.test(valueText) ? valueText.slice(0, 10) : "";
 }
 
-function materialFormFields(value: unknown): Record<string, unknown> {
-  const source = record(value);
-  return Object.fromEntries(
-    Object.entries(source).filter(
-      ([key]) =>
-        key.startsWith("U_") && /material|mat.*form|form.*mat/i.test(key),
-    ),
-  );
-}
-
 type MaterialFormOption = {
   value: string;
   label: string;
@@ -81,22 +71,16 @@ function configuredFieldOptions(value: unknown): MaterialFormOption[] {
 async function loadMaterialFormConfig(
   listUserFields: (tableName: string) => Promise<Record<string, unknown>[]>,
 ): Promise<MaterialFormConfig | null> {
-  const [headerFields, lineFields] = await Promise.all([
-    listUserFields("OPCH"),
-    listUserFields("PCH1"),
-  ]);
-  const headerField = headerFields.find((candidate) =>
-    /material\s*form/i.test(JSON.stringify(candidate)),
+  const headerFields = await listUserFields("OPCH");
+  const field = headerFields.find(
+    (candidate) =>
+      text(candidate.Description).toLocaleLowerCase() === "material form",
   );
-  const lineField = lineFields.find((candidate) =>
-    /material\s*form/i.test(JSON.stringify(candidate)),
-  );
-  const field = headerField ?? lineField;
   const fieldName = text(field?.Name);
   if (!fieldName) return null;
 
   return {
-    tableName: headerField ? "OPCH" : "PCH1",
+    tableName: "OPCH",
     fieldName,
     propertyName: `U_${fieldName}`,
     description: text(field?.Description) || "Material Form",
@@ -482,42 +466,31 @@ async function handle(
                 409,
               );
             }
-            const baseDocument =
-              expectedBaseType === 22
-                ? await client.getPurchaseOrder(expectedBaseEntry)
-                : await client.getGrpo(expectedBaseEntry);
-            const draftFields = materialFormFields(draft);
-            const baseFields = materialFormFields(baseDocument);
-            const userFields = (
-              await Promise.all([
-                client.listUserFields("OPCH"),
-                client.listUserFields("PCH1"),
-              ])
-            )
-              .flat()
-              .filter((field) => /material\s*form/i.test(JSON.stringify(field)))
-              .map((field) => ({
-                tableName: field.TableName,
-                name: field.Name,
-                description: field.Description,
-                validValues:
-                  field.ValidValuesMD ??
-                  field.ValidValues ??
-                  field.ValidValuesCollection,
-              }));
+            const draftFields = materialForm
+              ? {
+                  [materialForm.propertyName]:
+                    record(draft)[materialForm.propertyName],
+                }
+              : {};
+            const userFields = materialForm
+              ? [
+                  {
+                    tableName: materialForm.tableName,
+                    name: materialForm.fieldName,
+                    description: materialForm.description,
+                    validValues: materialForm.options.map((option) => ({
+                      Value: option.value,
+                      Description: option.label,
+                    })),
+                  },
+                ]
+              : [];
             console.error("SAP Test requires its custom Material Form field", {
               caseId: id,
               draftDocEntry,
               draftFields,
-              baseFields,
               userFields,
             });
-            const fieldNames = [
-              ...new Set([
-                ...Object.keys(draftFields),
-                ...Object.keys(baseFields),
-              ]),
-            ];
             throw new ApiError(
               userFields.length > 0
                 ? `SAP Test requires ${userFields
@@ -534,11 +507,9 @@ async function handle(
                     .join(
                       ", ",
                     )} before this draft can be posted. No final invoice was posted.`
-                : fieldNames.length > 0
-                  ? `SAP Test requires its custom Material Form field before this draft can be posted. Relevant SAP field(s): ${fieldNames.join(", ")}. No final invoice was posted.`
-                  : "SAP Test requires a client-specific Material Form value before this draft can be posted. The required field/value is not present on the PO or draft, so no final invoice was posted.",
+                : "SAP Test requires a client-specific Material Form value before this draft can be posted. No final invoice was posted.",
               409,
-              { draftFields, baseFields, userFields },
+              { draftFields, userFields },
             );
           }
           throw error;

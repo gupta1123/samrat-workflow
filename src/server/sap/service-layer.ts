@@ -423,12 +423,21 @@ export async function withTestServiceLayer<T>(
         const filter = encodeURIComponent(
           `TableName eq '${tableName.replace(/'/g, "''")}'`,
         );
-        const { body } = await request(
-          `/UserFieldsMD?$filter=${filter}&$top=200`,
+        const fields: Record<string, unknown>[] = [];
+        const pageSize = 200;
+        for (let skip = 0; skip < 2000; skip += pageSize) {
+          const { body } = await request(
+            `/UserFieldsMD?$filter=${filter}&$top=${pageSize}&$skip=${skip}`,
+          );
+          const page = Array.isArray(body.value)
+            ? (body.value as Record<string, unknown>[])
+            : [];
+          fields.push(...page);
+          if (page.length < pageSize) return fields;
+        }
+        throw new Error(
+          `SAP Test has too many user fields on ${tableName} to select Material Form safely.`,
         );
-        return Array.isArray(body.value)
-          ? (body.value as Record<string, unknown>[])
-          : [];
       },
     });
   } finally {
