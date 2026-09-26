@@ -110,7 +110,10 @@ export async function withTestServiceLayer<T>(
       payload: Record<string, unknown>,
     ) => Promise<void>;
     finalizeDraft: (docEntry: number) => Promise<Record<string, unknown>>;
-    listUserFields: (tableName: string) => Promise<Record<string, unknown>[]>;
+    getUserField: (
+      tableName: string,
+      description: string,
+    ) => Promise<Record<string, unknown> | null>;
   }) => Promise<T>,
 ): Promise<T> {
   const config = testConfig();
@@ -419,25 +422,22 @@ export async function withTestServiceLayer<T>(
         });
         return body;
       },
-      async listUserFields(tableName) {
+      async getUserField(tableName, description) {
         const filter = encodeURIComponent(
-          `TableName eq '${tableName.replace(/'/g, "''")}'`,
+          `TableName eq '${tableName.replaceAll("'", "''")}' and Description eq '${description.replaceAll("'", "''")}'`,
         );
-        const fields: Record<string, unknown>[] = [];
-        const pageSize = 200;
-        for (let skip = 0; skip < 2000; skip += pageSize) {
-          const { body } = await request(
-            `/UserFieldsMD?$filter=${filter}&$top=${pageSize}&$skip=${skip}`,
+        const { body } = await request(
+          `/UserFieldsMD?$filter=${filter}&$top=2`,
+        );
+        const fields = Array.isArray(body.value)
+          ? (body.value as Record<string, unknown>[])
+          : [];
+        if (fields.length > 1) {
+          throw new Error(
+            `SAP Test exposes more than one ${description} field on ${tableName}; final posting is blocked until the SAP metadata is unambiguous.`,
           );
-          const page = Array.isArray(body.value)
-            ? (body.value as Record<string, unknown>[])
-            : [];
-          fields.push(...page);
-          if (page.length < pageSize) return fields;
         }
-        throw new Error(
-          `SAP Test has too many user fields on ${tableName} to select Material Form safely.`,
-        );
+        return fields[0] ?? null;
       },
     });
   } finally {

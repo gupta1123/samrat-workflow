@@ -69,13 +69,12 @@ function configuredFieldOptions(value: unknown): MaterialFormOption[] {
 }
 
 async function loadMaterialFormConfig(
-  listUserFields: (tableName: string) => Promise<Record<string, unknown>[]>,
+  getUserField: (
+    tableName: string,
+    description: string,
+  ) => Promise<Record<string, unknown> | null>,
 ): Promise<MaterialFormConfig | null> {
-  const headerFields = await listUserFields("OPCH");
-  const field = headerFields.find(
-    (candidate) =>
-      text(candidate.Description).toLocaleLowerCase() === "material form",
-  );
+  const field = await getUserField("OPCH", "Material Form");
   const fieldName = text(field?.Name);
   if (!fieldName) return null;
 
@@ -333,17 +332,22 @@ async function handle(
         const automaticMaterialForm = materialFormPolicy.automaticValue;
 
         const materialForm =
-          requiresMaterialForm ||
-          (convertToFinalInvoice && Boolean(automaticMaterialForm))
-            ? await loadMaterialFormConfig(client.listUserFields)
+          requiresMaterialForm || Boolean(automaticMaterialForm)
+            ? await loadMaterialFormConfig(client.getUserField)
             : null;
+        if ((requiresMaterialForm || automaticMaterialForm) && !materialForm) {
+          throw new ApiError(
+            "SAP Test did not expose one unambiguous Material Form field for A/P Invoices. No final invoice was posted.",
+            502,
+          );
+        }
         if (
           convertToFinalInvoice &&
           (requiresMaterialForm || automaticMaterialForm)
         ) {
           if (!materialForm) {
             throw new ApiError(
-              "SAP Test did not expose its Material Form configuration. No final invoice was posted.",
+              "SAP Test did not expose one unambiguous Material Form field for A/P Invoices. No final invoice was posted.",
               502,
             );
           }
@@ -430,13 +434,10 @@ async function handle(
           baseKind: payload.baseKind,
           baseDocument: payload.baseDocNum,
         };
-        const materialFormState = materialForm
+        const materialFormState = requiresMaterialForm && materialForm
           ? {
               ...materialForm,
-              selectedValue:
-                payload.baseKind === "PO" && requiresMaterialForm
-                  ? ""
-                  : readMaterialFormValue(record(draft), materialForm),
+              selectedValue: "",
             }
           : null;
         if (!convertToFinalInvoice) {
@@ -550,6 +551,7 @@ async function handle(
       return {
         ok: true,
         verified: true,
+        readyForFinalPosting: true,
         posted: false,
         draft: result.draft,
         materialForm: result.materialForm,

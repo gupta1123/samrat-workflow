@@ -353,6 +353,19 @@ export function SapInvoicePreparePanel({
       if (!response.ok) {
         setSaveFailed(true);
         setSaveResult(body.error ?? "Could not verify the SAP Test draft.");
+        setConfirmingFinalPost(false);
+        setMaterialForm(null);
+        setSelectedMaterialForm("");
+        return;
+      }
+      if (body.readyForFinalPosting !== true) {
+        setSaveFailed(true);
+        setSaveResult(
+          "SAP Test did not complete every final-posting check. No final invoice was posted.",
+        );
+        setConfirmingFinalPost(false);
+        setMaterialForm(null);
+        setSelectedMaterialForm("");
         return;
       }
       const config = body.materialForm as MaterialFormConfig | null;
