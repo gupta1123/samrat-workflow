@@ -3,28 +3,47 @@ import test from "node:test";
 
 import {
   SAP_NON_MATERIAL_FORM,
-  sapAutomaticMaterialForm,
-  sapBaseRequiresMaterialForm,
+  sapMaterialFormPolicy,
 } from "../src/lib/sap-material-form";
 
-test("Open PO invoices do not require Material Form", () => {
-  assert.equal(sapBaseRequiresMaterialForm("PO"), false);
-  assert.equal(sapBaseRequiresMaterialForm("po"), false);
+test("non-inventory Open PO invoices automatically use STRAIGHT", () => {
+  assert.deepEqual(
+    sapMaterialFormPolicy("PO", [{ InventoryItem: "tNO" }]),
+    { required: false, automaticValue: SAP_NON_MATERIAL_FORM },
+  );
+});
+
+test("service Open PO invoices without item codes automatically use STRAIGHT", () => {
+  assert.deepEqual(sapMaterialFormPolicy("po", []), {
+    required: false,
+    automaticValue: SAP_NON_MATERIAL_FORM,
+  });
+});
+
+test("inventory-item Open PO invoices require an explicit Material Form", () => {
+  assert.deepEqual(
+    sapMaterialFormPolicy("PO", [{ InventoryItem: "tYES" }]),
+    { required: true, automaticValue: null },
+  );
+});
+
+test("mixed Open PO invoices require an explicit Material Form", () => {
+  assert.deepEqual(
+    sapMaterialFormPolicy("PO", [
+      { InventoryItem: "tNO" },
+      { InventoryItem: "tYES" },
+    ]),
+    { required: true, automaticValue: null },
+  );
 });
 
 test("GRPO and unknown bases keep the Material Form safeguard", () => {
-  assert.equal(sapBaseRequiresMaterialForm("GRPO"), true);
-  assert.equal(sapBaseRequiresMaterialForm("grpo"), true);
-  assert.equal(sapBaseRequiresMaterialForm(undefined), true);
-});
-
-test("Open PO non-material invoices automatically use STRAIGHT", () => {
-  assert.equal(SAP_NON_MATERIAL_FORM, "ST");
-  assert.equal(sapAutomaticMaterialForm("PO"), "ST");
-  assert.equal(sapAutomaticMaterialForm(" po "), "ST");
-});
-
-test("GRPO and unknown bases do not get an automatic Material Form", () => {
-  assert.equal(sapAutomaticMaterialForm("GRPO"), null);
-  assert.equal(sapAutomaticMaterialForm(undefined), null);
+  assert.deepEqual(sapMaterialFormPolicy("GRPO"), {
+    required: true,
+    automaticValue: null,
+  });
+  assert.deepEqual(sapMaterialFormPolicy(undefined), {
+    required: true,
+    automaticValue: null,
+  });
 });

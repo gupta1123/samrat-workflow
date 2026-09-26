@@ -13,7 +13,6 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api-client";
-import { sapBaseRequiresMaterialForm } from "@/lib/sap-material-form";
 
 type MatchedLine = {
   description: string | null;
@@ -272,7 +271,6 @@ export function SapInvoicePreparePanel({
 
   async function handleFinalPost() {
     if (!data?.sapPosting || data.sapPosting.status !== "prepared") return;
-    const requiresMaterialForm = sapBaseRequiresMaterialForm(data.baseSource);
     setFinalPosting(true);
     setSaveResult(null);
     setSaveFailed(false);
@@ -283,7 +281,7 @@ export function SapInvoicePreparePanel({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            requiresMaterialForm
+            materialForm
               ? { materialForm: selectedMaterialForm }
               : {},
           ),
@@ -332,12 +330,7 @@ export function SapInvoicePreparePanel({
         setSaveResult(body.error ?? "Could not verify the SAP Test draft.");
         return;
       }
-      const requiresMaterialForm = sapBaseRequiresMaterialForm(
-        data?.baseSource,
-      );
-      const config = requiresMaterialForm
-        ? (body.materialForm as MaterialFormConfig | null)
-        : null;
+      const config = body.materialForm as MaterialFormConfig | null;
       if (
         config &&
         (!Array.isArray(config.options) || config.options.length === 0)
@@ -827,7 +820,7 @@ export function SapInvoicePreparePanel({
                         This creates a final accounting document in SAP Test. It
                         cannot be undone from this app.
                       </div>
-                      {baseSource === "grpo" && materialForm ? (
+                      {materialForm ? (
                         <label className="mt-3 block text-[10px] font-semibold text-[#3d3530]">
                           {materialForm.description}
                           <select
@@ -854,11 +847,7 @@ export function SapInvoicePreparePanel({
                           size="sm"
                           disabled={
                             finalPosting ||
-                            Boolean(
-                              baseSource === "grpo" &&
-                                materialForm &&
-                                !selectedMaterialForm,
-                            )
+                            Boolean(materialForm && !selectedMaterialForm)
                           }
                           onClick={() => void handleFinalPost()}
                         >

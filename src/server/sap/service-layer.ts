@@ -35,6 +35,11 @@ type SapDraftResponse = {
   }>;
 };
 
+type SapItemInventoryState = {
+  ItemCode?: string;
+  InventoryItem?: string;
+};
+
 export type SapReadDocument = Omit<SapGrpo, "DocumentLines"> & {
   NumAtCard?: string | null;
   DocTotal?: number;
@@ -72,6 +77,9 @@ export async function withTestServiceLayer<T>(
     getGrpo: (docEntry: number) => Promise<SapGrpo>;
     listGrposByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getPurchaseOrder: (docEntry: number) => Promise<SapReadDocument>;
+    getItemInventoryState: (
+      itemCode: string,
+    ) => Promise<SapItemInventoryState>;
     listPurchaseOrdersByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getAdminCurrencies: () => Promise<{
       LocalCurrency?: string;
@@ -207,6 +215,13 @@ export async function withTestServiceLayer<T>(
       async getPurchaseOrder(docEntry) {
         const { body } = await request(`/PurchaseOrders(${docEntry})`);
         return body as SapReadDocument;
+      },
+      async getItemInventoryState(itemCode) {
+        const escapedItemCode = itemCode.replaceAll("'", "''");
+        const { body } = await request(
+          `/Items('${escapedItemCode}')?$select=ItemCode,InventoryItem`,
+        );
+        return body as SapItemInventoryState;
       },
       async listPurchaseOrdersByDocNum(docNum) {
         const filter = encodeURIComponent(`DocNum eq ${docNum}`);

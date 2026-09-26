@@ -6,10 +6,22 @@ function normalizedBaseKind(baseKind: unknown): string {
     .toUpperCase();
 }
 
-export function sapBaseRequiresMaterialForm(baseKind: unknown): boolean {
-  return normalizedBaseKind(baseKind) !== "PO";
-}
+export type SapItemInventoryState = {
+  InventoryItem?: string;
+};
 
-export function sapAutomaticMaterialForm(baseKind: unknown): string | null {
-  return normalizedBaseKind(baseKind) === "PO" ? SAP_NON_MATERIAL_FORM : null;
+export function sapMaterialFormPolicy(
+  baseKind: unknown,
+  items: SapItemInventoryState[] = [],
+): { required: boolean; automaticValue: string | null } {
+  if (normalizedBaseKind(baseKind) !== "PO") {
+    return { required: true, automaticValue: null };
+  }
+
+  const containsInventoryItem = items.some(
+    (item) => item.InventoryItem === "tYES",
+  );
+  return containsInventoryItem
+    ? { required: true, automaticValue: null }
+    : { required: false, automaticValue: SAP_NON_MATERIAL_FORM };
 }

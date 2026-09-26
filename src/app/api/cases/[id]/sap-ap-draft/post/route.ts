@@ -10,10 +10,7 @@ import { readSapEnvironment } from "@/server/sap/config";
 import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
-import {
-  sapAutomaticMaterialForm,
-  sapBaseRequiresMaterialForm,
-} from "@/lib/sap-material-form";
+import { sapMaterialFormPolicy } from "@/lib/sap-material-form";
 import {
   sapTransportFieldUpdates,
   transportFieldsMatch,
@@ -203,8 +200,6 @@ async function handle(
     const expectedInvoiceDate = dateOnly(payload.invoiceDate);
     const expectedBaseEntry = positiveInteger(payload.baseDocEntry);
     const expectedBaseType = payload.baseKind === "PO" ? 22 : 20;
-    const requiresMaterialForm = sapBaseRequiresMaterialForm(payload.baseKind);
-    const automaticMaterialForm = sapAutomaticMaterialForm(payload.baseKind);
     if (
       !expectedVendorCode ||
       !expectedInvoiceNumber ||
@@ -331,6 +326,28 @@ async function handle(
           );
         }
 
+        const itemCodes = [
+          ...new Set(
+            lines
+              .map((line) => text(line.ItemCode))
+              .filter((itemCode) => itemCode.length > 0),
+          ),
+        ];
+        const itemInventoryStates =
+          payload.baseKind === "PO"
+            ? await Promise.all(
+                itemCodes.map((itemCode) =>
+                  client.getItemInventoryState(itemCode),
+                ),
+              )
+            : [];
+        const materialFormPolicy = sapMaterialFormPolicy(
+          payload.baseKind,
+          itemInventoryStates,
+        );
+        const requiresMaterialForm = materialFormPolicy.required;
+        const automaticMaterialForm = materialFormPolicy.automaticValue;
+
         const materialForm =
           requiresMaterialForm ||
           (convertToFinalInvoice && Boolean(automaticMaterialForm))
@@ -432,7 +449,10 @@ async function handle(
         const materialFormState = materialForm
           ? {
               ...materialForm,
-              selectedValue: readMaterialFormValue(record(draft), materialForm),
+              selectedValue:
+                payload.baseKind === "PO" && requiresMaterialForm
+                  ? ""
+                  : readMaterialFormValue(record(draft), materialForm),
             }
           : null;
         if (!convertToFinalInvoice) {
