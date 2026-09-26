@@ -110,6 +110,25 @@ function formatMoney(value: number | null | undefined): string {
   }).format(value);
 }
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatQuantity(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value))
+    return "—";
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 }).format(
+    value,
+  );
+}
+
 function ConfidenceBadge({
   confidence,
 }: {
@@ -466,326 +485,276 @@ export function SapInvoicePreparePanel({
     );
   }
 
+  const lineStats = {
+    exact: matchedLines?.filter((l) => l.matchConfidence === "exact").length ?? 0,
+    fuzzy: matchedLines?.filter((l) => l.matchConfidence === "fuzzy").length ?? 0,
+    none: matchedLines?.filter((l) => l.matchConfidence === "none").length ?? 0,
+  };
+  const matchPercent =
+    packetLineCount && matchCount != null
+      ? Math.min(100, Math.round((matchCount / packetLineCount) * 100))
+      : 0;
+  const documentStatus = sapPosting
+    ? sapPosting.status === "posted"
+      ? { label: "Posted", tone: "bg-[#ebf5ee] text-[#1b4332] ring-[#c3dfcb]" }
+      : { label: "Draft saved", tone: "bg-[#eef2fb] text-[#1e3a8a] ring-[#cdd8f1]" }
+    : { label: "Preview", tone: "bg-[#f4efe7] text-[#6b5d50] ring-[#e0d8cc]" };
+
   return (
-    <div className="px-4 py-3 space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-2">
-        <CheckCircle2 className="h-4 w-4 text-[#2d6a4f]" />
-        <span className="text-[12px] font-semibold text-[#111827]">
-          Matched to {baseLabel} {baseDocNum ?? "—"}
-        </span>
-        <span className="text-[11px] text-[#8a7f72]">
-          · {matchCount}/{packetLineCount} lines matched
-        </span>
+    <div className="space-y-4 px-4 py-3">
+      {/* Summary strip */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-[#e0d8cc] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#ebf5ee]">
+            <CheckCircle2 className="h-4 w-4 text-[#2d6a4f]" />
+          </span>
+          <div>
+            <div className="text-[13px] font-semibold text-[#111827]">
+              Matched to {baseLabel} {baseDocNum ?? "—"}
+            </div>
+            <div className="text-[11px] text-[#8a7f72]">
+              {apPayload.vendor.cardName ?? "Unknown vendor"}
+            </div>
+          </div>
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <div className="hidden w-36 sm:block">
+            <div className="flex justify-between text-[10px] text-[#8a7f72]">
+              <span>Lines matched</span>
+              <span className="font-semibold tabular-nums text-[#3d3530]">
+                {matchCount ?? 0}/{packetLineCount ?? 0}
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#f0ece4]">
+              <div
+                className={`h-full rounded-full ${matchPercent === 100 ? "bg-[#2d6a4f]" : "bg-[#d97706]"}`}
+                style={{ width: `${matchPercent}%` }}
+              />
+            </div>
+          </div>
+          <span className="rounded-full bg-[#fff7ed] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#b45309] ring-1 ring-inset ring-[#fcd9b6]">
+            SAP {data.sapEnv === "test" ? "Test" : (data.sapEnv ?? "—")}
+          </span>
+        </div>
       </div>
 
-      {/* Two-column layout: Invoice (left) | SAP Match (right) */}
-      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-        {/* LEFT: Invoice draft preview */}
-        <div className="rounded-lg border border-[#e0d8cc] bg-white">
-          <div className="border-b border-[#e0d8cc] bg-[#fbfaf8] px-4 py-2.5">
-            <div className="text-[11px] font-semibold text-[#3d3530]">
-              Invoice Draft Preview
-            </div>
-            <div className="text-[10px] text-[#8a7f72]">
-              AP Invoice Draft → SAP Test
-            </div>
-          </div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
+        {/* LEFT: Invoice document preview */}
+        <article className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_3px_rgba(43,26,16,0.06),0_8px_24px_-12px_rgba(43,26,16,0.12)]">
+          <div className="h-1 bg-gradient-to-r from-[#2b1a10] via-[#6b4a33] to-[#c9a57f]" />
 
-          <div className="p-4 space-y-3">
-            {/* Vendor */}
+          {/* Document header */}
+          <header className="flex flex-wrap items-start justify-between gap-4 px-6 pb-5 pt-5">
             <div>
-              <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8a7f72]">
+                Accounts Payable
+              </div>
+              <h2 className="mt-1 text-[20px] font-semibold tracking-tight text-[#111827]">
+                A/P Invoice
+              </h2>
+              <span
+                className={`mt-2 inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${documentStatus.tone}`}
+              >
+                {documentStatus.label}
+                {sapPosting ? ` · #${sapPosting.documentNumber}` : ""}
+              </span>
+            </div>
+            <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-right text-[11px]">
+              <dt className="text-[#8a7f72]">Vendor ref.</dt>
+              <dd className="font-semibold tabular-nums text-[#111827]">
+                {apPayload.invoiceNumber ?? "—"}
+              </dd>
+              <dt className="text-[#8a7f72]">Invoice date</dt>
+              <dd className="font-medium tabular-nums text-[#111827]">
+                {formatDate(apPayload.invoiceDate)}
+              </dd>
+              <dt className="text-[#8a7f72]">Posting date</dt>
+              <dd className="font-medium tabular-nums text-[#111827]">
+                {formatDate(apPayload.postingDate)}
+              </dd>
+            </dl>
+          </header>
+
+          {/* Parties & references */}
+          <div className="grid gap-px border-y border-[#ece6dc] bg-[#ece6dc] sm:grid-cols-2">
+            <div className="bg-[#fcfbf9] px-6 py-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8a7f72]">
                 Vendor
               </div>
-              <div className="text-[12px] font-semibold text-[#111827]">
+              <div className="mt-1.5 text-[13px] font-semibold leading-5 text-[#111827]">
                 {apPayload.vendor.cardName ?? "—"}
               </div>
-              {apPayload.vendor.cardCode && (
-                <div className="text-[10px] text-[#8a7f72]">
-                  Code: {apPayload.vendor.cardCode}
+              {apPayload.vendor.cardCode ? (
+                <div className="mt-1 inline-flex rounded bg-[#f4efe7] px-1.5 py-0.5 font-mono text-[10px] text-[#6b5d50]">
+                  {apPayload.vendor.cardCode}
                 </div>
-              )}
+              ) : null}
             </div>
-
-            {/* References */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">
-                  Invoice #
-                </div>
-                <div className="text-[11px] font-medium text-[#111827]">
-                  {apPayload.invoiceNumber ?? "—"}
-                </div>
+            <div className="bg-[#fcfbf9] px-6 py-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8a7f72]">
+                Based on
               </div>
-              <div>
-                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">
-                  PO #
-                </div>
-                <div className="text-[11px] font-medium text-[#111827]">
-                  {apPayload.poNumber ?? "—"}
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">
-                  Currency
-                </div>
-                <div className="text-[11px] font-medium text-[#111827]">
-                  {apPayload.currency ?? "—"}
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">
-                  SAP Test posting date
-                </div>
-                <div className="text-[11px] font-medium text-[#111827]">
-                  {apPayload.postingDate ?? "—"}
-                </div>
-              </div>
-            </div>
-
-            {/* Line Items */}
-            <div>
-              <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide mb-2">
-                Line Items
-              </div>
-              <div className="rounded border border-[#ece6dc] overflow-hidden">
-                <table className="w-full text-[10px]">
-                  <thead>
-                    <tr className="bg-[#fbfaf8] text-[#8a7f72]">
-                      <th className="px-2 py-1.5 text-left font-medium">
-                        Item
-                      </th>
-                      <th className="px-2 py-1.5 text-right font-medium">
-                        Qty
-                      </th>
-                      <th className="px-2 py-1.5 text-right font-medium">
-                        Rate
-                      </th>
-                      <th className="px-2 py-1.5 text-right font-medium">
-                        Amount
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {apPayload.lines.map((line, i) => (
-                      <tr key={i} className="border-t border-[#f0ece4]">
-                        <td className="px-2 py-1.5 text-[#111827]">
-                          <div className="font-medium">
-                            {line.description ?? "—"}
-                          </div>
-                          {line.hsnSac && (
-                            <div className="text-[9px] text-[#8a7f72]">
-                              HSN: {line.hsnSac}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-2 py-1.5 text-right text-[#111827]">
-                          {line.quantity ?? "—"} {line.unit ?? ""}
-                        </td>
-                        <td className="px-2 py-1.5 text-right text-[#111827]">
-                          {formatMoney(line.rate)}
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-medium text-[#111827]">
-                          {formatMoney(line.taxableAmount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Totals */}
-            <div className="rounded-lg bg-[#fbfaf8] p-3 space-y-1.5">
-              <div className="flex justify-between text-[11px]">
-                <span className="text-[#8a7f72]">Taxable</span>
-                <span className="font-medium text-[#111827]">
-                  {formatMoney(apPayload.totals.taxable)}
-                </span>
-              </div>
-              <div className="flex justify-between text-[11px]">
-                <span className="text-[#8a7f72]">Tax</span>
-                <span className="font-medium text-[#111827]">
-                  {formatMoney(apPayload.totals.tax)}
-                </span>
-              </div>
-              <div className="flex justify-between text-[11px] border-t border-[#ece6dc] pt-1.5">
-                <span className="font-semibold text-[#3d3530]">Total</span>
-                <span className="font-semibold text-[#111827]">
-                  {formatMoney(apPayload.totals.total)}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* RIGHT: SAP Match */}
-        <div className="rounded-lg border border-[#e0d8cc] bg-white">
-          <div className="border-b border-[#e0d8cc] bg-[#fbfaf8] px-4 py-2.5">
-            <div className="text-[11px] font-semibold text-[#3d3530]">
-              SAP Match
-            </div>
-            <div className="text-[10px] text-[#8a7f72]">
-              {baseSource === "grpo"
-                ? `GRPO DocNum: ${grpoDocNum ?? "—"}`
-                : `PO DocNum: ${poDocNum ?? "—"}`}
+              <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+                {grpoDocNum ? (
+                  <>
+                    <dt className="text-[#8a7f72]">GRPO</dt>
+                    <dd className="font-medium tabular-nums text-[#111827]">{grpoDocNum}</dd>
+                  </>
+                ) : null}
+                <dt className="text-[#8a7f72]">PO</dt>
+                <dd className="font-medium tabular-nums text-[#111827]">
+                  {poDocNum ?? apPayload.poNumber ?? "—"}
+                </dd>
+                <dt className="text-[#8a7f72]">Currency</dt>
+                <dd className="font-medium text-[#111827]">{apPayload.currency ?? "INR"}</dd>
+              </dl>
             </div>
           </div>
 
-          <div className="p-4 space-y-3">
-            {/* Match Info */}
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-[#ebf5ee] border border-[#c3dfcb]">
-              <ArrowRight className="h-4 w-4 text-[#1b4332]" />
-              <div>
-                <div className="text-[11px] font-semibold text-[#1b4332]">
-                  Matched to {baseLabel} {baseDocNum ?? "—"}
-                </div>
-                <div className="text-[10px] text-[#2d6a4f]">
-                  {matchCount} of {packetLineCount} lines matched
-                </div>
+          {/* Line items */}
+          <div className="overflow-x-auto px-6 pt-4">
+            <table className="w-full min-w-[520px] text-[11px]">
+              <thead>
+                <tr className="border-b border-[#e0d8cc] text-[10px] uppercase tracking-wider text-[#8a7f72]">
+                  <th className="w-8 py-2 pr-2 text-left font-semibold">#</th>
+                  <th className="py-2 pr-3 text-left font-semibold">Item</th>
+                  <th className="py-2 pl-3 text-right font-semibold">Qty</th>
+                  <th className="py-2 pl-3 text-right font-semibold">Rate</th>
+                  <th className="py-2 pl-3 text-right font-semibold">Taxable</th>
+                  <th className="py-2 pl-3 text-right font-semibold">Tax</th>
+                </tr>
+              </thead>
+              <tbody className="tabular-nums">
+                {apPayload.lines.map((line, i) => (
+                  <tr key={i} className="border-b border-[#f0ece4] align-top last:border-0">
+                    <td className="py-3 pr-2 text-[#b3a899]">{String(i + 1).padStart(2, "0")}</td>
+                    <td className="py-3 pr-3">
+                      <div className="font-medium leading-4 text-[#111827]">
+                        {line.description ?? "—"}
+                      </div>
+                      {line.hsnSac ? (
+                        <div className="mt-0.5 text-[10px] text-[#8a7f72]">HSN/SAC {line.hsnSac}</div>
+                      ) : null}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right text-[#111827]">
+                      {formatQuantity(line.quantity)}
+                      {line.unit ? <span className="ml-1 text-[10px] text-[#8a7f72]">{line.unit}</span> : null}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right text-[#3d3530]">
+                      {formatMoney(line.rate)}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right font-medium text-[#111827]">
+                      {formatMoney(line.taxableAmount)}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right text-[#3d3530]">
+                      {formatMoney(line.taxAmount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Totals */}
+          <div className="flex justify-end px-6 pb-5 pt-3">
+            <dl className="w-full max-w-[280px] space-y-1.5 text-[11px] tabular-nums">
+              <div className="flex justify-between">
+                <dt className="text-[#8a7f72]">Taxable value</dt>
+                <dd className="font-medium text-[#111827]">{formatMoney(apPayload.totals.taxable)}</dd>
               </div>
+              <div className="flex justify-between">
+                <dt className="text-[#8a7f72]">Tax (GST)</dt>
+                <dd className="font-medium text-[#111827]">{formatMoney(apPayload.totals.tax)}</dd>
+              </div>
+              <div className="mt-2 flex items-baseline justify-between rounded-lg bg-[#2b1a10] px-3 py-2.5 text-white">
+                <dt className="text-[11px] font-medium uppercase tracking-wider text-[#e8dccd]">Total</dt>
+                <dd className="text-[16px] font-semibold">{formatMoney(apPayload.totals.total)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <footer className="border-t border-dashed border-[#e0d8cc] bg-[#fcfbf9] px-6 py-2.5 text-[10px] leading-4 text-[#8a7f72]">
+            Case {apPayload.caseName} · Values extracted from the vendor invoice. SAP recalculates from the base {baseLabel}.
+          </footer>
+        </article>
+
+        {/* RIGHT: SAP match */}
+        <aside className="flex flex-col overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
+          <div className="border-b border-[#ece6dc] px-4 py-3">
+            <div className="flex items-center justify-between">
+              <div className="text-[12px] font-semibold text-[#111827]">SAP line match</div>
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#6b5d50]">
+                {apPayload.invoiceNumber ?? "Invoice"}
+                <ArrowRight className="h-3 w-3" />
+                {baseLabel} {baseDocNum ?? "—"}
+              </span>
             </div>
-
-            {/* SAP Document Info */}
-            <div className="grid grid-cols-2 gap-3">
-              {grpoDocNum && (
-                <div>
-                  <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">
-                    GRPO #
-                  </div>
-                  <div className="text-[11px] font-medium text-[#111827]">
-                    {grpoDocNum}
-                  </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {(
+                [
+                  ["Exact", lineStats.exact, "text-[#1b4332]", "bg-[#f3faf5]"],
+                  ["Fuzzy", lineStats.fuzzy, "text-[#92400e]", "bg-[#fffbeb]"],
+                  ["Unmatched", lineStats.none, "text-[#991b1b]", "bg-[#fef5f5]"],
+                ] as const
+              ).map(([label, count, text, bg]) => (
+                <div key={label} className={`rounded-lg px-2.5 py-2 ${bg}`}>
+                  <div className={`text-[16px] font-semibold tabular-nums leading-none ${text}`}>{count}</div>
+                  <div className="mt-1 text-[10px] text-[#8a7f72]">{label}</div>
                 </div>
-              )}
-              {poDocNum && (
-                <div>
-                  <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide">
-                    PO #
-                  </div>
-                  <div className="text-[11px] font-medium text-[#111827]">
-                    {poDocNum}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Matched Lines Table */}
-            {matchedLines && matchedLines.length > 0 && (
-              <div>
-                <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide mb-2">
-                  Line Matching
-                </div>
-                <div className="rounded border border-[#ece6dc] overflow-hidden">
-                  <table className="w-full text-[10px]">
-                    <thead>
-                      <tr className="bg-[#fbfaf8] text-[#8a7f72]">
-                        <th className="px-2 py-1.5 text-left font-medium">
-                          Description
-                        </th>
-                        <th className="px-2 py-1.5 text-right font-medium">
-                          Packet Qty
-                        </th>
-                        <th className="px-2 py-1.5 text-right font-medium">
-                          SAP Qty
-                        </th>
-                        <th className="px-2 py-1.5 text-center font-medium">
-                          Match
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {matchedLines.map((line, i) => {
-                        const sapQty =
-                          baseSource === "grpo" ? line.grpoQty : line.poQty;
-                        const packetQty = line.quantity;
-                        const hasMismatch =
-                          packetQty != null &&
-                          sapQty != null &&
-                          Number(packetQty) !== Number(sapQty);
-
-                        return (
-                          <tr key={i} className="border-t border-[#f0ece4]">
-                            <td className="px-2 py-1.5 text-[#111827] max-w-[150px] truncate">
-                              {line.description ?? "—"}
-                            </td>
-                            <td
-                              className={`px-2 py-1.5 text-right ${hasMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}
-                            >
-                              {packetQty ?? "—"}
-                            </td>
-                            <td
-                              className={`px-2 py-1.5 text-right ${hasMismatch ? "text-[#b91c1c] font-semibold" : "text-[#111827]"}`}
-                            >
-                              {sapQty ?? "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-center">
-                              <ConfidenceBadge
-                                confidence={line.matchConfidence}
-                              />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Confidence Summary */}
-            <div className="rounded-lg bg-[#fbfaf8] p-3">
-              <div className="text-[10px] font-medium text-[#8a7f72] uppercase tracking-wide mb-2">
-                Match Summary
-              </div>
-              <div className="space-y-1.5">
-                {matchedLines &&
-                  (() => {
-                    const exact = matchedLines.filter(
-                      (l) => l.matchConfidence === "exact",
-                    ).length;
-                    const fuzzy = matchedLines.filter(
-                      (l) => l.matchConfidence === "fuzzy",
-                    ).length;
-                    const none = matchedLines.filter(
-                      (l) => l.matchConfidence === "none",
-                    ).length;
-                    return (
-                      <>
-                        {exact > 0 && (
-                          <div className="flex items-center gap-2 text-[11px]">
-                            <CheckCircle2 className="h-3.5 w-3.5 text-[#2d6a4f]" />
-                            <span className="text-[#111827]">
-                              {exact} exact match{exact !== 1 ? "es" : ""}
-                            </span>
-                          </div>
-                        )}
-                        {fuzzy > 0 && (
-                          <div className="flex items-center gap-2 text-[11px]">
-                            <div className="h-3.5 w-3.5 rounded-full bg-[#fef3c7] flex items-center justify-center">
-                              <div className="h-1.5 w-1.5 rounded-full bg-[#92400e]" />
-                            </div>
-                            <span className="text-[#111827]">
-                              {fuzzy} fuzzy match{fuzzy !== 1 ? "es" : ""}
-                            </span>
-                          </div>
-                        )}
-                        {none > 0 && (
-                          <div className="flex items-center gap-2 text-[11px]">
-                            <AlertTriangle className="h-3.5 w-3.5 text-[#b91c1c]" />
-                            <span className="text-[#b91c1c]">
-                              {none} unmatched
-                            </span>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-              </div>
+              ))}
             </div>
           </div>
-        </div>
+
+          {matchedLines && matchedLines.length > 0 ? (
+            <ul className="divide-y divide-[#f0ece4]">
+              {matchedLines.map((line, i) => {
+                const sapQty = baseSource === "grpo" ? line.grpoQty : line.poQty;
+                const sapRate = baseSource === "grpo" ? line.grpoRate : line.poRate;
+                const itemCode = baseSource === "grpo" ? line.grpoItemCode : line.poItemCode;
+                const qtyMismatch =
+                  line.quantity != null && sapQty != null && Number(line.quantity) !== Number(sapQty);
+                const rateMismatch =
+                  line.rate != null && sapRate != null && Math.abs(Number(line.rate) - Number(sapRate)) > 0.01;
+                return (
+                  <li key={i} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-[11px] font-medium text-[#111827]" title={line.description ?? undefined}>
+                          {line.description ?? "—"}
+                        </div>
+                        {itemCode ? (
+                          <div className="mt-0.5 font-mono text-[10px] text-[#8a7f72]">{itemCode}</div>
+                        ) : null}
+                      </div>
+                      <ConfidenceBadge confidence={line.matchConfidence} />
+                    </div>
+                    <div className="mt-2 grid grid-cols-[auto_1fr_1fr] gap-x-3 gap-y-0.5 text-[10px] tabular-nums">
+                      <span />
+                      <span className="text-right text-[#b3a899]">Invoice</span>
+                      <span className="text-right text-[#b3a899]">SAP {baseLabel}</span>
+                      <span className="text-[#8a7f72]">Qty</span>
+                      <span className={`text-right ${qtyMismatch ? "font-semibold text-[#b91c1c]" : "text-[#111827]"}`}>
+                        {formatQuantity(line.quantity)}
+                      </span>
+                      <span className={`text-right ${qtyMismatch ? "font-semibold text-[#b91c1c]" : "text-[#111827]"}`}>
+                        {formatQuantity(sapQty)}
+                      </span>
+                      <span className="text-[#8a7f72]">Rate</span>
+                      <span className={`text-right ${rateMismatch ? "font-semibold text-[#b45309]" : "text-[#111827]"}`}>
+                        {formatMoney(line.rate)}
+                      </span>
+                      <span className={`text-right ${rateMismatch ? "font-semibold text-[#b45309]" : "text-[#111827]"}`}>
+                        {formatMoney(sapRate)}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="px-4 py-6 text-center text-[11px] text-[#8a7f72]">No line-level match details.</div>
+          )}
+        </aside>
       </div>
 
       {/* Actions */}
