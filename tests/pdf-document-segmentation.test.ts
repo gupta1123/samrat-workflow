@@ -19,6 +19,17 @@ test("one-case analysis still extracts distinct documents from a PDF", async (t)
         messages?: Array<{ content?: string }>;
       };
       const requestText = JSON.stringify(body.messages ?? []);
+      if (requestText.includes("correctly oriented view")) {
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ selectedView: "view_1" }),
+              },
+            },
+          ],
+        });
+      }
       const isPurchaseOrder = requestText.includes(
         "This document is a Purchase Order",
       );

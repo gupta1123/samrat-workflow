@@ -4,6 +4,10 @@ import { compactReviewProviderSchema } from "./review-response-schema";
 import { ReviewContractError } from "./review-contract-error";
 import { readReferenceLedger, REFERENCE_FIELD_KEYS } from "./reference-ledger";
 import {
+  orientPageImageWithVision,
+  type PageOrientationView,
+} from "./page-orientation";
+import {
   assertCounterpartySource,
   assertReferenceGrounding,
   COUNTERPARTY_SOURCE_FIELDS,
@@ -5315,7 +5319,7 @@ export async function reviewAndCorrectExtractedDocuments(
     "You may correct documentType, fields, lineItems, quarantine unsupported fields, and report unresolved reviewIssues. " +
     "Use the packet-level allowedFieldKeys list for valid output keys. During the completeness audit, correct an explicitly labelled visible value only when it is missing or mapped to the wrong valid field. Do not require every allowed field to be present. " +
     "Use the entire packet as context. A value may be valid visible evidence even when its format is invalid; never silently discard such evidence. Create a reviewIssue only for a genuine unresolved conflict between explicit source values, or for an unreadable or truncated critical identifier or amount that makes approval unsafe. Never create a reviewIssue for a missing optional field, harmless formatting, low confidence alone, or a problem fully resolved by a correction. A clean, internally consistent packet must have an empty reviewIssues array. " +
-    "Perform a separate visual readability audit for every supplied original source page. A materially faint, sideways, upside-down, blurred, cropped, or unreadable page is not approval-safe even if OCR produced plausible values. Minor skew or low contrast is clear only when every critical value remains comfortably readable. Decide page quality from the page image itself, never from OCR confidence or filename. " +
+    "Perform a separate visual readability audit for every supplied original source page. The supplied page view may already have been rotated into its natural reading orientation by a separate visual model; that corrected orientation is not a quality defect. A materially faint, blurred, cropped, or unreadable page is not approval-safe even if OCR produced plausible values. Minor skew or low contrast is clear only when every critical value remains comfortably readable. Decide page quality from the page image itself, never from OCR confidence or filename. " +
     "Keep the JSON compact. Return only actual corrections, never repeat unchanged fields or unchanged lineItems, keep each reason to at most two short sentences, quote only the minimum exact evidence needed, and leave notes empty unless they contain a material warning not represented elsewhere. " +
     "Do not replace a correct field or table merely to change decimal padding, letter case, or numeric formatting. Preserve the original extracted value when it conveys the same visible value and unit; still correct genuinely wrong digits, units or roles. " +
     "For every Invoice or Tax Invoice with a visible commercial item table, ensure lineItems contains every visible goods or service row. Do not move an invoice row to another document merely because the same HSN or amount also appears there. " +
@@ -10576,6 +10580,95 @@ async function imageBytesToProviderDataUrl(
   }
 }
 
+async function selectUprightPageView(params: {
+  label: string;
+  views: PageOrientationView[];
+}) {
+  const raw = await callExtractionReviewModel(
+    [
+      {
+        role: "system",
+        content:
+          "Choose the correctly oriented view of one scanned document page. " +
+          "Every supplied image is the same page at a different rotation. " +
+          "Inspect the complete visual page, including printed text, handwriting, tables, stamps and headings. " +
+          "Select the single view where the primary document reads naturally upright from top to bottom. " +
+          "Do not extract fields, infer document values, or use the filename as evidence.",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Select the upright view for ${params.label}.`,
+          },
+          ...params.views.flatMap((candidate) => [
+            {
+              type: "text" as const,
+              text: `View ${candidate.view}`,
+            },
+            {
+              type: "image_url" as const,
+              image_url: { url: candidate.image },
+            },
+          ]),
+        ],
+      },
+    ],
+    {
+      operation: "page-orientation-review",
+      maxTokens: 2560,
+      responseSchema: {
+        name: "page_orientation_review",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            selectedView: {
+              type: "string",
+              enum: params.views.map((candidate) => candidate.view),
+            },
+          },
+          required: ["selectedView"],
+          additionalProperties: false,
+        },
+      },
+    },
+  );
+  const parsed = JSON.parse(raw) as { selectedView?: unknown };
+  if (typeof parsed.selectedView !== "string") {
+    throw new Error("The page-orientation reviewer omitted its selection.");
+  }
+  return { selectedView: parsed.selectedView };
+}
+
+async function normalizePageImageOrientation(image: string, label: string) {
+  try {
+    return await orientPageImageWithVision({
+      image,
+      label,
+      select: selectUprightPageView,
+    });
+  } catch (error) {
+    console.warn(
+      `[packet-processing] page-orientation review skipped for ${label}. ${error instanceof Error ? error.message : String(error ?? "")}`,
+    );
+    return image;
+  }
+}
+
+async function normalizePageImageOrientations(
+  images: string[],
+  sourceName: string,
+) {
+  return mapWithConcurrency(
+    images,
+    Math.min(PACKET_AI_CONCURRENCY, 4),
+    (image, index) =>
+      normalizePageImageOrientation(image, `${sourceName} page ${index + 1}`),
+  );
+}
+
 async function compactImageForAuthoritativeReview(
   image: string,
   label: string,
@@ -10645,16 +10738,18 @@ async function renderPdfToImagePages(
   data: Uint8Array,
   options?: { maxPages?: number; sourceName?: string },
 ) {
-  return renderPdfPages(
+  const sourceName = options?.sourceName || "PDF";
+  const rendered = await renderPdfPages(
     data,
     options?.maxPages ?? PDF_RENDER_MAX_PAGES,
     async (bytes, page) =>
       imageBytesToProviderDataUrl(
         bytes,
         "image/png",
-        (options?.sourceName || "PDF") + " page " + page,
+        sourceName + " page " + page,
       ),
   );
+  return normalizePageImageOrientations(rendered, sourceName);
 }
 
 export async function renderUploadedFileForReview(params: {
@@ -10664,12 +10759,13 @@ export async function renderUploadedFileForReview(params: {
 }) {
   const mimeType = getFileMimeType(params.fileName, params.mimeType ?? null);
   if (mimeType.startsWith("image/")) {
+    const image = await imageBytesToProviderDataUrl(
+      params.bytes,
+      mimeType,
+      params.fileName,
+    );
     return [
-      await imageBytesToProviderDataUrl(
-        params.bytes,
-        mimeType,
-        params.fileName,
-      ),
+      await normalizePageImageOrientation(image, `${params.fileName} page 1`),
     ];
   }
   if (mimeType === "application/pdf") {
@@ -11948,10 +12044,13 @@ export async function extractUploadedPacketFile(params: {
   let reviewImages: string[];
 
   if (mimeType.startsWith("image/")) {
-    const image = await imageBytesToProviderDataUrl(
-      params.bytes,
-      mimeType,
-      params.fileName,
+    const image = await normalizePageImageOrientation(
+      await imageBytesToProviderDataUrl(
+        params.bytes,
+        mimeType,
+        params.fileName,
+      ),
+      `${params.fileName} page 1`,
     );
     const documentType = await classifyDocumentFromImage(
       image,
@@ -12070,10 +12169,9 @@ export async function processStoredCaseFiles(params: {
         progress: fileProgress(0.35),
         stage: `Extracting file ${index + 1} of ${files.length}: ${file.original_name}`,
       });
-      const image = await imageBytesToProviderDataUrl(
-        bytes,
-        mimeType,
-        file.original_name,
+      const image = await normalizePageImageOrientation(
+        await imageBytesToProviderDataUrl(bytes, mimeType, file.original_name),
+        `${file.original_name} page 1`,
       );
       fileReviewImages = [image];
       const documentType = await classifyDocumentFromImage(

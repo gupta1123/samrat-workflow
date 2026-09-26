@@ -190,7 +190,7 @@ const SOURCE_REVIEW_INSTRUCTION =
   "Do not add blank, absent, unreadable, calculated or inferred values. Retain valid existing formatting rather than normalizing dates, amounts, or units. Use an empty fieldChanges array when no printed-value change is needed. " +
   "structureChange is null unless documentType or table rows truly need correction; supply its own evidence and only actual structural changes. Do not repeat an unchanged table to remove unsupported properties: the app does that from your lineItemChecks votes. " +
   "Return sourceVerdict verified when the source is decidable, even if changes are required; needs_review when it is not. " +
-  "Assess EVERY supplied page. Faint, materially rotated, blurred, cropped or unreadable pages need the corresponding quality warning and approvalSafe false. " +
+  "Assess EVERY supplied page. The supplied view may already have been rotated into its natural reading orientation by a separate visual model; that corrected orientation is not a quality defect. Faint, blurred, cropped or unreadable content still needs the corresponding quality warning and approvalSafe false. " +
   "Use reviewIssues only for unresolved source findings with printed evidence; no invented business conflicts. " +
   "Return all required arrays, using empty arrays where appropriate. Keep reasons brief and do not include document IDs or filenames: the task binds its own source pointers.";
 
