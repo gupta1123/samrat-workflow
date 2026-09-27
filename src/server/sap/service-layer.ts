@@ -94,6 +94,9 @@ export async function withTestServiceLayer<T>(
       cardCode: string,
       vendorReference: string,
     ) => Promise<SapReadDocument | null>;
+    listRecentInvoicesForVendor: (
+      cardCode: string,
+    ) => Promise<Record<string, unknown>[]>;
     findDraft: (comment: string) => Promise<SapDraftResponse | null>;
     listApInvoicePostingDates: (onOrBefore: string) => Promise<string[]>;
     resolveGstApInvoiceSeries: (
@@ -291,6 +294,17 @@ export async function withTestServiceLayer<T>(
           ? (body.value as SapReadDocument[])
           : [];
         return rows.find((row) => row.Cancelled === "tNO") ?? null;
+      },
+      async listRecentInvoicesForVendor(cardCode) {
+        const filter = encodeURIComponent(
+          `CardCode eq '${cardCode.replaceAll("'", "''")}' and Cancelled eq 'tNO'`,
+        );
+        const { body } = await request(
+          `/PurchaseInvoices?$filter=${filter}&$orderby=DocEntry%20desc&$top=20`,
+        );
+        return Array.isArray(body.value)
+          ? (body.value as Record<string, unknown>[])
+          : [];
       },
       async findDraft(comment) {
         const filter = encodeURIComponent(

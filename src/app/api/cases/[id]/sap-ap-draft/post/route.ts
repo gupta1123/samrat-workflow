@@ -15,6 +15,11 @@ import {
   sapTransportFieldUpdates,
   transportFieldsMatch,
 } from "@/server/sap/transport-fields";
+import {
+  learnedFieldUpdatePayload,
+  learnedFieldsMatch,
+  learnVendorInvoiceFieldUpdates,
+} from "@/server/sap/vendor-field-profile";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -414,6 +419,26 @@ async function handle(
             if (!transportFieldsMatch(record(draft), transportUpdates)) {
               throw new ApiError(
                 "SAP Test did not save the Transport Name from the matched SAP document. No final invoice was posted.",
+                502,
+              );
+            }
+          }
+
+          const historicalInvoices =
+            await client.listRecentInvoicesForVendor(expectedVendorCode);
+          const learnedUpdates = learnVendorInvoiceFieldUpdates({
+            draft: record(draft),
+            historicalInvoices,
+          });
+          if (learnedUpdates.length > 0) {
+            await client.updateDraft(
+              draftDocEntry,
+              learnedFieldUpdatePayload(learnedUpdates),
+            );
+            draft = await client.getDraft(draftDocEntry);
+            if (!learnedFieldsMatch(record(draft), learnedUpdates)) {
+              throw new ApiError(
+                "SAP Test did not save the vendor-specific invoice fields confirmed by its own successful invoice history. No final invoice was posted.",
                 502,
               );
             }
