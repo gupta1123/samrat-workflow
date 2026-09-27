@@ -10,6 +10,8 @@ import {
   type SapNumberingSeries,
 } from "./numbering-series";
 import type { SapWithholdingTaxRow } from "./draft-total";
+import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
+import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -74,12 +76,13 @@ function testConfig() {
 export async function withTestServiceLayer<T>(
   action: (client: {
     listOpenGrpos: () => Promise<SapGrpo[]>;
+    listOpenGrposForPurchaseOrders: (
+      purchaseOrders: SapReadDocument[],
+    ) => Promise<SapGrpo[]>;
     getGrpo: (docEntry: number) => Promise<SapGrpo>;
     listGrposByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getPurchaseOrder: (docEntry: number) => Promise<SapReadDocument>;
-    getItemInventoryState: (
-      itemCode: string,
-    ) => Promise<SapItemInventoryState>;
+    getItemInventoryState: (itemCode: string) => Promise<SapItemInventoryState>;
     listPurchaseOrdersByDocNum: (docNum: number) => Promise<SapReadDocument[]>;
     getAdminCurrencies: () => Promise<{
       LocalCurrency?: string;
@@ -187,23 +190,69 @@ export async function withTestServiceLayer<T>(
     return Number.isInteger(body.Series) ? [body as SapNumberingSeries] : [];
   }
 
+  async function listOpenGrposByFilter(filter: string): Promise<SapGrpo[]> {
+    const rows: SapGrpo[] = [];
+    const seenDocEntries = new Set<number>();
+    const pageSize = 100;
+
+    for (let skip = 0; ; skip += pageSize) {
+      const query =
+        "/PurchaseDeliveryNotes?$select=DocEntry,DocNum,CardCode,CardName,DocumentStatus,Cancelled,DocumentLines" +
+        `&$filter=${encodeURIComponent(filter)}` +
+        "&$orderby=DocEntry%20asc" +
+        `&$top=${pageSize}&$skip=${skip}`;
+      const { body } = await request(query);
+      const page = Array.isArray(body.value) ? (body.value as SapGrpo[]) : [];
+      let newDocuments = 0;
+      for (const document of page) {
+        if (
+          typeof document.DocEntry !== "number" ||
+          seenDocEntries.has(document.DocEntry)
+        ) {
+          continue;
+        }
+        seenDocEntries.add(document.DocEntry);
+        rows.push(document);
+        newDocuments += 1;
+      }
+      if (page.length < pageSize) return rows;
+      if (newDocuments === 0) {
+        throw new Error(
+          "SAP Test repeated an open-GRPO result page; document selection was stopped to avoid an incomplete match.",
+        );
+      }
+    }
+  }
+
   try {
     return await action({
       async listOpenGrpos() {
-        const rows: SapGrpo[] = [];
-        for (let skip = 0; skip < 1000; skip += 100) {
-          const query =
-            "/PurchaseDeliveryNotes?$select=DocEntry,DocNum,CardCode,CardName,DocumentStatus,Cancelled,DocumentLines" +
-            "&$filter=DocumentStatus%20eq%20%27bost_Open%27" +
-            `&$top=100&$skip=${skip}`;
-          const { body } = await request(query);
-          const page = Array.isArray(body.value)
-            ? (body.value as SapGrpo[])
-            : [];
-          rows.push(...page.filter((row) => row.Cancelled === "tNO"));
-          if (page.length < 100) return rows;
+        const rows = await listOpenGrposByFilter(
+          "DocumentStatus eq 'bost_Open'",
+        );
+        return rows.filter((row) => row.Cancelled === "tNO");
+      },
+      async listOpenGrposForPurchaseOrders(purchaseOrders) {
+        const cardCodes = Array.from(
+          new Set(
+            purchaseOrders.flatMap((purchaseOrder) =>
+              typeof purchaseOrder.CardCode === "string" &&
+              purchaseOrder.CardCode.trim()
+                ? [purchaseOrder.CardCode]
+                : [],
+            ),
+          ),
+        );
+        const candidates: SapGrpo[] = [];
+        for (const cardCode of cardCodes) {
+          const escapedCardCode = cardCode.replaceAll("'", "''");
+          candidates.push(
+            ...(await listOpenGrposByFilter(
+              `DocumentStatus eq 'bost_Open' and CardCode eq '${escapedCardCode}'`,
+            )),
+          );
         }
-        throw new Error("SAP Test has too many open GRPOs to select safely.");
+        return selectOpenGrposBasedOnPurchaseOrders(candidates, purchaseOrders);
       },
       async getGrpo(docEntry) {
         const { body } = await request(`/PurchaseDeliveryNotes(${docEntry})`);
@@ -463,11 +512,34 @@ export async function fetchTestOpenGrpoRows(options?: {
   basePoDocNum?: string | number | null;
 }): Promise<Record<string, unknown>[]> {
   return withTestServiceLayer(async (client) => {
-    const documents = await client.listOpenGrpos();
-    const requestedPo = String(options?.basePoDocNum ?? "").trim();
-    const purchaseOrders = /^\d+$/.test(requestedPo)
-      ? await client.listPurchaseOrdersByDocNum(Number(requestedPo))
-      : [];
+    const requestedPo = sapDocumentNumber(options?.basePoDocNum);
+    const purchaseOrders =
+      requestedPo === null
+        ? []
+        : await client.listPurchaseOrdersByDocNum(requestedPo);
+    const relatedDocuments =
+      purchaseOrders.length > 0
+        ? await client.listOpenGrposForPurchaseOrders(purchaseOrders)
+        : [];
+    const directlyReferencedDocuments =
+      requestedPo === null ? [] : await client.listGrposByDocNum(requestedPo);
+    const documents = Array.from(
+      new Map(
+        [
+          ...relatedDocuments,
+          ...directlyReferencedDocuments.filter(
+            (document) =>
+              document.DocumentStatus === "bost_Open" &&
+              document.Cancelled === "tNO",
+          ),
+          ...(requestedPo === null ? await client.listOpenGrpos() : []),
+        ].flatMap((document) =>
+          typeof document.DocEntry === "number"
+            ? [[document.DocEntry, document] as const]
+            : [],
+        ),
+      ).values(),
+    );
     const poDocNumByEntry = new Map(
       purchaseOrders.flatMap((document) =>
         typeof document.DocEntry === "number" &&

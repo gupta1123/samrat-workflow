@@ -14,8 +14,11 @@ import {
   matchSapReference,
   normalizeSapReference,
   parseSapAmount,
-  scoreVendorNames,
 } from "@/lib/sap-decision";
+import {
+  sapDocumentNumber,
+  selectUniqueExactOpenPurchaseOrder,
+} from "@/lib/sap-exact-po-match";
 import { readSapEnvironment } from "@/server/sap/config";
 import {
   buildApInvoiceDraft,
@@ -189,7 +192,12 @@ export async function POST(request: Request, context: Context) {
       };
     }
 
-    const openRows = baseKind === "GRPO" ? await fetchTestOpenGrpoRows() : [];
+    const openRows =
+      baseKind === "GRPO"
+        ? await fetchTestOpenGrpoRows({
+            basePoDocNum: classification.poNumber,
+          })
+        : [];
     const baseDocNum =
       requestedPoDocNum ??
       requestedGrpoDocNum ??
@@ -208,9 +216,10 @@ export async function POST(request: Request, context: Context) {
         409,
       );
     }
+    const baseDocumentNumber = sapDocumentNumber(baseDocNum);
     if (
       baseKind === "PO" &&
-      (!/^\d+$/.test(baseDocNum) ||
+      (baseDocumentNumber === null ||
         normalizeSapReference(classification.poNumber) !==
           normalizeSapReference(baseDocNum))
     ) {
@@ -264,29 +273,35 @@ export async function POST(request: Request, context: Context) {
           baseKind === "GRPO"
             ? await client.getGrpo(selectedEntry)
             : await (async () => {
-                const candidates = await client.listPurchaseOrdersByDocNum(
-                  Number(baseDocNum),
-                );
-                const openCandidates = candidates.filter(
-                  (candidate) =>
-                    candidate.Cancelled === "tNO" &&
-                    candidate.DocumentStatus === "bost_Open" &&
-                    scoreVendorNames(invoiceVendor, candidate.CardName) >=
-                      0.8 &&
-                    (!Number.isInteger(requestedEntry) ||
-                      candidate.DocEntry === requestedEntry),
-                );
-                if (
-                  openCandidates.length !== 1 ||
-                  !openCandidates[0].DocEntry
-                ) {
+                if (baseDocumentNumber === null) {
+                  throw new ApiError(
+                    "The selected SAP purchase order number is invalid.",
+                    409,
+                  );
+                }
+                const candidates =
+                  await client.listPurchaseOrdersByDocNum(baseDocumentNumber);
+                const selectedHeader = Number.isInteger(requestedEntry)
+                  ? (candidates.filter(
+                      (candidate) =>
+                        candidate.DocEntry === requestedEntry &&
+                        candidate.DocNum === baseDocumentNumber &&
+                        candidate.Cancelled === "tNO" &&
+                        candidate.DocumentStatus === "bost_Open",
+                    )[0] ?? null)
+                  : selectUniqueExactOpenPurchaseOrder(
+                      candidates,
+                      baseDocumentNumber,
+                      invoiceVendor,
+                    );
+                if (!selectedHeader?.DocEntry) {
                   throw new ApiError(
                     "The selected open SAP purchase order is missing or ambiguous; review its document number and vendor.",
                     409,
                   );
                 }
-                selectedEntry = openCandidates[0].DocEntry;
-                selectedCardCode = openCandidates[0].CardCode ?? "";
+                selectedEntry = selectedHeader.DocEntry;
+                selectedCardCode = selectedHeader.CardCode ?? "";
                 return client.getPurchaseOrder(selectedEntry);
               })();
         if (

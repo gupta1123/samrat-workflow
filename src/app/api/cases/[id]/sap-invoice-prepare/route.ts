@@ -343,8 +343,7 @@ function scoreGrpoDoc(
     // Vendor invoices normally carry the purchase-order number, while SAP's
     // receipt has its own DocNum. If SAP exposes the base PO relationship, it
     // is authoritative and a different PO must disqualify this GRPO.
-    exactReference =
-      basePoNumbers.length > 0 ? exactBasePo : exactGrpoDoc;
+    exactReference = basePoNumbers.length > 0 ? exactBasePo : exactGrpoDoc;
     if (!exactReference) return 0;
     score += exactBasePo ? 100 : 50;
   }
@@ -544,11 +543,14 @@ export async function GET(request: Request, context: Context) {
         fetchSapOpenPOs(sapEnv).catch(() => []),
       ]);
     } catch (error) {
-      console.error("SAP invoice matching failed while loading open documents", {
-        caseId: id,
-        sapEnv,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      console.error(
+        "SAP invoice matching failed while loading open documents",
+        {
+          caseId: id,
+          sapEnv,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return NextResponse.json({ matched: false, reason: "sap_unavailable" });
     }
 
@@ -644,8 +646,11 @@ export async function GET(request: Request, context: Context) {
               };
             }
           }
-          if (!unambiguousGrpo && poNumber && /^\d+$/.test(poNumber)) {
-            const candidates = await client.listGrposByDocNum(Number(poNumber));
+          const referencedDocumentNumber = sapDocumentNumber(poNumber);
+          if (!unambiguousGrpo && referencedDocumentNumber !== null) {
+            const candidates = await client.listGrposByDocNum(
+              referencedDocumentNumber,
+            );
             const closed = matchingClosedGrpo(
               candidates,
               vendorName,

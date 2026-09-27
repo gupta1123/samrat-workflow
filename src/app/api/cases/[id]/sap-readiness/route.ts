@@ -53,16 +53,28 @@ export async function GET(request: Request, context: Context) {
     let sapError: string | null = null;
     const [poResult, grpoResult] = await Promise.allSettled([
       fetchSapOpenPOs(sapEnv),
-      sapEnv === "test" ? fetchTestOpenGrpoRows() : fetchSapOpenGRPOs(sapEnv),
+      sapEnv === "test"
+        ? fetchTestOpenGrpoRows({
+            basePoDocNum: classification.poNumber,
+          })
+        : fetchSapOpenGRPOs(sapEnv),
     ]);
     if (poResult.status === "fulfilled") openPOs = poResult.value;
     if (grpoResult.status === "fulfilled") openGRPOs = grpoResult.value;
-    else sapError = grpoResult.reason instanceof Error
-      ? grpoResult.reason.message
-      : "Could not reach SAP GRPOs.";
+    else
+      sapError =
+        grpoResult.reason instanceof Error
+          ? grpoResult.reason.message
+          : "Could not reach SAP GRPOs.";
 
-    const matchedPoDocNum = matchSapReference(classification.poNumber, docNums(openPOs));
-    const matchedGrpoDocNum = matchSapReference(classification.poNumber, docNums(openGRPOs));
+    const matchedPoDocNum = matchSapReference(
+      classification.poNumber,
+      docNums(openPOs),
+    );
+    const matchedGrpoDocNum = matchSapReference(
+      classification.poNumber,
+      docNums(openGRPOs),
+    );
 
     // Real PO numbers never equal SAP's integer DocNums, so when the direct
     // match misses, rank open rows by vendor overlap + total proximity and
@@ -77,27 +89,31 @@ export async function GET(request: Request, context: Context) {
       parseSapAmount(primaryInvoice?.extractedFields.totalAmount) ??
       parseSapAmount(primaryInvoice?.extractedFields.subtotal);
     const toCandidateRows = (rows: Record<string, unknown>[]) =>
-      [...new Map(rows.map((r) => [String(r.DocNum ?? ""), r])).values()].map((r) => ({
-        docNum: (r.DocNum as string | number) ?? "",
-        vendorName: r["BP Name"],
-        totalAmount: r["Total Amount"],
-        itemDescription: r.Dscription,
-        docDate: r["Doc Date"],
-      }));
+      [...new Map(rows.map((r) => [String(r.DocNum ?? ""), r])).values()].map(
+        (r) => ({
+          docNum: (r.DocNum as string | number) ?? "",
+          vendorName: r["BP Name"],
+          totalAmount: r["Total Amount"],
+          itemDescription: r.Dscription,
+          docDate: r["Doc Date"],
+        }),
+      );
     const candidatePOs = rankSapCandidates({
-          caseVendor,
-          caseTotal,
-          rows: toCandidateRows(openPOs),
-        });
+      caseVendor,
+      caseTotal,
+      rows: toCandidateRows(openPOs),
+    });
     const candidateGRPOs = rankSapCandidates({
-          caseVendor,
-          caseTotal,
-          rows: toCandidateRows(openGRPOs),
-        });
+      caseVendor,
+      caseTotal,
+      rows: toCandidateRows(openGRPOs),
+    });
 
     const postingsResult = await db
       .from("sap_postings")
-      .select("kind, status, sap_env, sap_docnum, error, created_at, updated_at")
+      .select(
+        "kind, status, sap_env, sap_docnum, error, created_at, updated_at",
+      )
       .eq("case_id", uuid(id))
       .eq("owner_user_id", user)
       .order("created_at");

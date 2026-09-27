@@ -1,6 +1,7 @@
 export type ExactPoHeader = {
   DocEntry?: number;
   DocNum?: number;
+  CardCode?: string;
   CardName?: string;
   DocumentStatus?: string;
   Cancelled?: string;
@@ -74,7 +75,8 @@ export function assignExactOpenPoLines(
     }
 
     const candidates = sapLines.flatMap((sapLine, index) => {
-      if (used.has(index) || exactText(sapLine.ItemCode) !== itemCode) return [];
+      if (used.has(index) || exactText(sapLine.ItemCode) !== itemCode)
+        return [];
       const openQuantity = finiteNumber(sapLine.RemainingOpenQuantity);
       const sapRate = finiteNumber(sapLine.Price);
       if (
