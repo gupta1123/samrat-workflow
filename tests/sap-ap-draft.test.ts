@@ -76,6 +76,41 @@ test("builds the same SAP Test draft directly from a verified open purchase orde
   ]);
 });
 
+test("builds the next invoice from the quantity remaining after an earlier partial PO invoice", () => {
+  const draft = buildPoApInvoiceDraft({
+    ...input({
+      invoiceNumber: "INV-PARTIAL-002",
+      invoiceLines: [
+        {
+          itemCode: "DM0001",
+          description: "Marketing expenses",
+          quantity: 1,
+          rate: 35000,
+        },
+      ],
+    }),
+    po: {
+      ...grpo,
+      DocType: "dDocument_Service",
+      DocumentLines: [
+        {
+          LineNum: 0,
+          ItemCode: "DM0001",
+          ItemDescription: "Marketing expenses",
+          Quantity: 2,
+          RemainingOpenQuantity: 1,
+          Price: 35000,
+          LineStatus: "bost_Open",
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(draft.DocumentLines, [
+    { BaseType: 22, BaseEntry: 8574, BaseLine: 0, Quantity: 1 },
+  ]);
+});
+
 test("selects the correct open PO line when an item code is repeated at different quantities", () => {
   const draft = buildPoApInvoiceDraft({
     ...input({

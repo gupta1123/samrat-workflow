@@ -336,27 +336,11 @@ export async function POST(request: Request, context: Context) {
             409,
           );
         }
-        {
-          const sameAmount = await client.listInvoicesByAmount(
-            selectedCardCode,
-            invoiceTotal,
-          );
-          const basedOnDocument = sameAmount.find(
-            (document) =>
-              document.Cancelled === "tNO" &&
-              (document.DocumentLines ?? []).some(
-                (line) =>
-                  line.BaseType === (baseKind === "GRPO" ? 20 : 22) &&
-                  line.BaseEntry === selectedEntry,
-              ),
-          );
-          if (basedOnDocument) {
-            throw new ApiError(
-              `A posted SAP Test AP invoice ${basedOnDocument.DocNum ?? basedOnDocument.DocEntry} is already linked to this ${baseKind}. No draft was created.`,
-              409,
-            );
-          }
-        }
+        // Multiple invoices may legitimately consume separate remaining
+        // quantities from the same PO or GRPO, including equal-value partial
+        // invoices. Duplicate identity is therefore established by the exact
+        // vendor invoice reference above, while the draft builders validate
+        // the current SAP line status and remaining quantity before writing.
         const previous = await client.findDraft(comment);
         if (previous) {
           if (previous.CardCode !== selectedCardCode) {
