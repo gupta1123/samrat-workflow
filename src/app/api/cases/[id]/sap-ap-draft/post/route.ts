@@ -12,7 +12,9 @@ import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 import { sapMaterialFormPolicy } from "@/lib/sap-material-form";
 import {
+  resolveSapTransporter,
   sapTransportFieldUpdates,
+  type SapTransportOption,
   transportFieldsMatch,
 } from "@/server/sap/transport-fields";
 import {
@@ -56,6 +58,12 @@ type MaterialFormConfig = {
   options: MaterialFormOption[];
 };
 
+type TransportConfig = {
+  propertyName: string;
+  description: string;
+  options: SapTransportOption[];
+};
+
 function configuredFieldOptions(value: unknown): MaterialFormOption[] {
   const source = Array.isArray(value)
     ? value
@@ -89,6 +97,46 @@ async function loadMaterialFormConfig(
     propertyName: `U_${fieldName}`,
     description: text(field?.Description) || "Material Form",
     options: configuredFieldOptions(
+      field?.ValidValuesMD ??
+        field?.ValidValues ??
+        field?.ValidValuesCollection,
+    ),
+  };
+}
+
+function configuredTransportOptions(value: unknown): SapTransportOption[] {
+  const source = Array.isArray(value)
+    ? value
+    : Array.isArray(record(value).value)
+      ? (record(value).value as unknown[])
+      : [];
+
+  return source
+    .map((candidate) => {
+      const entry = record(candidate);
+      const optionValue = text(entry.Value) || text(entry.value);
+      const description = text(entry.Description) || text(entry.description);
+      return optionValue
+        ? { value: optionValue, label: description || optionValue }
+        : null;
+    })
+    .filter((option): option is SapTransportOption => Boolean(option));
+}
+
+async function loadTransportConfig(
+  getUserField: (
+    tableName: string,
+    description: string,
+  ) => Promise<Record<string, unknown> | null>,
+): Promise<TransportConfig | null> {
+  const field = await getUserField("OPCH", "Transporter");
+  const fieldName = text(field?.Name);
+  if (!fieldName) return null;
+
+  return {
+    propertyName: `U_${fieldName}`,
+    description: text(field?.Description) || "Transporter",
+    options: configuredTransportOptions(
       field?.ValidValuesMD ??
         field?.ValidValues ??
         field?.ValidValuesCollection,
@@ -405,20 +453,55 @@ async function handle(
         }
 
         if (convertToFinalInvoice) {
+          const transportConfig = await loadTransportConfig(
+            client.getUserField,
+          );
+          if (!transportConfig || transportConfig.options.length === 0) {
+            throw new ApiError(
+              "SAP Test did not expose one usable Transporter field and its allowed values. No final invoice was posted.",
+              502,
+            );
+          }
           const baseDocument =
             expectedBaseType === 22
               ? await client.getPurchaseOrder(expectedBaseEntry)
               : await client.getGrpo(expectedBaseEntry);
+          const transportResolution = resolveSapTransporter({
+            draftValue: record(draft)[transportConfig.propertyName],
+            baseValue: record(baseDocument)[transportConfig.propertyName],
+            packetDocuments: documentsResult.data ?? [],
+            invoiceNumber: expectedInvoiceNumber,
+            allowedOptions: transportConfig.options,
+          });
+          if (transportResolution.status === "missing") {
+            throw new ApiError(
+              `SAP Test requires ${transportConfig.description}, but neither the matched SAP document nor the uploaded packet contains an exact value for this invoice. No final invoice was posted.`,
+              409,
+            );
+          }
+          if (transportResolution.status === "invalid") {
+            throw new ApiError(
+              `The packet Transporter ${transportResolution.candidates.join(", ")} is not an allowed value in SAP Test. Use the exact Transporter configured in SAP, then create a new case. No final invoice was posted.`,
+              409,
+            );
+          }
+          if (transportResolution.status === "ambiguous") {
+            throw new ApiError(
+              `The packet contains conflicting SAP Transporter values: ${transportResolution.candidates.join(", ")}. Correct the packet and create a new case. No final invoice was posted.`,
+              409,
+            );
+          }
           const transportUpdates = sapTransportFieldUpdates(
             record(draft),
-            record(baseDocument),
+            transportConfig.propertyName,
+            transportResolution.value,
           );
           if (Object.keys(transportUpdates).length > 0) {
             await client.updateDraft(draftDocEntry, transportUpdates);
             draft = await client.getDraft(draftDocEntry);
             if (!transportFieldsMatch(record(draft), transportUpdates)) {
               throw new ApiError(
-                "SAP Test did not save the Transport Name from the matched SAP document. No final invoice was posted.",
+                `SAP Test did not save ${transportConfig.description}. No final invoice was posted.`,
                 502,
               );
             }
@@ -459,12 +542,13 @@ async function handle(
           baseKind: payload.baseKind,
           baseDocument: payload.baseDocNum,
         };
-        const materialFormState = requiresMaterialForm && materialForm
-          ? {
-              ...materialForm,
-              selectedValue: "",
-            }
-          : null;
+        const materialFormState =
+          requiresMaterialForm && materialForm
+            ? {
+                ...materialForm,
+                selectedValue: "",
+              }
+            : null;
         if (!convertToFinalInvoice) {
           return {
             alreadyPosted: false,
@@ -479,9 +563,13 @@ async function handle(
         try {
           serviceResult = await client.finalizeDraft(draftDocEntry);
         } catch (error) {
-          if (/transport name is mandatory/i.test(String(error))) {
+          if (
+            String(error)
+              .toLocaleUpperCase("en")
+              .includes("TRANSPORT NAME IS MANDATORY")
+          ) {
             throw new ApiError(
-              `SAP Test requires Transport Name, but the matched ${expectedBaseType === 22 ? "purchase order" : "GRPO"} does not provide a usable value. No final invoice was posted.`,
+              "SAP Test rejected the Transporter even after the exact configured value was saved. No final invoice was posted.",
               409,
             );
           }
