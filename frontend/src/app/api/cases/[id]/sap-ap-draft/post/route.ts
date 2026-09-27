@@ -1,0 +1,745 @@
+import {
+  ApiError,
+  dbCheck,
+  ownedCase,
+  uuid,
+  withUser,
+} from "@/server/api/helpers";
+import { readStoredLineItems } from "@/server/line-items";
+import { readSapEnvironment } from "@/server/sap/config";
+import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
+import { invoiceMoneyPreview } from "@/server/sap/preview";
+import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { sapMaterialFormPolicy } from "@/lib/sap-material-form";
+import {
+  resolveSapTransporter,
+  sapTransportFieldUpdates,
+  type SapTransportOption,
+  transportFieldsMatch,
+} from "@/server/sap/transport-fields";
+import {
+  learnedFieldUpdatePayload,
+  learnedFieldsMatch,
+  learnVendorInvoiceFieldUpdates,
+} from "@/server/sap/vendor-field-profile";
+
+type Context = { params: Promise<{ id: string }> };
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function positiveInteger(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function dateOnly(value: unknown): string {
+  const valueText = text(value);
+  return /^\d{4}-\d{2}-\d{2}/.test(valueText) ? valueText.slice(0, 10) : "";
+}
+
+type MaterialFormOption = {
+  value: string;
+  label: string;
+};
+
+type MaterialFormConfig = {
+  tableName: "OPCH" | "PCH1";
+  fieldName: string;
+  propertyName: string;
+  description: string;
+  options: MaterialFormOption[];
+};
+
+type TransportConfig = {
+  propertyName: string;
+  description: string;
+  options: SapTransportOption[];
+};
+
+function configuredFieldOptions(value: unknown): MaterialFormOption[] {
+  const source = Array.isArray(value)
+    ? value
+    : Array.isArray(record(value).value)
+      ? (record(value).value as unknown[])
+      : [];
+
+  return source
+    .map((candidate) => {
+      const entry = record(candidate);
+      const code = (text(entry.Value) || text(entry.value)).toUpperCase();
+      const description = text(entry.Description) || text(entry.description);
+      return code ? { value: code, label: description || code } : null;
+    })
+    .filter((option): option is MaterialFormOption => Boolean(option));
+}
+
+async function loadMaterialFormConfig(
+  getUserField: (
+    tableName: string,
+    description: string,
+  ) => Promise<Record<string, unknown> | null>,
+): Promise<MaterialFormConfig | null> {
+  const field = await getUserField("OPCH", "Material Form");
+  const fieldName = text(field?.Name);
+  if (!fieldName) return null;
+
+  return {
+    tableName: "OPCH",
+    fieldName,
+    propertyName: `U_${fieldName}`,
+    description: text(field?.Description) || "Material Form",
+    options: configuredFieldOptions(
+      field?.ValidValuesMD ??
+        field?.ValidValues ??
+        field?.ValidValuesCollection,
+    ),
+  };
+}
+
+function configuredTransportOptions(value: unknown): SapTransportOption[] {
+  const source = Array.isArray(value)
+    ? value
+    : Array.isArray(record(value).value)
+      ? (record(value).value as unknown[])
+      : [];
+
+  return source
+    .map((candidate) => {
+      const entry = record(candidate);
+      const optionValue = text(entry.Value) || text(entry.value);
+      const description = text(entry.Description) || text(entry.description);
+      return optionValue
+        ? { value: optionValue, label: description || optionValue }
+        : null;
+    })
+    .filter((option): option is SapTransportOption => Boolean(option));
+}
+
+async function loadTransportConfig(
+  getUserField: (
+    tableName: string,
+    description: string,
+  ) => Promise<Record<string, unknown> | null>,
+): Promise<TransportConfig | null> {
+  const field = await getUserField("OPCH", "Transporter");
+  const fieldName = text(field?.Name);
+  if (!fieldName) return null;
+
+  return {
+    propertyName: `U_${fieldName}`,
+    description: text(field?.Description) || "Transporter",
+    options: configuredTransportOptions(
+      field?.ValidValuesMD ??
+        field?.ValidValues ??
+        field?.ValidValuesCollection,
+    ),
+  };
+}
+
+function readMaterialFormValue(
+  draft: Record<string, unknown>,
+  config: MaterialFormConfig,
+): string {
+  if (config.tableName === "OPCH") {
+    return text(draft[config.propertyName]).toUpperCase();
+  }
+  const lines = Array.isArray(draft.DocumentLines)
+    ? draft.DocumentLines.map(record)
+    : [];
+  const values = [
+    ...new Set(
+      lines
+        .map((line) => text(line[config.propertyName]).toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
+  return values.length === 1 && values[0] ? values[0] : "";
+}
+
+async function handle(
+  request: Request,
+  context: Context,
+  convertToFinalInvoice: boolean,
+) {
+  return withUser(request, async (db, user) => {
+    const requestBody = convertToFinalInvoice
+      ? record(await request.json().catch(() => ({})))
+      : {};
+    const requestedMaterialForm = text(requestBody.materialForm).toUpperCase();
+
+    if (readSapEnvironment() !== "test") {
+      throw new ApiError(
+        "Final draft posting through this app is enabled only in SAP Test.",
+        409,
+      );
+    }
+
+    const { id } = await context.params;
+    const caseRow = await ownedCase(db, user, id);
+    if (convertToFinalInvoice && caseRow.status !== "accepted") {
+      throw new ApiError(
+        "Approve the case before posting its SAP Test draft.",
+        409,
+      );
+    }
+
+    const postingResult = await db
+      .from("sap_postings")
+      .select("status, sap_docnum, payload, response")
+      .eq("case_id", uuid(id))
+      .eq("owner_user_id", user)
+      .eq("kind", "AP")
+      .eq("sap_env", "test")
+      .maybeSingle();
+    dbCheck(postingResult.error);
+    const posting = postingResult.data;
+    if (!posting) {
+      throw new ApiError(
+        "No SAP Test AP invoice draft exists for this case.",
+        404,
+      );
+    }
+    if (posting.status === "posted" && posting.sap_docnum) {
+      return {
+        ok: true,
+        alreadyPosted: true,
+        posted: true,
+        docNum: posting.sap_docnum,
+        message: `SAP Test AP Invoice ${posting.sap_docnum} is already posted.`,
+      };
+    }
+    if (posting.status !== "prepared") {
+      throw new ApiError(
+        "This case does not have a prepared SAP Test AP invoice draft.",
+        409,
+      );
+    }
+
+    const draftDocEntry = positiveInteger(posting.sap_docnum);
+    if (!draftDocEntry) {
+      throw new ApiError("The saved SAP Test draft number is invalid.", 409);
+    }
+    const payload = record(posting.payload);
+    const previousResponse = record(posting.response);
+    const expectedVendorCode = text(previousResponse.CardCode);
+    const expectedInvoiceNumber =
+      text(payload.invoiceNumber) || text(caseRow.invoice_number);
+    const expectedPostingDate = dateOnly(payload.postingDate);
+    const expectedInvoiceDate = dateOnly(payload.invoiceDate);
+    const expectedBaseEntry = positiveInteger(payload.baseDocEntry);
+    const expectedBaseType = payload.baseKind === "PO" ? 22 : 20;
+    if (
+      !expectedVendorCode ||
+      !expectedInvoiceNumber ||
+      !expectedPostingDate ||
+      !expectedInvoiceDate ||
+      !expectedBaseEntry
+    ) {
+      throw new ApiError(
+        "The saved draft audit details are incomplete. No final invoice was posted.",
+        409,
+      );
+    }
+
+    const documentsResult = await db
+      .from("packet_documents")
+      .select("document_type, extracted_fields")
+      .eq("case_id", id)
+      .order("created_at");
+    dbCheck(documentsResult.error);
+    const invoiceDocuments = (documentsResult.data ?? []).filter(
+      (document) =>
+        document.document_type === "Invoice" ||
+        document.document_type === "Tax Invoice",
+    );
+    const packetLines = invoiceDocuments.flatMap((document) =>
+      readStoredLineItems(document.extracted_fields).map((item) => ({
+        description:
+          typeof item.description === "string" ? item.description : undefined,
+        quantity: item.quantity,
+        rate: item.rate,
+        taxableAmount: item.taxableAmount,
+        taxAmount: item.taxAmount,
+        lineTotal: item.lineTotal,
+      })),
+    );
+    const expectedTotal = invoiceMoneyPreview(invoiceDocuments, packetLines)
+      .totals.total;
+    const invoiceFields = record(invoiceDocuments[0]?.extracted_fields);
+    const expectedCurrency = text(invoiceFields.currency).toUpperCase();
+    if (expectedTotal === null || expectedTotal <= 0) {
+      throw new ApiError(
+        "The vendor invoice total is unavailable. No final invoice was posted.",
+        409,
+      );
+    }
+
+    let result;
+    try {
+      result = await withTestServiceLayer(async (client) => {
+        const existingInvoice = await client.findInvoiceByReference(
+          expectedVendorCode,
+          expectedInvoiceNumber,
+        );
+        if (existingInvoice) {
+          return {
+            alreadyPosted: true,
+            invoice: existingInvoice,
+            draft: null,
+            serviceResult: {},
+          };
+        }
+
+        let draft = await client.getDraft(draftDocEntry);
+        const actualObject = text(draft.DocObjectCode);
+        if (actualObject !== "18" && actualObject !== "oPurchaseInvoices") {
+          throw new ApiError(
+            "SAP Draft is not an A/P Invoice. No final invoice was posted.",
+            409,
+          );
+        }
+        if (
+          draft.DocEntry !== draftDocEntry ||
+          text(draft.Comments) !== `Samrat case ${id} AP invoice draft` ||
+          text(draft.CardCode) !== expectedVendorCode ||
+          text(draft.NumAtCard) !== expectedInvoiceNumber ||
+          dateOnly(draft.DocDate) !== expectedPostingDate ||
+          dateOnly(draft.TaxDate) !== expectedInvoiceDate
+        ) {
+          throw new ApiError(
+            "SAP Draft no longer matches this case. No final invoice was posted.",
+            409,
+          );
+        }
+        if (
+          expectedCurrency &&
+          text(draft.DocCurrency).toUpperCase() !== expectedCurrency
+        ) {
+          throw new ApiError(
+            "SAP Draft currency differs from the vendor invoice. No final invoice was posted.",
+            409,
+          );
+        }
+        const totalTolerance = Math.max(1, expectedTotal * 0.00001);
+        const totalReconciliation = reconcileSapDraftTotal({
+          docTotal: draft.DocTotal,
+          withholdingTaxes: draft.WithholdingTaxDataCollection,
+          expectedInvoiceTotal: expectedTotal,
+          tolerance: totalTolerance,
+        });
+        if (!totalReconciliation?.matches) {
+          const actualTotal = Number(draft.DocTotal);
+          const withholdingTax = totalReconciliation?.withholdingTax ?? 0;
+          const withholdingText =
+            withholdingTax > 0
+              ? ` after adding SAP withholding tax ${withholdingTax.toFixed(2)}`
+              : "";
+          throw new ApiError(
+            `SAP Draft total ${Number.isFinite(actualTotal) ? actualTotal.toFixed(2) : "is missing"}${withholdingText} does not match the vendor invoice total ${expectedTotal.toFixed(2)}. No final invoice was posted.`,
+            409,
+          );
+        }
+        const lines = draft.DocumentLines ?? [];
+        if (
+          lines.length === 0 ||
+          !lines.every(
+            (line) =>
+              line.BaseType === expectedBaseType &&
+              line.BaseEntry === expectedBaseEntry,
+          )
+        ) {
+          throw new ApiError(
+            "SAP Draft is not based entirely on the selected PO/GRPO. No final invoice was posted.",
+            409,
+          );
+        }
+
+        const itemCodes = [
+          ...new Set(
+            lines
+              .map((line) => text(line.ItemCode))
+              .filter((itemCode) => itemCode.length > 0),
+          ),
+        ];
+        const itemInventoryStates =
+          payload.baseKind === "PO"
+            ? await Promise.all(
+                itemCodes.map((itemCode) =>
+                  client.getItemInventoryState(itemCode),
+                ),
+              )
+            : [];
+        const materialFormPolicy = sapMaterialFormPolicy(
+          payload.baseKind,
+          itemInventoryStates,
+        );
+        const requiresMaterialForm = materialFormPolicy.required;
+        const automaticMaterialForm = materialFormPolicy.automaticValue;
+
+        const materialForm =
+          requiresMaterialForm || Boolean(automaticMaterialForm)
+            ? await loadMaterialFormConfig(client.getUserField)
+            : null;
+        if ((requiresMaterialForm || automaticMaterialForm) && !materialForm) {
+          throw new ApiError(
+            "SAP Test did not expose one unambiguous Material Form field for A/P Invoices. No final invoice was posted.",
+            502,
+          );
+        }
+        if (
+          convertToFinalInvoice &&
+          (requiresMaterialForm || automaticMaterialForm)
+        ) {
+          if (!materialForm) {
+            throw new ApiError(
+              "SAP Test did not expose one unambiguous Material Form field for A/P Invoices. No final invoice was posted.",
+              502,
+            );
+          }
+          const selectedMaterialForm =
+            automaticMaterialForm || requestedMaterialForm;
+          if (!selectedMaterialForm) {
+            throw new ApiError(
+              `Select ${materialForm.description} before posting the final AP invoice.`,
+              409,
+              { materialForm },
+            );
+          }
+          const selectedOption = materialForm.options.find(
+            (option) => option.value === selectedMaterialForm,
+          );
+          if (!selectedOption) {
+            throw new ApiError(
+              automaticMaterialForm
+                ? `SAP Test does not allow the confirmed non-material value STRAIGHT (${automaticMaterialForm}) for ${materialForm.description}. No final invoice was posted.`
+                : `The selected ${materialForm.description} is not allowed by SAP Test.`,
+              409,
+              { materialForm },
+            );
+          }
+          if (
+            readMaterialFormValue(record(draft), materialForm) !==
+            selectedOption.value
+          ) {
+            const updatePayload =
+              materialForm.tableName === "OPCH"
+                ? { [materialForm.propertyName]: selectedOption.value }
+                : {
+                    DocumentLines: lines.map((line, index) => ({
+                      LineNum: line.LineNum ?? index,
+                      [materialForm.propertyName]: selectedOption.value,
+                    })),
+                  };
+            await client.updateDraft(draftDocEntry, updatePayload);
+            draft = await client.getDraft(draftDocEntry);
+            if (
+              readMaterialFormValue(record(draft), materialForm) !==
+              selectedOption.value
+            ) {
+              throw new ApiError(
+                `SAP Test did not save ${materialForm.description}. No final invoice was posted.`,
+                502,
+              );
+            }
+          }
+        }
+
+        if (convertToFinalInvoice) {
+          const transportConfig = await loadTransportConfig(
+            client.getUserField,
+          );
+          if (!transportConfig || transportConfig.options.length === 0) {
+            throw new ApiError(
+              "SAP Test did not expose one usable Transporter field and its allowed values. No final invoice was posted.",
+              502,
+            );
+          }
+          const baseDocument =
+            expectedBaseType === 22
+              ? await client.getPurchaseOrder(expectedBaseEntry)
+              : await client.getGrpo(expectedBaseEntry);
+          const transportResolution = resolveSapTransporter({
+            draftValue: record(draft)[transportConfig.propertyName],
+            baseValue: record(baseDocument)[transportConfig.propertyName],
+            packetDocuments: documentsResult.data ?? [],
+            invoiceNumber: expectedInvoiceNumber,
+            allowedOptions: transportConfig.options,
+          });
+          if (transportResolution.status === "missing") {
+            throw new ApiError(
+              `SAP Test requires ${transportConfig.description}, but neither the matched SAP document nor the uploaded packet contains an exact value for this invoice. No final invoice was posted.`,
+              409,
+            );
+          }
+          if (transportResolution.status === "invalid") {
+            throw new ApiError(
+              `The packet Transporter ${transportResolution.candidates.join(", ")} is not an allowed value in SAP Test. Use the exact Transporter configured in SAP, then create a new case. No final invoice was posted.`,
+              409,
+            );
+          }
+          if (transportResolution.status === "ambiguous") {
+            throw new ApiError(
+              `The packet contains conflicting SAP Transporter values: ${transportResolution.candidates.join(", ")}. Correct the packet and create a new case. No final invoice was posted.`,
+              409,
+            );
+          }
+          const transportUpdates = sapTransportFieldUpdates(
+            record(draft),
+            transportConfig.propertyName,
+            transportResolution.value,
+          );
+          if (Object.keys(transportUpdates).length > 0) {
+            await client.updateDraft(draftDocEntry, transportUpdates);
+            draft = await client.getDraft(draftDocEntry);
+            if (!transportFieldsMatch(record(draft), transportUpdates)) {
+              throw new ApiError(
+                `SAP Test did not save ${transportConfig.description}. No final invoice was posted.`,
+                502,
+              );
+            }
+          }
+
+          const historicalInvoices =
+            await client.listRecentInvoicesForVendor(expectedVendorCode);
+          const learnedUpdates = learnVendorInvoiceFieldUpdates({
+            draft: record(draft),
+            historicalInvoices,
+          });
+          if (learnedUpdates.length > 0) {
+            await client.updateDraft(
+              draftDocEntry,
+              learnedFieldUpdatePayload(learnedUpdates),
+            );
+            draft = await client.getDraft(draftDocEntry);
+            if (!learnedFieldsMatch(record(draft), learnedUpdates)) {
+              throw new ApiError(
+                "SAP Test did not save the vendor-specific invoice fields confirmed by its own successful invoice history. No final invoice was posted.",
+                502,
+              );
+            }
+          }
+        }
+
+        const summary = {
+          docEntry: draftDocEntry,
+          vendorCode: draft.CardCode,
+          vendorName: draft.CardName,
+          invoiceNumber: draft.NumAtCard,
+          currency: draft.DocCurrency,
+          total: totalReconciliation.invoiceTotal,
+          netPayable: totalReconciliation.netPayable,
+          withholdingTax: totalReconciliation.withholdingTax,
+          postingDate: expectedPostingDate,
+          invoiceDate: expectedInvoiceDate,
+          baseKind: payload.baseKind,
+          baseDocument: payload.baseDocNum,
+        };
+        const materialFormState =
+          requiresMaterialForm && materialForm
+            ? {
+                ...materialForm,
+                selectedValue: "",
+              }
+            : null;
+        if (!convertToFinalInvoice) {
+          return {
+            alreadyPosted: false,
+            invoice: null,
+            draft: summary,
+            materialForm: materialFormState,
+            serviceResult: {},
+          };
+        }
+
+        let serviceResult: Record<string, unknown>;
+        try {
+          serviceResult = await client.finalizeDraft(draftDocEntry);
+        } catch (error) {
+          if (
+            String(error)
+              .toLocaleUpperCase("en")
+              .includes("TRANSPORT NAME IS MANDATORY")
+          ) {
+            throw new ApiError(
+              "SAP Test rejected the Transporter even after the exact configured value was saved. No final invoice was posted.",
+              409,
+            );
+          }
+          if (/please select the material form/i.test(String(error))) {
+            if (automaticMaterialForm) {
+              throw new ApiError(
+                `SAP Test still rejected Material Form after STRAIGHT (${automaticMaterialForm}) was saved on this non-material invoice draft. No final invoice was posted.`,
+                409,
+              );
+            }
+            const draftFields = materialForm
+              ? {
+                  [materialForm.propertyName]:
+                    record(draft)[materialForm.propertyName],
+                }
+              : {};
+            const userFields = materialForm
+              ? [
+                  {
+                    tableName: materialForm.tableName,
+                    name: materialForm.fieldName,
+                    description: materialForm.description,
+                    validValues: materialForm.options.map((option) => ({
+                      Value: option.value,
+                      Description: option.label,
+                    })),
+                  },
+                ]
+              : [];
+            console.error("SAP Test requires its custom Material Form field", {
+              caseId: id,
+              draftDocEntry,
+              draftFields,
+              userFields,
+            });
+            throw new ApiError(
+              userFields.length > 0
+                ? `SAP Test requires ${userFields
+                    .map((field) => {
+                      const allowedValues = configuredFieldOptions(
+                        field.validValues,
+                      ).map((option) => `${option.value} — ${option.label}`);
+                      const valuesText =
+                        allowedValues.length > 0
+                          ? `; allowed values: ${allowedValues.join(", ")}`
+                          : "; SAP has not exposed any allowed values";
+                      return `${String(field.description ?? "Material Form")} (${String(field.name ?? "unknown field")}${valuesText})`;
+                    })
+                    .join(
+                      ", ",
+                    )} before this draft can be posted. No final invoice was posted.`
+                : "SAP Test requires a client-specific Material Form value before this draft can be posted. No final invoice was posted.",
+              409,
+              { draftFields, userFields },
+            );
+          }
+          throw error;
+        }
+        const invoice = await client.findInvoiceByReference(
+          expectedVendorCode,
+          expectedInvoiceNumber,
+        );
+        if (!invoice?.DocEntry) {
+          throw new ApiError(
+            "SAP accepted the draft conversion, but the final A/P Invoice could not be confirmed. Do not retry until it is checked in SAP Test.",
+            502,
+          );
+        }
+        return {
+          alreadyPosted: false,
+          invoice,
+          draft: summary,
+          materialForm: materialFormState,
+          serviceResult,
+        };
+      });
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      const detail =
+        error instanceof Error
+          ? error.message
+          : "SAP Test did not complete the final posting.";
+      console.error("SAP Test final AP invoice operation failed", {
+        caseId: id,
+        draftDocEntry,
+        detail,
+      });
+      throw new ApiError(detail, 502);
+    }
+
+    if (!convertToFinalInvoice && result.draft) {
+      return {
+        ok: true,
+        verified: true,
+        readyForFinalPosting: true,
+        posted: false,
+        draft: result.draft,
+        materialForm: result.materialForm,
+        message: `SAP Test Draft ${draftDocEntry} exists and matches this case. It is ready for final posting.`,
+      };
+    }
+
+    const finalDocNum = String(
+      result.invoice?.DocNum ?? result.invoice?.DocEntry ?? "",
+    );
+    if (!finalDocNum) {
+      throw new ApiError(
+        "The final SAP Test AP invoice number could not be confirmed.",
+        502,
+      );
+    }
+    const savedMaterialForm =
+      text(record(record(result).materialForm).selectedValue) ||
+      requestedMaterialForm ||
+      null;
+    const saved = await db
+      .from("sap_postings")
+      .update({
+        status: "posted",
+        sap_docnum: finalDocNum,
+        response: {
+          ...previousResponse,
+          DraftDocEntry: draftDocEntry,
+          FinalDocEntry: result.invoice?.DocEntry,
+          FinalDocNum: result.invoice?.DocNum,
+          FinalizeResponse: result.serviceResult,
+          MaterialForm: savedMaterialForm,
+        },
+        error: null,
+      })
+      .eq("case_id", uuid(id))
+      .eq("owner_user_id", user)
+      .eq("kind", "AP")
+      .eq("sap_env", "test");
+    dbCheck(saved.error);
+
+    const event = await db.from("case_review_events").insert({
+      case_id: id,
+      owner_user_id: user,
+      action: result.alreadyPosted
+        ? "sap_ap_invoice_linked"
+        : "sap_ap_invoice_posted",
+      details: {
+        sapEnv: "test",
+        draftDocEntry,
+        finalDocEntry: result.invoice?.DocEntry,
+        finalDocNum: result.invoice?.DocNum,
+        invoiceNumber: expectedInvoiceNumber,
+        materialForm: savedMaterialForm,
+      },
+    });
+    dbCheck(event.error);
+
+    return {
+      ok: true,
+      posted: true,
+      alreadyPosted: result.alreadyPosted,
+      docEntry: result.invoice?.DocEntry,
+      docNum: finalDocNum,
+      message: result.alreadyPosted
+        ? `SAP Test AP Invoice ${finalDocNum} was already posted and is now linked to this case.`
+        : `SAP Test AP Invoice ${finalDocNum} was posted successfully from Draft ${draftDocEntry}.`,
+    };
+  });
+}
+
+export async function GET(request: Request, context: Context) {
+  return handle(request, context, false);
+}
+
+export async function POST(request: Request, context: Context) {
+  return handle(request, context, true);
+}

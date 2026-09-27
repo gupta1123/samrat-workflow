@@ -1,0 +1,62 @@
+import { jsonWithCors, optionsWithCors } from "@/server/api/cors";
+import { requireRequestUser } from "@/server/api/request-auth";
+import {
+  getLatestProcessingJob,
+  mapProcessingJob,
+} from "@/server/processing/jobs";
+import { createSupabaseAdminClient } from "@/server/supabase/admin";
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await context.params;
+    const user = await requireRequestUser(request);
+
+    if (!user) {
+      return jsonWithCors(request, { error: "Unauthorized" }, { status: 401 });
+    }
+
+    const supabase = createSupabaseAdminClient();
+    const { data: caseRow, error: caseError } = await supabase
+      .from("packet_cases")
+      .select("id, status")
+      .eq("id", id)
+      .eq("owner_user_id", user.id)
+      .maybeSingle();
+
+    if (caseError) {
+      throw caseError;
+    }
+
+    if (!caseRow) {
+      return jsonWithCors(
+        request,
+        { error: "Case not found." },
+        { status: 404 },
+      );
+    }
+
+    const job = await getLatestProcessingJob(id);
+    return jsonWithCors(request, {
+      caseStatus: caseRow.status,
+      job: mapProcessingJob(job),
+    });
+  } catch (error) {
+    return jsonWithCors(
+      request,
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error ?? "Unknown error"),
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export function OPTIONS(request: Request) {
+  return optionsWithCors(request);
+}
