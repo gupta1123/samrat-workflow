@@ -78,6 +78,7 @@ export type FieldKey =
   | "ownerName"
   | "transporterName"
   | "driverName"
+  | "driverMobile"
   | "holderName"
   | "fatherName"
   | "panNumber"

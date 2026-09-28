@@ -124,6 +124,15 @@ before(async () => {
       "utf8",
     ),
   );
+  await db.exec(
+    readFileSync(
+      new URL(
+        "../supabase/migrations/20260921080000_case_name_ist_timezone.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   await db.query("insert into auth.users(id) values($1),($2)", [user, other]);
 });
 after(async () => db.close());
@@ -235,6 +244,24 @@ async function complete(
     {},
   ]);
 }
+
+test("draft case display names use Asia/Kolkata local time", async () => {
+  await db.exec("set timezone to 'UTC'");
+  const created = await createCase();
+  const result = await db.query<{ display_name: string; expected: string }>(
+    `select
+       display_name,
+       'Case · ' || to_char(
+         created_at at time zone 'Asia/Kolkata',
+         'DD Mon YYYY HH24:MI'
+       ) as expected
+     from public.packet_cases
+     where id = $1`,
+    [created.id],
+  );
+
+  assert.equal(result.rows[0]?.display_name, result.rows[0]?.expected);
+});
 
 test("migration enables RLS on every application table and restricts internal functions", async () => {
   const rows = await db.query<{ relname: string; relrowsecurity: boolean }>(

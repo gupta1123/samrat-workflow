@@ -519,6 +519,7 @@ const FIELD_MAPPINGS: Partial<Record<FieldKey, string[]>> = {
     "carrierName",
   ],
   driverName: ["driverName", "licenceHolderName", "licenseHolderName"],
+  driverMobile: ["driverMobile", "driverPhone", "driverMobileNumber"],
   holderName: ["holderName", "nameOnCard", "panHolderName"],
   fatherName: ["fatherName", "fatherOrSpouseName"],
   panNumber: ["panNumber", "panNo"],

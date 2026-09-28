@@ -22,6 +22,11 @@ import {
   learnedFieldsMatch,
   learnVendorInvoiceFieldUpdates,
 } from "@/server/sap/vendor-field-profile";
+import {
+  packetLogisticsFieldUpdates,
+  packetLogisticsFieldsMatch,
+  packetLogisticsUpdatePayload,
+} from "@/server/sap/packet-logistics-fields";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -522,6 +527,28 @@ async function handle(
             if (!learnedFieldsMatch(record(draft), learnedUpdates)) {
               throw new ApiError(
                 "SAP Test did not save the vendor-specific invoice fields confirmed by its own successful invoice history. No final invoice was posted.",
+                502,
+              );
+            }
+          }
+
+          // Exact packet evidence takes precedence over values inferred from
+          // historical invoices for this vendor.
+          const logisticsUpdates = await packetLogisticsFieldUpdates({
+            draft: record(draft),
+            documents: documentsResult.data ?? [],
+            invoiceNumber: expectedInvoiceNumber,
+            getUserFields: client.getUserFields,
+          });
+          if (logisticsUpdates.length > 0) {
+            await client.updateDraft(
+              draftDocEntry,
+              packetLogisticsUpdatePayload(logisticsUpdates),
+            );
+            draft = await client.getDraft(draftDocEntry);
+            if (!packetLogisticsFieldsMatch(record(draft), logisticsUpdates)) {
+              throw new ApiError(
+                "SAP Test did not save the packet's verified logistics details. No final invoice was posted.",
                 502,
               );
             }
