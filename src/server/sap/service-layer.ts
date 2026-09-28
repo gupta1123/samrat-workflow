@@ -120,6 +120,10 @@ export async function withTestServiceLayer<T>(
       tableName: string,
       description: string,
     ) => Promise<Record<string, unknown> | null>;
+    getUserFields: (
+      tableName: string,
+      description: string,
+    ) => Promise<Record<string, unknown>[]>;
   }) => Promise<T>,
 ): Promise<T> {
   const config = testConfig();
@@ -501,6 +505,17 @@ export async function withTestServiceLayer<T>(
           );
         }
         return fields[0] ?? null;
+      },
+      async getUserFields(tableName, description) {
+        const filter = encodeURIComponent(
+          `TableName eq '${tableName.replaceAll("'", "''")}' and Description eq '${description.replaceAll("'", "''")}'`,
+        );
+        const { body } = await request(
+          `/UserFieldsMD?$filter=${filter}&$top=100`,
+        );
+        return Array.isArray(body.value)
+          ? (body.value as Record<string, unknown>[])
+          : [];
       },
     });
   } finally {
