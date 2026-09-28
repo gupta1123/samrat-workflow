@@ -4,14 +4,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  FileText,
   RotateCcw,
   Search,
-  Sparkles,
   Trash,
   Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
 import { CaseConfirmDialog } from "@/components/cases/CaseConfirmDialog";
 import { AppShell } from "@/components/dashboard/AppShell";
@@ -40,115 +39,132 @@ type PendingAction =
 
 const RECYCLE_BIN_PAGE_SIZE = 25;
 
-function getVisiblePages(currentPage: number, totalPages: number) {
-  const pages = new Set([
-    1,
-    totalPages,
-    currentPage - 1,
-    currentPage,
-    currentPage + 1,
-  ]);
-  return Array.from(pages)
-    .filter((page) => page >= 1 && page <= totalPages)
-    .sort((a, b) => a - b);
-}
-
-function formatDateTime(value: string | null) {
+function formatDate(value: string | null) {
   if (!value) return "—";
-
-  return new Date(value)
-    .toLocaleString("en-IN", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      timeZone: "Asia/Kolkata",
-    })
-    .replace(",", " -")
-    .replace(/\s([AP]M)$/, "_$1"); // Rough match for image format
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
-function RecycleBinCardSkeleton() {
+function toReadableText(value: string) {
+  return value
+    .split(/(\s+)/)
+    .map((word) => {
+      if (!word.trim() || /[0-9]/.test(word)) return word;
+      if (word.length <= 3 && word === word.toUpperCase()) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join("");
+}
+
+function getCaseName(item: SavedCaseRecord) {
+  return toReadableText(
+    item.receiverName || item.buyerName || item.displayName || "Unnamed case",
+  );
+}
+
+function getCaseReference(item: SavedCaseRecord) {
+  if (item.invoiceNumber) return `Inv: ${item.invoiceNumber}`;
+  if (item.poNumber) return `PO: ${item.poNumber}`;
+  return null;
+}
+
+function getCategory(item: SavedCaseRecord) {
+  return toReadableText(item.category || item.displayName || "—");
+}
+
+const HEADINGS = [
+  { label: "Case / Document", className: "" },
+  { label: "Category", className: "" },
+  { label: "Deleted On", className: "" },
+  { label: "Retention", className: "" },
+  { label: "Actions", className: "text-right" },
+];
+
+function RecycleBinTableHeader() {
   return (
-    <div className="grid gap-3 px-4 pb-2 md:hidden">
-      {Array.from({ length: 5 }).map((_, index) => (
-        <div
-          key={index}
-          className="rounded-xl border border-[#e2e8f0] bg-white p-3.5 shadow-sm"
-        >
-          <div className="flex items-start gap-2.5">
-            <Skeleton className="h-8 w-8 shrink-0 rounded-lg bg-[#f8fafc]" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <Skeleton className="h-3.5 w-4/5 bg-slate-100" />
-              <Skeleton className="h-3 w-3/5 bg-slate-100" />
-            </div>
-          </div>
-          <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2.5">
-            <Skeleton className="h-3 w-28 bg-slate-100" />
-            <Skeleton className="h-3 w-14 bg-slate-100" />
-          </div>
-          <div className="mt-2.5 flex items-center justify-end gap-2">
-            <Skeleton className="h-7 w-7 rounded-md bg-slate-100" />
-            <Skeleton className="h-7 w-7 rounded-md bg-slate-100" />
-            <Skeleton className="h-7 w-7 rounded-md bg-slate-100" />
-          </div>
-        </div>
-      ))}
-    </div>
+    <TableHeader>
+      <TableRow className="border-[#e7e0d6] hover:bg-transparent">
+        {HEADINGS.map((heading) => (
+          <TableHead
+            key={heading.label}
+            className={`h-11 px-0 pr-4 text-sm font-medium text-[#1f2937] last:pr-0 ${heading.className}`}
+          >
+            {heading.label}
+          </TableHead>
+        ))}
+      </TableRow>
+    </TableHeader>
   );
 }
 
 function RecycleBinTableSkeleton() {
   return (
-    <div className="hidden md:block">
-      <Table className="w-full text-sm">
-        <TableHeader>
-          <TableRow className="border-b border-[#f1f5f9] hover:bg-transparent">
-            <TableHead className="h-10 pl-4 md:pl-6 font-medium text-[#94a3b8] text-[11px] uppercase tracking-wider">
-              Document
-            </TableHead>
-            <TableHead className="h-10 font-medium text-[#94a3b8] text-[11px] uppercase tracking-wider">
-              Receiver
-            </TableHead>
-            <TableHead className="h-10 font-medium text-[#94a3b8] text-[11px] uppercase tracking-wider">
-              Retention
-            </TableHead>
-            <TableHead className="h-10 font-medium text-[#94a3b8] text-[11px] uppercase tracking-wider text-right pr-4 md:pr-6">
-              Actions
-            </TableHead>
+    <Table className="min-w-[860px]">
+      <RecycleBinTableHeader />
+      <TableBody>
+        {Array.from({ length: 8 }).map((_, index) => (
+          <TableRow key={index} className="h-[52px] border-[#ece6dc]">
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-3.5 w-48 bg-[#eee7dd]" />
+              <Skeleton className="mt-1.5 h-3 w-28 bg-[#eee7dd]" />
+            </TableCell>
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-3.5 w-36 bg-[#eee7dd]" />
+            </TableCell>
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-3.5 w-20 bg-[#eee7dd]" />
+            </TableCell>
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-6 w-28 rounded-full bg-[#eee7dd]" />
+            </TableCell>
+            <TableCell className="px-0">
+              <Skeleton className="ml-auto h-3.5 w-24 bg-[#eee7dd]" />
+            </TableCell>
           </TableRow>
-        </TableHeader>
-        <TableBody>
-          {Array.from({ length: 8 }).map((_, index) => (
-            <TableRow key={index} className="border-[#f1f5f9] h-11">
-              <TableCell className="py-2 pl-4 md:pl-6">
-                <div className="flex items-center gap-2.5">
-                  <Skeleton className="h-7 w-7 shrink-0 rounded-md bg-[#f1f5f9]" />
-                  <div className="min-w-0 space-y-1.5">
-                    <Skeleton className="h-3.5 w-44 bg-slate-100" />
-                    <Skeleton className="h-3 w-28 bg-slate-100" />
-                  </div>
-                </div>
-              </TableCell>
-              <TableCell className="py-2">
-                <Skeleton className="h-3.5 w-36 bg-slate-100" />
-              </TableCell>
-              <TableCell className="py-2">
-                <Skeleton className="h-3.5 w-12 bg-slate-100" />
-              </TableCell>
-              <TableCell className="pr-4 md:pr-6 py-2">
-                <div className="flex justify-end gap-2">
-                  <Skeleton className="h-5 w-5 rounded-md bg-slate-100" />
-                  <Skeleton className="h-5 w-5 rounded-md bg-slate-100" />
-                  <Skeleton className="h-5 w-5 rounded-md bg-slate-100" />
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+// Samrat has no automatic purge, so retention is shown instead of an expiry countdown.
+function RetentionPill() {
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[#e2dbd1] bg-white px-2.5 py-0.5 text-[13px] font-medium text-[#4b5563]">
+      <Clock className="h-3.5 w-3.5" />
+      Until deleted
+    </span>
+  );
+}
+
+function RowActions({
+  item,
+  onAction,
+}: {
+  item: SavedCaseRecord;
+  onAction: (action: PendingAction) => void;
+}) {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-sm font-medium text-emerald-700 transition hover:bg-emerald-50"
+        onClick={() => onAction({ type: "restore", item })}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+        Restore
+      </button>
+      <button
+        type="button"
+        className="rounded-md p-1.5 text-[#8a8f98] transition hover:bg-rose-50 hover:text-rose-700"
+        aria-label="Delete permanently"
+        onClick={() => onAction({ type: "destroy", item })}
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
     </div>
   );
 }
@@ -208,10 +224,6 @@ export function RecycleBinPage() {
     };
   }, [currentPage, debouncedQuery]);
 
-  const visiblePages = useMemo(
-    () => getVisiblePages(currentPage, totalPages),
-    [currentPage, totalPages],
-  );
   const pageStart =
     totalCount === 0 ? 0 : (currentPage - 1) * RECYCLE_BIN_PAGE_SIZE + 1;
   const pageEnd = Math.min(currentPage * RECYCLE_BIN_PAGE_SIZE, totalCount);
@@ -256,68 +268,63 @@ export function RecycleBinPage() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-[1500px] w-full px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-700 ease-out text-[#1a1a1a]">
-        {/* MAIN CONTAINER matching the image's white box UI */}
-        <div className="bg-white border border-[#e5ddd0] rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.02)] overflow-hidden flex flex-col">
-          {/* =========================================
-              HEADER SECTION (Matches Image)
-              ========================================= */}
-          <div className="p-6 border-b border-[#e5ddd0] flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-            <div className="flex items-center gap-5">
-              <div className="w-12 h-12 bg-amber-50 border border-amber-250 text-amber-800 rounded-xl flex items-center justify-center shadow-sm">
-                <Trash2 className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200/50 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                  <Sparkles className="h-3 w-3 text-amber-600 animate-spin duration-3000" />
-                  System Cleanup
-                </div>
-                <h1 className="text-2xl font-black text-[#1a1a1a] tracking-tight mt-1.5">
-                  Recycle Bin
-                </h1>
-                <div className="text-xs font-semibold text-slate-400 mt-1">
-                  {status === "loading" ? (
-                    <Skeleton className="mt-1 h-3.5 w-60 bg-slate-100" />
-                  ) : (
-                    `${totalCount} items · Restore to open, or permanently delete`
-                  )}
-                </div>
-              </div>
+      <div className="min-h-full bg-[#f7f4ef] px-4 py-6 text-[#111827] sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[1540px] flex-col">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-xl font-semibold tracking-[-0.01em] text-[#111827]">
+                Recycle Bin
+              </h1>
+              <span className="hidden text-sm text-[#8a8174] sm:inline">
+                · Manage and restore deleted cases
+              </span>
             </div>
-          </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#e2dbd1] bg-white px-3 text-sm font-medium text-[#4b5563]">
+                <Trash2 className="h-4 w-4" />
+                Kept until you delete them
+              </span>
+              <Button
+                asChild
+                variant="outline"
+                className="h-9 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm font-medium text-[#1f2937] hover:bg-[#fbfaf8]"
+              >
+                <Link href="/cases">All Cases</Link>
+              </Button>
+            </div>
+          </header>
 
-          {/* =========================================
-              SEARCH BAR (Matches Image)
-              ========================================= */}
-          <div className="p-6 md:px-8 md:py-6">
-            <div className="flex items-center px-4 py-2.5 border border-[#e5ddd0] rounded-xl bg-[#faf8f4]/60 shadow-sm max-w-md focus-within:border-amber-500 transition-all">
-              <Search className="w-4 h-4 text-slate-400 mr-3 shrink-0" />
+          <div className="mt-5 border-b border-[#e7e0d6] pb-3">
+            <label className="flex h-10 w-full max-w-md items-center gap-2 rounded-lg border border-[#e2dbd1] bg-white px-3 shadow-sm focus-within:border-[#b9aa99]">
+              <Search className="h-4 w-4 shrink-0 text-[#8b94a4]" />
               <input
                 type="text"
-                placeholder="Search deleted items..."
+                placeholder="Search deleted cases, buyers, or numbers..."
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                className="w-full outline-none text-xs font-semibold text-[#1a1a1a] placeholder:text-slate-400 bg-transparent"
+                onChange={(event) => setQuery(event.target.value)}
+                className="min-w-0 flex-1 bg-transparent text-sm text-[#111827] outline-none placeholder:text-[#9aa1ad]"
               />
-            </div>
+            </label>
           </div>
 
-          {/* =========================================
-              TABLE AREA
-              ========================================= */}
-          <div className="w-full overflow-x-auto pb-4">
+          {error && status !== "error" && (
+            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <section className="mt-4">
             {status === "loading" && (
-              <>
-                <RecycleBinCardSkeleton />
+              <div className="overflow-x-auto">
                 <RecycleBinTableSkeleton />
-              </>
+              </div>
             )}
 
             {status === "error" && (
-              <div className="m-8 rounded-2xl border border-red-200 bg-red-50 p-6 text-sm text-red-700 flex items-start shadow-sm">
-                <Trash className="mr-3 h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+              <div className="flex items-start rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+                <Trash className="mr-3 mt-0.5 h-5 w-5 shrink-0 text-rose-500" />
                 <div>
-                  <div className="font-medium text-base mb-1">
+                  <div className="mb-1 font-medium">
                     Failed to load recycle bin
                   </div>
                   <div>{error}</div>
@@ -325,186 +332,103 @@ export function RecycleBinPage() {
               </div>
             )}
 
-            {status === "ready" && totalCount === 0 && !debouncedQuery && (
-              <div className="flex flex-col items-center justify-center py-24 text-center px-4">
-                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-[#f8fafc] border border-[#e2e8f0] shadow-sm">
-                  <Trash2 className="h-8 w-8 text-[#cbd5e1]" />
+            {status === "ready" && totalCount === 0 && (
+              <div className="flex min-h-[340px] flex-col items-center justify-center px-6 text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#e6ded2] bg-white text-[#9c8f80]">
+                  {debouncedQuery ? (
+                    <Search className="h-7 w-7" />
+                  ) : (
+                    <Trash2 className="h-7 w-7" />
+                  )}
                 </div>
-                <h3 className="text-lg font-medium text-[#0f172a]">
-                  Recycle Bin is Empty
-                </h3>
-                <p className="mt-2 text-sm font-medium text-[#64748b] max-w-sm">
-                  Deleted items remain here until you restore or permanently
-                  delete them.
+                <h2 className="text-lg font-medium text-[#111827]">
+                  {debouncedQuery
+                    ? "No matching cases"
+                    : "Recycle Bin is empty"}
+                </h2>
+                <p className="mt-2 max-w-sm text-sm text-[#667085]">
+                  {debouncedQuery
+                    ? `No deleted cases match "${debouncedQuery}".`
+                    : "Deleted cases stay here until you restore or permanently delete them."}
                 </p>
-              </div>
-            )}
-
-            {status === "ready" && totalCount === 0 && debouncedQuery && (
-              <div className="flex flex-col items-center justify-center py-24 text-center px-4">
-                <Search className="h-10 w-10 text-[#e2e8f0] mb-4" />
-                <h3 className="text-base font-medium text-[#0f172a]">
-                  No matches found
-                </h3>
-                <p className="mt-1 text-sm font-medium text-[#64748b]">
-                  We couldn&apos;t find any deleted items matching &quot;
-                  {debouncedQuery}&quot;.
-                </p>
-                <Button
-                  variant="link"
-                  onClick={() => setQuery("")}
-                  className="mt-2 text-amber-600 hover:text-amber-700 font-medium"
-                >
-                  Clear search
-                </Button>
+                {debouncedQuery && (
+                  <Button
+                    variant="link"
+                    onClick={() => setQuery("")}
+                    className="mt-2 font-medium text-[#2b1a10]"
+                  >
+                    Clear search
+                  </Button>
+                )}
               </div>
             )}
 
             {status === "ready" && cases.length > 0 && (
               <>
-                <div className="grid gap-3 px-4 pb-2 md:hidden">
+                <div className="grid grid-cols-1 gap-3 py-2 sm:grid-cols-2 md:hidden">
                   {cases.map((item) => (
                     <div
                       key={item.id}
-                      className="rounded-xl border border-[#e5ddd0] bg-white p-3.5 shadow-sm"
+                      className="rounded-xl border border-[#e6ded2] bg-white p-4 shadow-sm"
                     >
-                      <div className="flex items-start gap-2.5">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#e5ddd0] bg-[#faf8f4]/60 text-slate-500">
-                          <FileText className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <span
-                            className="block truncate text-sm font-extrabold text-[#1a1a1a] hover:text-amber-600 transition-colors"
-                            title={item.displayName || "Unnamed Document"}
-                          >
-                            {item.displayName || "Unnamed Document"}
-                          </span>
-                          <div className="mt-0.5 text-[11px] font-semibold text-slate-400">
-                            {formatDateTime(item.deletedAt)}
-                          </div>
-                        </div>
+                      <div className="truncate text-sm font-medium text-[#111827]">
+                        {getCaseName(item)}
                       </div>
-
-                      <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2.5 text-[11px] font-semibold text-slate-450">
-                        <span
-                          className="truncate max-w-[140px]"
-                          title={item.receiverName || "Receiver pending"}
-                        >
-                          {item.receiverName || "Receiver pending"}
-                        </span>
-                        <span className="flex items-center gap-1 shrink-0 text-slate-500 font-bold">
-                          <Clock className="h-3 w-3" />
-                          Until deleted
-                        </span>
+                      {getCaseReference(item) && (
+                        <div className="mt-0.5 truncate text-xs text-[#6b7280]">
+                          {getCaseReference(item)}
+                        </div>
+                      )}
+                      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[#596579]">
+                        <span>Deleted {formatDate(item.deletedAt)}</span>
+                        <RetentionPill />
                       </div>
-
-                      <div className="mt-2.5 flex items-center justify-end gap-2">
-                        <button
-                          className="rounded-lg border border-emerald-200 p-1.5 text-emerald-600 transition-colors hover:bg-emerald-50"
-                          aria-label="Restore"
-                          onClick={() =>
-                            setPendingAction({ type: "restore", item })
-                          }
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          className="rounded-lg border border-rose-200 p-1.5 text-rose-600 transition-colors hover:bg-rose-50"
-                          aria-label="Delete Permanently"
-                          onClick={() =>
-                            setPendingAction({ type: "destroy", item })
-                          }
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                      <div className="mt-3">
+                        <RowActions item={item} onAction={setPendingAction} />
                       </div>
                     </div>
                   ))}
                 </div>
 
-                <div className="hidden md:block">
-                  <Table className="w-full text-sm">
-                    <TableHeader>
-                      <TableRow className="border-b border-[#e5ddd0] bg-[#fcfbfa] hover:bg-transparent">
-                        <TableHead className="h-10 pl-4 md:pl-6 font-bold text-slate-400 text-[10px] uppercase tracking-wider">
-                          Document
-                        </TableHead>
-                        <TableHead className="h-10 font-bold text-slate-400 text-[10px] uppercase tracking-wider">
-                          Receiver
-                        </TableHead>
-                        <TableHead className="h-10 font-bold text-slate-400 text-[10px] uppercase tracking-wider">
-                          Retention
-                        </TableHead>
-                        <TableHead className="h-10 font-bold text-slate-400 text-[10px] uppercase tracking-wider text-right pr-4 md:pr-6">
-                          Actions
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table className="min-w-[860px]">
+                    <RecycleBinTableHeader />
                     <TableBody>
                       {cases.map((item) => (
                         <TableRow
                           key={item.id}
-                          className="group border-b border-[#e5ddd0] hover:bg-[#fcfbfa]/60 transition-colors h-11"
+                          className="h-[52px] border-[#ece6dc] hover:bg-[#f1ece4]/60"
                         >
-                          <TableCell className="py-2.5 pl-4 md:pl-6">
-                            <div className="flex items-center gap-2.5">
-                              <div className="w-7 h-7 rounded-lg bg-[#faf8f4]/60 border border-[#e5ddd0] text-slate-500 flex items-center justify-center shrink-0">
-                                <FileText className="w-3.5 h-3.5" />
+                          <TableCell className="max-w-[340px] px-0 py-2 pr-4">
+                            <div
+                              className="truncate text-sm font-medium text-[#111827]"
+                              title={getCaseName(item)}
+                            >
+                              {getCaseName(item)}
+                            </div>
+                            {getCaseReference(item) && (
+                              <div className="mt-0.5 truncate text-xs text-[#6b7280]">
+                                {getCaseReference(item)}
                               </div>
-                              <div className="min-w-0">
-                                <span
-                                  className="font-extrabold text-[#1a1a1a] text-[13px] transition-colors hover:text-amber-600 truncate block max-w-[200px] xl:max-w-[300px]"
-                                  title={item.displayName || "Unnamed Document"}
-                                >
-                                  {item.displayName || "Unnamed Document"}
-                                </span>
-                                <div className="text-[11px] font-semibold text-slate-400 mt-px">
-                                  {formatDateTime(item.deletedAt)}
-                                </div>
-                              </div>
-                            </div>
+                            )}
                           </TableCell>
-
-                          <TableCell className="py-2.5">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                              <span
-                                className="text-[13px] font-semibold text-slate-500 truncate max-w-[140px]"
-                                title={item.receiverName || "Receiver pending"}
-                              >
-                                {item.receiverName || "Receiver pending"}
-                              </span>
-                            </div>
+                          <TableCell
+                            className="max-w-[220px] truncate px-0 py-2 pr-4 text-sm text-[#4b5563]"
+                            title={getCategory(item)}
+                          >
+                            {getCategory(item)}
                           </TableCell>
-
-                          <TableCell className="py-2.5">
-                            <div className="flex items-center gap-1 text-[13px] font-bold text-slate-500">
-                              <Clock className="w-3 h-3 text-slate-400" />
-                              Until deleted
-                            </div>
+                          <TableCell className="whitespace-nowrap px-0 py-2 pr-4 text-sm text-[#4b5563]">
+                            {formatDate(item.deletedAt)}
                           </TableCell>
-
-                          <TableCell className="pr-4 md:pr-6 py-2.5 text-right">
-                            <div className="flex items-center justify-end gap-2 text-slate-400">
-                              <button
-                                className="p-1.5 hover:text-emerald-700 hover:bg-emerald-50 border border-transparent hover:border-emerald-200 rounded-xl transition-all"
-                                aria-label="Restore"
-                                onClick={() =>
-                                  setPendingAction({ type: "restore", item })
-                                }
-                              >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                className="p-1.5 hover:text-rose-700 hover:bg-rose-50 border border-transparent hover:border-rose-200 rounded-xl transition-all"
-                                aria-label="Delete Permanently"
-                                onClick={() =>
-                                  setPendingAction({ type: "destroy", item })
-                                }
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                          <TableCell className="px-0 py-2 pr-4">
+                            <RetentionPill />
+                          </TableCell>
+                          <TableCell className="px-0 py-2">
+                            <RowActions
+                              item={item}
+                              onAction={setPendingAction}
+                            />
                           </TableCell>
                         </TableRow>
                       ))}
@@ -515,67 +439,44 @@ export function RecycleBinPage() {
             )}
 
             {status === "ready" && totalCount > 0 && (
-              <div className="flex flex-col gap-3 border-t border-[#e5ddd0] px-6 pb-2 pt-4 text-xs font-semibold text-slate-400 md:flex-row md:items-center md:justify-between md:px-8">
+              <div className="flex flex-col gap-3 py-5 text-sm text-[#4b5563] sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  Showing {pageStart}-{pageEnd} of {totalCount}
+                  Showing {pageStart}–{pageEnd} of {totalCount}
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-3">
                   <Button
                     type="button"
                     variant="outline"
-                    size="sm"
-                    className="h-8.5 w-8.5 rounded-xl border border-[#e5ddd0] bg-white px-2 font-bold text-[#5a5046] hover:bg-[#faf8f4] hover:text-[#1a1a1a] shadow-sm transition-all"
+                    className="h-8 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm text-[#1f2937] hover:bg-[#fbfaf8]"
                     disabled={currentPage <= 1}
                     onClick={() =>
                       setCurrentPage((page) => Math.max(1, page - 1))
                     }
-                    aria-label="Previous page"
                   >
                     <ChevronLeft className="h-4 w-4" />
+                    Previous
                   </Button>
-                  {visiblePages.map((page, index) => {
-                    const previousPage = visiblePages[index - 1];
-                    return (
-                      <div key={page} className="flex items-center gap-1">
-                        {previousPage && page - previousPage > 1 && (
-                          <span className="px-1 text-slate-350">...</span>
-                        )}
-                        <Button
-                          type="button"
-                          variant={page === currentPage ? "default" : "outline"}
-                          size="sm"
-                          className={
-                            page === currentPage
-                              ? "h-8.5 min-w-8.5 bg-[#2d2d2d] px-2 font-bold text-white hover:bg-[#1a1a1a] rounded-xl shadow-sm transition-all"
-                              : "h-8.5 min-w-8.5 border border-[#e5ddd0] bg-white px-2 font-bold text-[#5a5046] hover:bg-[#faf8f4] hover:text-[#1a1a1a] rounded-xl shadow-sm transition-all"
-                          }
-                          onClick={() => setCurrentPage(page)}
-                        >
-                          {page}
-                        </Button>
-                      </div>
-                    );
-                  })}
+                  <span className="whitespace-nowrap">
+                    Page {currentPage} of {totalPages}
+                  </span>
                   <Button
                     type="button"
                     variant="outline"
-                    size="sm"
-                    className="h-8.5 w-8.5 rounded-xl border border-[#e5ddd0] bg-white px-2 font-bold text-[#5a5046] hover:bg-[#faf8f4] hover:text-[#1a1a1a] shadow-sm transition-all"
+                    className="h-8 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm text-[#1f2937] hover:bg-[#fbfaf8]"
                     disabled={currentPage >= totalPages}
                     onClick={() =>
                       setCurrentPage((page) => Math.min(totalPages, page + 1))
                     }
-                    aria-label="Next page"
                   >
+                    Next
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
             )}
-          </div>
+          </section>
         </div>
 
-        {/* Confirmation Dialog remains unchanged functionally, but styled to fit if possible via its own component */}
         <CaseConfirmDialog
           open={Boolean(pendingAction)}
           onOpenChange={(open) => {

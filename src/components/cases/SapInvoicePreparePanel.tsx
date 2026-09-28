@@ -13,6 +13,11 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api-client";
+import {
+  fetchCaseDetailPreferCache,
+  type SavedCaseDocument,
+} from "@/lib/case-persistence";
+import { parseSapAmount } from "@/lib/sap-decision";
 
 type MatchedLine = {
   description: string | null;
@@ -159,6 +164,312 @@ function ConfidenceBadge({
     <span className="inline-flex items-center gap-1 rounded-full bg-[#fee2e2] px-2 py-0.5 text-[10px] font-medium text-[#991b1b]">
       No match
     </span>
+  );
+}
+
+function invoiceAmount(value: unknown): number | null {
+  if (
+    typeof value !== "number" &&
+    (typeof value !== "string" || !/\d/.test(value))
+  )
+    return null;
+  return parseSapAmount(value);
+}
+
+function fieldText(fields: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = fields[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number") return String(value);
+  }
+  return null;
+}
+
+function sumOrNull(values: Array<number | null>) {
+  return values.length > 0 && values.every((value) => value !== null)
+    ? (values as number[]).reduce((sum, value) => sum + value, 0)
+    : null;
+}
+
+// Mirrors the server preview: printed header totals first, never absent money as zero.
+function buildPostedInvoiceView(documents: SavedCaseDocument[]) {
+  const invoices = documents.filter(
+    (document) =>
+      document.documentType === "Invoice" ||
+      document.documentType === "Tax Invoice",
+  );
+  const fields = invoices[0]?.extractedFields ?? {};
+  const lines = invoices.flatMap((document) =>
+    (document.lineItems ?? []).map((item) => ({
+      description: item.description ?? null,
+      hsnSac: item.hsnSac ?? null,
+      quantity: item.quantity ?? null,
+      unit: item.unit ?? null,
+      rate: invoiceAmount(item.rate),
+      taxableAmount: invoiceAmount(item.taxableAmount),
+      taxAmount: invoiceAmount(item.taxAmount),
+      lineTotal: invoiceAmount(item.lineTotal),
+    })),
+  );
+  const headerSum = (key: string) =>
+    invoices.length
+      ? sumOrNull(
+          invoices.map((document) => invoiceAmount(document.extractedFields[key])),
+        )
+      : null;
+  const headerTaxable = headerSum("subtotal");
+  const headerTax = headerSum("taxAmount");
+  const headerTotal = headerSum("totalAmount");
+  const lineTotalSum = sumOrNull(lines.map((line) => line.lineTotal));
+  const linesMatchSubtotal =
+    headerTaxable !== null &&
+    lineTotalSum !== null &&
+    Math.abs(lineTotalSum - headerTaxable) <= 0.02;
+  const viewLines = lines.map((line) => ({
+    ...line,
+    taxableAmount:
+      line.taxableAmount ?? (linesMatchSubtotal ? line.lineTotal : null),
+  }));
+  const taxable =
+    headerTaxable ?? sumOrNull(viewLines.map((line) => line.taxableAmount));
+  const tax =
+    headerTax ??
+    sumOrNull(viewLines.map((line) => line.taxAmount)) ??
+    (headerTotal !== null && taxable !== null ? headerTotal - taxable : null);
+  const total =
+    headerTotal ?? (taxable !== null && tax !== null ? taxable + tax : null);
+  return {
+    hasInvoice: invoices.length > 0,
+    vendorName: fieldText(fields, "vendorName", "supplierName"),
+    invoiceNumber: fieldText(fields, "invoiceNumber", "documentNumber"),
+    invoiceDate: fieldText(fields, "documentDate", "invoiceDate"),
+    currency: fieldText(fields, "currency"),
+    lines: viewLines,
+    totals: { taxable, tax, total },
+  };
+}
+
+function PostedApInvoiceView({
+  caseId,
+  result,
+}: {
+  caseId: string;
+  result: PrepareResult;
+}) {
+  const [view, setView] = useState<ReturnType<
+    typeof buildPostedInvoiceView
+  > | null>(null);
+  const [caseName, setCaseName] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setView(null);
+    setFailed(false);
+    fetchCaseDetailPreferCache(caseId)
+      .then((detail) => {
+        if (!active) return;
+        setView(buildPostedInvoiceView(detail.documents));
+        setCaseName(detail.case.displayName);
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [caseId]);
+
+  const baseLabel = result.sapDocument?.kind ?? "GRPO";
+  const baseDocNum = result.sapDocument?.docNum ?? null;
+  const postedDocNum = result.postedInvoice?.docNum ?? null;
+
+  const banner = (
+    <div className="rounded-lg border border-[#c3dfcb] bg-[#ebf5ee] px-4 py-3 text-[#1b4332]">
+      <div className="flex items-start gap-2.5">
+        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <div className="text-[12px] font-semibold">
+            Already posted in SAP Test
+            {postedDocNum ? ` · AP invoice ${postedDocNum}` : ""}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-4">
+            Linked to {baseLabel} {baseDocNum ?? "—"}. SAP vendor reference:{" "}
+            {result.postedInvoice?.vendorReference || "not recorded"}. This
+            invoice cannot be created or posted again.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (failed || (view && !view.hasInvoice)) {
+    return <div className="space-y-4 px-4 py-3">{banner}</div>;
+  }
+
+  if (!view) {
+    return (
+      <div className="space-y-4 px-4 py-3">
+        {banner}
+        <div className="flex items-center gap-2 px-1 text-xs text-[#8a7f72]">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Loading invoice details…
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 px-4 py-3">
+      {banner}
+      <article className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_3px_rgba(43,26,16,0.06),0_8px_24px_-12px_rgba(43,26,16,0.12)]">
+        <div className="h-1 bg-gradient-to-r from-[#2b1a10] via-[#6b4a33] to-[#c9a57f]" />
+        <header className="flex flex-wrap items-start justify-between gap-4 px-6 pb-5 pt-5">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8a7f72]">
+              Accounts Payable
+            </div>
+            <h2 className="mt-1 text-[20px] font-semibold tracking-tight text-[#111827]">
+              A/P Invoice
+            </h2>
+            <span className="mt-2 inline-flex items-center rounded-md bg-[#ebf5ee] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#1b4332] ring-1 ring-inset ring-[#c3dfcb]">
+              Posted{postedDocNum ? ` · #${postedDocNum}` : ""}
+            </span>
+          </div>
+          <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-right text-[11px]">
+            <dt className="text-[#8a7f72]">Vendor ref.</dt>
+            <dd className="font-semibold tabular-nums text-[#111827]">
+              {view.invoiceNumber ??
+                result.postedInvoice?.vendorReference ??
+                "—"}
+            </dd>
+            <dt className="text-[#8a7f72]">Invoice date</dt>
+            <dd className="font-medium tabular-nums text-[#111827]">
+              {formatDate(view.invoiceDate)}
+            </dd>
+          </dl>
+        </header>
+
+        <div className="grid gap-px border-y border-[#ece6dc] bg-[#ece6dc] sm:grid-cols-2">
+          <div className="bg-[#fcfbf9] px-6 py-4">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8a7f72]">
+              Vendor
+            </div>
+            <div className="mt-1.5 text-[13px] font-semibold leading-5 text-[#111827]">
+              {view.vendorName ?? result.sapDocument?.vendor ?? "—"}
+            </div>
+          </div>
+          <div className="bg-[#fcfbf9] px-6 py-4">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8a7f72]">
+              Based on
+            </div>
+            <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+              <dt className="text-[#8a7f72]">{baseLabel}</dt>
+              <dd className="font-medium tabular-nums text-[#111827]">
+                {baseDocNum ?? "—"}
+              </dd>
+              <dt className="text-[#8a7f72]">Currency</dt>
+              <dd className="font-medium text-[#111827]">
+                {view.currency ?? "INR"}
+              </dd>
+            </dl>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto px-6 pt-4">
+          {view.lines.length > 0 ? (
+            <table className="w-full min-w-[520px] text-[11px]">
+              <thead>
+                <tr className="border-b border-[#e0d8cc] text-[10px] uppercase tracking-wider text-[#8a7f72]">
+                  <th className="w-8 py-2 pr-2 text-left font-semibold">#</th>
+                  <th className="py-2 pr-3 text-left font-semibold">Item</th>
+                  <th className="py-2 pl-3 text-right font-semibold">Qty</th>
+                  <th className="py-2 pl-3 text-right font-semibold">Rate</th>
+                  <th className="py-2 pl-3 text-right font-semibold">
+                    Taxable
+                  </th>
+                  <th className="py-2 pl-3 text-right font-semibold">Tax</th>
+                </tr>
+              </thead>
+              <tbody className="tabular-nums">
+                {view.lines.map((line, i) => (
+                  <tr
+                    key={i}
+                    className="border-b border-[#f0ece4] align-top last:border-0"
+                  >
+                    <td className="py-3 pr-2 text-[#b3a899]">
+                      {String(i + 1).padStart(2, "0")}
+                    </td>
+                    <td className="py-3 pr-3">
+                      <div className="font-medium leading-4 text-[#111827]">
+                        {line.description ?? "—"}
+                      </div>
+                      {line.hsnSac ? (
+                        <div className="mt-0.5 text-[10px] text-[#8a7f72]">
+                          HSN/SAC {line.hsnSac}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right text-[#111827]">
+                      {formatQuantity(line.quantity)}
+                      {line.unit ? (
+                        <span className="ml-1 text-[10px] text-[#8a7f72]">
+                          {line.unit}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right text-[#3d3530]">
+                      {formatMoney(line.rate)}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right font-medium text-[#111827]">
+                      {formatMoney(line.taxableAmount)}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pl-3 text-right text-[#3d3530]">
+                      {formatMoney(line.taxAmount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="py-4 text-center text-[11px] text-[#8a7f72]">
+              No line items were extracted from the vendor invoice.
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end px-6 pb-5 pt-3">
+          <dl className="w-full max-w-[280px] space-y-1.5 text-[11px] tabular-nums">
+            <div className="flex justify-between">
+              <dt className="text-[#8a7f72]">Taxable value</dt>
+              <dd className="font-medium text-[#111827]">
+                {formatMoney(view.totals.taxable)}
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-[#8a7f72]">Tax (GST)</dt>
+              <dd className="font-medium text-[#111827]">
+                {formatMoney(view.totals.tax)}
+              </dd>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between rounded-lg bg-[#2b1a10] px-3 py-2.5 text-white">
+              <dt className="text-[11px] font-medium uppercase tracking-wider text-[#e8dccd]">
+                Total
+              </dt>
+              <dd className="text-[16px] font-semibold">
+                {formatMoney(view.totals.total)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <footer className="border-t border-dashed border-[#e0d8cc] bg-[#fcfbf9] px-6 py-2.5 text-[10px] leading-4 text-[#8a7f72]">
+          {caseName ? `Case ${caseName} · ` : ""}Values extracted from the
+          vendor invoice. The amounts posted in SAP are calculated from the base{" "}
+          {baseLabel} and may differ slightly.
+        </footer>
+      </article>
+    </div>
   );
 }
 
@@ -409,6 +720,10 @@ export function SapInvoicePreparePanel({
         Matching with SAP…
       </div>
     );
+  }
+
+  if (data?.reason === "already_posted" && variant === "full") {
+    return <PostedApInvoiceView caseId={caseId} result={data} />;
   }
 
   if (!data?.matched || !data.apPayload) {

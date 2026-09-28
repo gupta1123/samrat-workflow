@@ -1,16 +1,14 @@
 "use client";
 
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  FileText,
-  Folder,
+  Filter,
   FolderOpen,
-  LayoutGrid,
-  List,
+  Plus,
   Search,
   Trash2,
-  Upload,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -34,17 +32,43 @@ import {
   recycleCase,
   type SavedCaseRecord,
 } from "@/lib/case-persistence";
-import { getCaseDisplayStatus } from "@/lib/case-status";
 
 type LoadState = "loading" | "ready" | "error";
-type ViewMode = "list" | "grid";
+type ApprovalFilter = "all" | "pending" | "in_review" | "completed" | "failed";
+type ReconciliationFilter = "all" | "issues" | "clean";
+type CaseListQuery = {
+  query: string;
+  approval: ApprovalFilter;
+  reconciliation: ReconciliationFilter;
+  page: number;
+  pageSize: number;
+};
 type CachedCaseList = {
   cases: SavedCaseRecord[];
   totalCount: number;
   totalPages: number;
 };
 
-const CASE_LIST_PAGE_SIZE = 10;
+const PAGE_SIZE_OPTIONS = [10, 25, 50];
+// The list API has no reconciliation filter, so that filter reads up to this
+// many cases for the approval state and paginates them in the browser.
+const RECONCILIATION_SCAN_LIMIT = 500;
+
+const APPROVAL_OPTIONS: { value: ApprovalFilter; label: string }[] = [
+  { value: "all", label: "All Approval States" },
+  { value: "in_review", label: "Pending approval" },
+  { value: "completed", label: "Approved" },
+  { value: "failed", label: "Rejected / failed" },
+  { value: "pending", label: "Draft" },
+];
+
+const RECONCILIATION_OPTIONS: { value: ReconciliationFilter; label: string }[] =
+  [
+    { value: "all", label: "All Reconciliation" },
+    { value: "issues", label: "Has issues" },
+    { value: "clean", label: "No issues" },
+  ];
+
 const caseListCache = new Map<string, CachedCaseList>();
 const pendingCaseListReads = new Map<string, Promise<CachedCaseList>>();
 
@@ -54,26 +78,76 @@ function warmCaseDetail(caseId: string) {
   });
 }
 
-function getCaseListCacheKey(query: string, page: number) {
-  return `active:${query.trim().toLowerCase()}:page:${page}:limit:${CASE_LIST_PAGE_SIZE}`;
+function getCaseListCacheKey(params: CaseListQuery) {
+  return [
+    "active",
+    params.query.trim().toLowerCase(),
+    params.approval,
+    params.reconciliation,
+    `page:${params.page}`,
+    `limit:${params.pageSize}`,
+  ].join(":");
 }
 
-function fetchCaseListOnce(cacheKey: string, query: string, page: number) {
+function hasAnalysisResult(item: SavedCaseRecord) {
+  return (
+    item.status === "completed" ||
+    item.status === "accepted" ||
+    item.status === "rejected"
+  );
+}
+
+function matchesReconciliation(
+  item: SavedCaseRecord,
+  filter: ReconciliationFilter,
+) {
+  if (filter === "issues") return item.mismatchCount > 0;
+  if (filter === "clean")
+    return hasAnalysisResult(item) && item.mismatchCount === 0;
+  return true;
+}
+
+async function loadCaseList(params: CaseListQuery): Promise<CachedCaseList> {
+  const statusFilter = params.approval;
+  if (params.reconciliation === "all") {
+    const payload = await fetchCasePage({
+      scope: "active",
+      limit: params.pageSize,
+      page: params.page,
+      query: params.query,
+      statusFilter,
+    });
+    return {
+      cases: payload.cases,
+      totalCount: payload.totalCount ?? payload.cases.length,
+      totalPages: payload.totalPages ?? 1,
+    };
+  }
+
+  const payload = await fetchCasePage({
+    scope: "active",
+    limit: RECONCILIATION_SCAN_LIMIT,
+    page: 1,
+    query: params.query,
+    statusFilter,
+  });
+  const matching = payload.cases.filter((item) =>
+    matchesReconciliation(item, params.reconciliation),
+  );
+  const start = (params.page - 1) * params.pageSize;
+  return {
+    cases: matching.slice(start, start + params.pageSize),
+    totalCount: matching.length,
+    totalPages: Math.max(1, Math.ceil(matching.length / params.pageSize)),
+  };
+}
+
+function fetchCaseListOnce(cacheKey: string, params: CaseListQuery) {
   const pending = pendingCaseListReads.get(cacheKey);
   if (pending) return pending;
 
-  const request = fetchCasePage({
-    scope: "active",
-    limit: CASE_LIST_PAGE_SIZE,
-    page,
-    query,
-  })
-    .then((payload) => {
-      const result = {
-        cases: payload.cases,
-        totalCount: payload.totalCount ?? payload.cases.length,
-        totalPages: payload.totalPages ?? 1,
-      };
+  const request = loadCaseList(params)
+    .then((result) => {
       caseListCache.set(cacheKey, result);
       return result;
     })
@@ -85,19 +159,6 @@ function fetchCaseListOnce(cacheKey: string, query: string, page: number) {
   return request;
 }
 
-function getVisiblePages(currentPage: number, totalPages: number) {
-  const pages = new Set([
-    1,
-    totalPages,
-    currentPage - 1,
-    currentPage,
-    currentPage + 1,
-  ]);
-  return Array.from(pages)
-    .filter((page) => page >= 1 && page <= totalPages)
-    .sort((a, b) => a - b);
-}
-
 function formatDate(value: string) {
   return new Date(value).toLocaleDateString("en-US", {
     month: "short",
@@ -106,109 +167,79 @@ function formatDate(value: string) {
   });
 }
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString("en-IN", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Kolkata",
-  });
+function getApprovalPill(item: SavedCaseRecord) {
+  switch (item.status) {
+    case "accepted":
+      return {
+        label: "Approved",
+        className: "border-emerald-200 bg-emerald-50 text-emerald-800",
+        dot: "bg-emerald-600",
+      };
+    case "completed":
+      return {
+        label: "Pending approval",
+        className: "border-amber-200 bg-amber-50 text-amber-800",
+        dot: "bg-amber-600",
+      };
+    case "rejected":
+      return {
+        label: "Rejected",
+        className: "border-rose-200 bg-rose-50 text-rose-800",
+        dot: "bg-rose-600",
+      };
+    case "failed":
+      return {
+        label: "Failed",
+        className: "border-rose-200 bg-rose-50 text-rose-800",
+        dot: "bg-rose-600",
+      };
+    case "processing":
+      return {
+        label: "Processing",
+        className: "border-violet-200 bg-violet-50 text-violet-800",
+        dot: "bg-violet-600",
+      };
+    default:
+      return {
+        label: "Draft",
+        className: "border-slate-200 bg-slate-50 text-slate-700",
+        dot: "bg-slate-500",
+      };
+  }
 }
 
-function getAnalysisBadge(item: SavedCaseRecord) {
-  if (item.status === "failed") {
-    return {
-      label: "Failed",
-      className: "border-rose-200 bg-rose-50 text-rose-700",
-    };
-  }
-  if (item.status === "processing") {
-    return {
-      label: "Running",
-      className: "border-violet-200 bg-violet-50 text-violet-700",
-    };
-  }
-  if (item.status === "draft") {
-    return {
-      label: "Draft",
-      className: "border-amber-200 bg-amber-50 text-amber-700",
-    };
-  }
-  return {
-    label: "Analyzed",
-    className: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  };
-}
-
-function getReconciliationBadge(item: SavedCaseRecord) {
-  if (item.status === "draft") {
-    return {
-      label: "Not checked",
-      className: "border-slate-200 bg-slate-50 text-slate-600",
-    };
-  }
-  if (item.status === "processing") {
-    return {
-      label: "Checking",
-      className: "border-violet-200 bg-violet-50 text-violet-700",
-    };
-  }
-  if (item.status === "failed") {
-    return {
-      label: "No result",
-      className: "border-rose-200 bg-rose-50 text-rose-700",
-    };
-  }
-  if (item.mismatchCount > 0) {
-    return {
-      label: `${item.mismatchCount} issue${item.mismatchCount === 1 ? "" : "s"}`,
-      className: "border-rose-200 bg-rose-50 text-rose-700",
-    };
-  }
-  return {
-    label: "No issues",
-    className: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  };
-}
-
-function getDecisionBadge(item: SavedCaseRecord) {
-  const displayStatus = getCaseDisplayStatus(item.status);
-  if (displayStatus.tone === "success") {
-    return {
-      label: displayStatus.label,
-      className: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    };
-  }
-  if (item.status === "rejected") {
-    return {
-      label: displayStatus.label,
-      className: "border-rose-200 bg-rose-50 text-rose-700",
-    };
-  }
-  if (item.status === "completed") {
-    return {
-      label: displayStatus.label,
-      className: "border-amber-200 bg-amber-50 text-amber-700",
-    };
-  }
-  return {
-    label: "-",
-    className: "border-slate-200 bg-slate-50 text-slate-500",
-  };
-}
-
-function CaseSignalBadge({
-  label,
-  className,
-}: {
-  label: string;
-  className: string;
-}) {
+function ApprovalPill({ item }: { item: SavedCaseRecord }) {
+  const pill = getApprovalPill(item);
   return (
     <span
-      className={`inline-flex whitespace-nowrap rounded-md border px-2.5 py-1 text-[11px] font-medium uppercase ${className}`}
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[13px] font-medium ${pill.className}`}
     >
-      {label}
+      <span className={`h-1.5 w-1.5 rounded-full ${pill.dot}`} />
+      {pill.label}
+    </span>
+  );
+}
+
+function getReconciliationText(item: SavedCaseRecord) {
+  if (item.status === "draft")
+    return { label: "Not checked", className: "text-slate-500" };
+  if (item.status === "processing")
+    return { label: "Checking…", className: "text-violet-700" };
+  if (item.status === "failed")
+    return { label: "No result", className: "text-rose-700" };
+  if (item.mismatchCount > 0)
+    return {
+      label: `${item.mismatchCount} issue${item.mismatchCount === 1 ? "" : "s"}`,
+      className: "font-semibold text-[#8b1d1d]",
+    };
+  return { label: "No issues", className: "text-emerald-700" };
+}
+
+function ReconciliationText({ item }: { item: SavedCaseRecord }) {
+  const text = getReconciliationText(item);
+  return (
+    <span className={`whitespace-nowrap text-sm ${text.className}`}>
+      {text.label}
     </span>
   );
 }
@@ -238,196 +269,100 @@ function toReadableCaseText(value: string) {
     .replace(/\s+packet$/i, " packet");
 }
 
-function getCaseTitle(item: SavedCaseRecord) {
-  if (item.invoiceNumber)
-    return `${toReadableCaseText(getCompanyName(item))} / ${item.invoiceNumber}`;
-  if (item.poNumber)
-    return `${toReadableCaseText(getCompanyName(item))} / ${item.poNumber}`;
+function getCustomerName(item: SavedCaseRecord) {
+  if (item.receiverName || item.buyerName)
+    return toReadableCaseText(getCompanyName(item));
   return toReadableCaseText(item.displayName);
 }
 
-function getCaseSubtitle(item: SavedCaseRecord) {
-  return toReadableCaseText(getCompanyName(item));
+function getInvoiceLabel(item: SavedCaseRecord) {
+  return item.invoiceNumber || item.poNumber || "—";
 }
 
-function useIsMobileView() {
-  const [isMobileView, setIsMobileView] = useState(false);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(max-width: 767px)");
-    const update = () => setIsMobileView(mediaQuery.matches);
-
-    update();
-    mediaQuery.addEventListener("change", update);
-
-    return () => mediaQuery.removeEventListener("change", update);
-  }, []);
-
-  return isMobileView;
-}
-
-function DirectoryHeader({
-  totalCount,
-  documentCount,
-  viewMode,
-  status,
-  onViewModeChange,
+function FilterSelect<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
 }: {
-  totalCount: number;
-  documentCount: number;
-  viewMode: ViewMode;
-  status: LoadState;
-  onViewModeChange: (mode: ViewMode) => void;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+  label: string;
 }) {
   return (
-    <section className="rounded-2xl border border-[#e6ded2] bg-white px-5 py-5 shadow-[0_18px_45px_rgba(46,36,28,0.08)] sm:px-7">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f4eadf] text-[#332015] shadow-inner">
-            <FolderOpen className="h-8 w-8" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-medium tracking-[-0.02em] text-[#111827] sm:text-3xl">
-              Case Directory
-            </h1>
-            <div className="mt-1 flex items-center gap-2 text-sm font-medium text-[#8a7f72]">
-              <span>Root</span>
-              <ChevronRight className="h-4 w-4 text-[#b8ad9f]" />
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:gap-6">
-          <div className="grid grid-cols-2 gap-3 sm:min-w-[320px]">
-            <div className="flex items-center gap-3 rounded-2xl bg-[#fbfaf8] px-4 py-3 shadow-[0_10px_28px_rgba(46,36,28,0.05)]">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-600">
-                <Folder className="h-5 w-5" />
-              </div>
-              <div>
-                {status === "loading" ? (
-                  <Skeleton className="h-4 w-9 bg-[#eee7dd]" />
-                ) : (
-                  <div className="text-lg font-medium text-[#111827]">
-                    {totalCount}
-                  </div>
-                )}
-                <div className="text-xs font-medium text-[#7b7280]">
-                  Folders
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 rounded-2xl bg-[#fbfaf8] px-4 py-3 shadow-[0_10px_28px_rgba(46,36,28,0.05)]">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-sky-200 bg-sky-50 text-sky-600">
-                <FileText className="h-5 w-5" />
-              </div>
-              <div>
-                {status === "loading" ? (
-                  <Skeleton className="h-4 w-9 bg-[#eee7dd]" />
-                ) : (
-                  <div className="text-lg font-medium text-[#111827]">
-                    {documentCount}
-                  </div>
-                )}
-                <div className="text-xs font-medium text-[#7b7280]">
-                  Documents
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="hidden rounded-xl border border-[#e8dfd4] bg-[#fbf7f1] p-1 md:flex">
-              <button
-                type="button"
-                aria-label="List view"
-                onClick={() => onViewModeChange("list")}
-                className={`flex h-10 w-12 items-center justify-center rounded-lg transition ${
-                  viewMode === "list"
-                    ? "bg-[#eadfd1] text-[#2a1d14] shadow-sm"
-                    : "text-[#6f675e] hover:text-[#2a1d14]"
-                }`}
-              >
-                <List className="h-5 w-5" />
-              </button>
-              <button
-                type="button"
-                aria-label="Grid view"
-                onClick={() => onViewModeChange("grid")}
-                className={`flex h-10 w-12 items-center justify-center rounded-lg transition ${
-                  viewMode === "grid"
-                    ? "bg-white text-[#2a1d14] shadow-sm"
-                    : "text-[#6f675e] hover:text-[#2a1d14]"
-                }`}
-              >
-                <LayoutGrid className="h-5 w-5" />
-              </button>
-            </div>
-
-            <Button
-              asChild
-              className="h-12 rounded-xl bg-[#2b1a10] px-5 font-medium text-white shadow-[0_14px_30px_rgba(43,26,16,0.22)] hover:bg-[#3b271a]"
-            >
-              <Link href="/workspace">
-                <Upload className="h-4 w-4" />
-                Upload
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </div>
-    </section>
+    <label className="relative flex h-10 min-w-0 flex-1 items-center">
+      <span className="sr-only">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value as T)}
+        className="h-10 w-full cursor-pointer appearance-none rounded-lg border border-[#e2dbd1] bg-white pl-3 pr-9 text-sm text-[#1f2937] shadow-sm outline-none focus:border-[#b9aa99]"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-[#6b7280]" />
+    </label>
   );
 }
 
-function CasesTableSkeleton() {
+const HEADINGS = [
+  { label: "Customer Name", className: "" },
+  { label: "Invoice", className: "" },
+  { label: "Approval", className: "" },
+  { label: "Reconciliation", className: "" },
+  { label: "Docs", className: "text-center" },
+  { label: "Date", className: "" },
+  { label: "Action", className: "text-right" },
+];
+
+function CasesTableHeader() {
   return (
-    <Table className="min-w-[1020px]">
-      <TableHeader>
-        <TableRow className="border-[#ece6dc] bg-[#fbfaf8] hover:bg-[#fbfaf8]">
-          {[
-            "Name",
-            "Analysis",
-            "Reconciliation",
-            "Decision",
-            "Created",
-            "Documents",
-            "Actions",
-          ].map((heading) => (
-            <TableHead
-              key={heading}
-              className="h-11 px-4 text-[11px] font-medium uppercase text-[#536070]"
-            >
-              {heading}
-            </TableHead>
-          ))}
-        </TableRow>
-      </TableHeader>
+    <TableHeader>
+      <TableRow className="border-[#e7e0d6] hover:bg-transparent">
+        {HEADINGS.map((heading) => (
+          <TableHead
+            key={heading.label}
+            className={`h-11 px-0 pr-4 text-sm font-medium text-[#1f2937] last:pr-0 ${heading.className}`}
+          >
+            {heading.label}
+          </TableHead>
+        ))}
+      </TableRow>
+    </TableHeader>
+  );
+}
+
+function CasesTableSkeleton({ rows }: { rows: number }) {
+  return (
+    <Table className="min-w-[900px]">
+      <CasesTableHeader />
       <TableBody>
-        {Array.from({ length: CASE_LIST_PAGE_SIZE }).map((_, index) => (
-          <TableRow key={index} className="h-[58px] border-[#ece6dc]">
-            <TableCell className="px-4">
-              <div className="flex items-center gap-3">
-                <Skeleton className="h-8 w-8 rounded-lg bg-[#eee7dd]" />
-                <div className="space-y-1.5">
-                  <Skeleton className="h-3.5 w-64 bg-slate-100" />
-                  <Skeleton className="h-3 w-36 bg-slate-100" />
-                </div>
-              </div>
+        {Array.from({ length: rows }).map((_, index) => (
+          <TableRow key={index} className="h-[52px] border-[#ece6dc]">
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-4 w-48 bg-[#eee7dd]" />
             </TableCell>
-            <TableCell>
-              <Skeleton className="h-5 w-20 rounded-md bg-slate-100" />
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-3.5 w-24 bg-[#eee7dd]" />
             </TableCell>
-            <TableCell>
-              <Skeleton className="h-3.5 w-16 bg-slate-100" />
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-6 w-32 rounded-full bg-[#eee7dd]" />
             </TableCell>
-            <TableCell>
-              <Skeleton className="h-8 w-24 bg-slate-100" />
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-3.5 w-16 bg-[#eee7dd]" />
             </TableCell>
-            <TableCell>
-              <Skeleton className="h-3.5 w-16 bg-slate-100" />
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="mx-auto h-3.5 w-5 bg-[#eee7dd]" />
             </TableCell>
-            <TableCell>
-              <Skeleton className="h-6 w-6 rounded-md bg-slate-100" />
+            <TableCell className="px-0 pr-4">
+              <Skeleton className="h-3.5 w-20 bg-[#eee7dd]" />
+            </TableCell>
+            <TableCell className="px-0">
+              <Skeleton className="ml-auto h-3.5 w-14 bg-[#eee7dd]" />
             </TableCell>
           </TableRow>
         ))}
@@ -446,12 +381,12 @@ function CasesMobileCards({
   const router = useRouter();
 
   return (
-    <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-2">
       {cases.map((item) => (
         <Link
           key={item.id}
           href={`/cases/${item.id}`}
-          className="group rounded-xl border border-[#e6ded2] bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+          className="rounded-xl border border-[#e6ded2] bg-white p-4 shadow-sm transition hover:shadow-md"
           onFocus={() => {
             router.prefetch(`/cases/${item.id}`);
             warmCaseDetail(item.id);
@@ -462,17 +397,12 @@ function CasesMobileCards({
           }}
         >
           <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#e6ded2] bg-[#f4eadf] text-[#4d3828]">
-                <Folder className="h-4 w-4" />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-[#111827]">
+                {getCustomerName(item)}
               </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-[#111827]">
-                  {getCaseTitle(item)}
-                </div>
-                <div className="mt-1 truncate text-xs font-medium text-[#596579]">
-                  {getCaseSubtitle(item)}
-                </div>
+              <div className="mt-1 truncate text-xs text-[#596579]">
+                {getInvoiceLabel(item)}
               </div>
             </div>
             <button
@@ -489,16 +419,11 @@ function CasesMobileCards({
             </button>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-xs font-medium">
-            <CaseSignalBadge {...getAnalysisBadge(item)} />
-            <CaseSignalBadge {...getReconciliationBadge(item)} />
-            <CaseSignalBadge {...getDecisionBadge(item)} />
-            <span className="rounded-md border border-[#e6ded2] bg-[#fbfaf8] px-2 py-1 text-[#596579]">
-              {item.documentCount} docs
-            </span>
-            <span className="rounded-md border border-[#e6ded2] bg-[#fbfaf8] px-2 py-1 text-[#596579]">
-              {formatDate(item.createdAt)}
-            </span>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-[#596579]">
+            <ApprovalPill item={item} />
+            <ReconciliationText item={item} />
+            <span>{item.documentCount} docs</span>
+            <span>{formatDate(item.createdAt)}</span>
           </div>
         </Link>
       ))}
@@ -513,17 +438,38 @@ export function CasesPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
+  const [approvalFilter, setApprovalFilter] = useState<ApprovalFilter>("all");
+  const [reconciliationFilter, setReconciliationFilter] =
+    useState<ReconciliationFilter>("all");
+  const [showFilters, setShowFilters] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [pendingCase, setPendingCase] = useState<SavedCaseRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const isMobileView = useIsMobileView();
-  const cacheKey = useMemo(
-    () => getCaseListCacheKey(debouncedSearchQuery, currentPage),
-    [currentPage, debouncedSearchQuery],
+
+  const listQuery = useMemo<CaseListQuery>(
+    () => ({
+      query: debouncedSearchQuery,
+      approval: approvalFilter,
+      reconciliation: reconciliationFilter,
+      page: currentPage,
+      pageSize,
+    }),
+    [
+      approvalFilter,
+      currentPage,
+      debouncedSearchQuery,
+      pageSize,
+      reconciliationFilter,
+    ],
   );
+  const cacheKey = useMemo(() => getCaseListCacheKey(listQuery), [listQuery]);
+  const hasActiveFilters =
+    Boolean(debouncedSearchQuery) ||
+    approvalFilter !== "all" ||
+    reconciliationFilter !== "all";
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -555,18 +501,12 @@ export function CasesPage() {
       if (inFlight || !active) return;
       inFlight = true;
       try {
-        const payload = await fetchCaseListOnce(
-          cacheKey,
-          debouncedSearchQuery,
-          currentPage,
-        );
+        const payload = await fetchCaseListOnce(cacheKey, listQuery);
         if (!active) return;
-        const nextTotalCount = payload.totalCount;
-        const nextTotalPages = payload.totalPages;
         latest = payload.cases;
         setCases(latest);
-        setTotalCount(nextTotalCount);
-        setTotalPages(nextTotalPages);
+        setTotalCount(payload.totalCount);
+        setTotalPages(payload.totalPages);
         setStatus("ready");
         setError(null);
       } catch (loadError) {
@@ -599,21 +539,7 @@ export function CasesPage() {
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
-  }, [cacheKey, currentPage, debouncedSearchQuery]);
-
-  const displayedCases = cases;
-  const visiblePages = useMemo(
-    () => getVisiblePages(currentPage, totalPages),
-    [currentPage, totalPages],
-  );
-  const pageStart =
-    totalCount === 0 ? 0 : (currentPage - 1) * CASE_LIST_PAGE_SIZE + 1;
-  const pageEnd = Math.min(currentPage * CASE_LIST_PAGE_SIZE, totalCount);
-  const pageDocumentCount = cases.reduce(
-    (sum, item) => sum + item.documentCount,
-    0,
-  );
-  const effectiveViewMode: ViewMode = isMobileView ? "grid" : viewMode;
+  }, [cacheKey, listQuery]);
 
   async function handleConfirmDelete() {
     if (!pendingCase) return;
@@ -622,21 +548,14 @@ export function CasesPage() {
       setIsDeleting(true);
       setError(null);
       await recycleCase(pendingCase.id);
+      // Other cached pages and filters now have stale counts.
+      caseListCache.clear();
       const nextTotalCount = Math.max(0, totalCount - 1);
-      const nextTotalPages = Math.max(
-        1,
-        Math.ceil(nextTotalCount / CASE_LIST_PAGE_SIZE),
-      );
+      const nextTotalPages = Math.max(1, Math.ceil(nextTotalCount / pageSize));
 
-      setCases((current) => {
-        const nextCases = current.filter((item) => item.id !== pendingCase.id);
-        caseListCache.set(cacheKey, {
-          cases: nextCases,
-          totalCount: nextTotalCount,
-          totalPages: nextTotalPages,
-        });
-        return nextCases;
-      });
+      setCases((current) =>
+        current.filter((item) => item.id !== pendingCase.id),
+      );
       setTotalCount(nextTotalCount);
       setTotalPages(nextTotalPages);
       if (currentPage > nextTotalPages) {
@@ -654,176 +573,178 @@ export function CasesPage() {
     }
   }
 
+  function prefetchCase(caseId: string) {
+    router.prefetch(`/cases/${caseId}`);
+    warmCaseDetail(caseId);
+  }
+
   return (
     <AppShell>
-      <div className="min-h-full bg-[#f7f4ef] px-4 py-6 tracking-normal text-[#111827] sm:px-6 lg:px-8">
-        <div className="mx-auto flex w-full max-w-[1540px] flex-col gap-7">
-          <DirectoryHeader
-            totalCount={totalCount}
-            documentCount={pageDocumentCount}
-            viewMode={viewMode}
-            status={status}
-            onViewModeChange={setViewMode}
-          />
+      <div className="min-h-full bg-[#f7f4ef] px-4 py-6 text-[#111827] sm:px-6 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[1540px] flex-col">
+          <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-xl font-semibold tracking-[-0.01em] text-[#111827]">
+                Cases
+              </h1>
+              <span className="hidden text-sm text-[#8a8174] sm:inline">
+                · Track and manage all cases
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowFilters((value) => !value)}
+                className="h-9 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm font-medium text-[#1f2937] hover:bg-[#fbfaf8]"
+              >
+                <Filter className="h-4 w-4" />
+                {showFilters ? "Hide Filters" : "Show Filters"}
+              </Button>
+              <Button
+                asChild
+                className="h-9 rounded-lg bg-[#2b1a10] px-3 text-sm font-medium text-white hover:bg-[#3b271a]"
+              >
+                <Link href="/workspace">
+                  <Plus className="h-4 w-4" />
+                  Add Case
+                </Link>
+              </Button>
+            </div>
+          </header>
 
-          <section className="overflow-hidden rounded-2xl border border-[#e6ded2] bg-white shadow-[0_18px_45px_rgba(46,36,28,0.08)]">
-            <div className="border-b border-[#eee7df] p-4 md:p-6">
-              <label className="flex h-12 min-w-0 items-center gap-3 rounded-lg border border-[#ded8d0] bg-white px-4 shadow-sm focus-within:border-[#b9aa99]">
-                <Search className="h-5 w-5 shrink-0 text-[#647084]" />
+          {showFilters && (
+            <div className="mt-5 flex flex-col gap-3 border-b border-[#e7e0d6] pb-3 md:flex-row">
+              <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-[#e2dbd1] bg-white px-3 shadow-sm focus-within:border-[#b9aa99]">
+                <Search className="h-4 w-4 shrink-0 text-[#8b94a4]" />
                 <input
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
-                  placeholder="Search cases by name or identifier..."
-                  className="min-w-0 flex-1 bg-transparent text-sm font-medium text-[#111827] outline-none placeholder:text-[#8b94a4]"
+                  placeholder="Search case, buyer, invoice or PO..."
+                  className="min-w-0 flex-1 bg-transparent text-sm text-[#111827] outline-none placeholder:text-[#9aa1ad]"
                 />
               </label>
+              <FilterSelect
+                label="Approval state"
+                value={approvalFilter}
+                options={APPROVAL_OPTIONS}
+                onChange={(value) => {
+                  setApprovalFilter(value);
+                  setCurrentPage(1);
+                }}
+              />
+              <FilterSelect
+                label="Reconciliation"
+                value={reconciliationFilter}
+                options={RECONCILIATION_OPTIONS}
+                onChange={(value) => {
+                  setReconciliationFilter(value);
+                  setCurrentPage(1);
+                }}
+              />
             </div>
+          )}
 
+          {error && status !== "error" && (
+            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          )}
+
+          <section className="mt-4">
             {status === "loading" && (
               <div className="overflow-x-auto">
-                <CasesTableSkeleton />
+                <CasesTableSkeleton rows={pageSize} />
               </div>
             )}
 
             {status === "error" && (
-              <div className="m-6 rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm font-medium text-rose-700">
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm font-medium text-rose-700">
                 {error}
               </div>
             )}
 
-            {status === "ready" && displayedCases.length === 0 && (
+            {status === "ready" && cases.length === 0 && (
               <div className="flex min-h-[340px] flex-col items-center justify-center px-6 text-center">
-                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#e6ded2] bg-[#fbfaf8] text-[#9c8f80]">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#e6ded2] bg-white text-[#9c8f80]">
                   <FolderOpen className="h-7 w-7" />
                 </div>
                 <h2 className="text-lg font-medium text-[#111827]">
-                  {debouncedSearchQuery ? "No matching cases" : "No cases yet"}
+                  {hasActiveFilters ? "No matching cases" : "No cases yet"}
                 </h2>
-                <p className="mt-2 max-w-sm text-sm font-medium text-[#667085]">
-                  {debouncedSearchQuery
-                    ? "Try changing the search."
-                    : "Upload your first packet to create a case directory entry."}
+                <p className="mt-2 max-w-sm text-sm text-[#667085]">
+                  {hasActiveFilters
+                    ? "Try changing the search or filters."
+                    : "Add your first packet to create a case."}
                 </p>
-                {!debouncedSearchQuery && (
+                {!hasActiveFilters && (
                   <Button
                     asChild
-                    className="mt-5 rounded-xl bg-[#2b1a10] font-medium text-white hover:bg-[#3b271a]"
+                    className="mt-5 rounded-lg bg-[#2b1a10] font-medium text-white hover:bg-[#3b271a]"
                   >
-                    <Link href="/workspace">Upload case</Link>
+                    <Link href="/workspace">Add Case</Link>
                   </Button>
                 )}
               </div>
             )}
 
-            {status === "ready" &&
-              displayedCases.length > 0 &&
-              effectiveViewMode === "grid" && (
-                <CasesMobileCards
-                  cases={displayedCases}
-                  onDelete={setPendingCase}
-                />
-              )}
-
-            {status === "ready" &&
-              displayedCases.length > 0 &&
-              effectiveViewMode === "list" && (
-                <div className="overflow-x-auto">
-                  <Table className="min-w-[1040px]">
-                    <TableHeader>
-                      <TableRow className="border-[#ece6dc] bg-[#fbfaf8] hover:bg-[#fbfaf8]">
-                        <TableHead className="h-11 px-4 text-[11px] font-medium uppercase text-[#536070]">
-                          <span className="inline-flex items-center gap-1">
-                            Name
-                          </span>
-                        </TableHead>
-                        <TableHead className="h-11 px-4 text-[11px] font-medium uppercase text-[#536070]">
-                          Analysis
-                        </TableHead>
-                        <TableHead className="h-11 px-4 text-[11px] font-medium uppercase text-[#536070]">
-                          Reconciliation
-                        </TableHead>
-                        <TableHead className="h-11 px-4 text-[11px] font-medium uppercase text-[#536070]">
-                          Decision
-                        </TableHead>
-                        <TableHead className="h-11 px-4 text-[11px] font-medium uppercase text-[#536070]">
-                          <span className="inline-flex items-center gap-1">
-                            Created
-                          </span>
-                        </TableHead>
-                        <TableHead className="h-11 px-4 text-[11px] font-medium uppercase text-[#536070]">
-                          Documents
-                        </TableHead>
-                        <TableHead className="h-11 px-4 text-right text-[11px] font-medium uppercase text-[#536070]">
-                          Actions
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
+            {status === "ready" && cases.length > 0 && (
+              <>
+                <div className="md:hidden">
+                  <CasesMobileCards cases={cases} onDelete={setPendingCase} />
+                </div>
+                <div className="hidden overflow-x-auto md:block">
+                  <Table className="min-w-[900px]">
+                    <CasesTableHeader />
                     <TableBody>
-                      {displayedCases.map((item) => (
+                      {cases.map((item) => (
                         <TableRow
                           key={item.id}
-                          className="group h-[58px] border-[#ece6dc] hover:bg-[#fbfaf8]"
+                          className="h-[52px] border-[#ece6dc] hover:bg-[#f1ece4]/60"
                         >
-                          <TableCell className="px-4 py-2">
+                          <TableCell className="max-w-[320px] px-0 py-2 pr-4">
                             <Link
                               href={`/cases/${item.id}`}
-                              className="flex min-w-0 items-center gap-3"
-                              onFocus={() => {
-                                router.prefetch(`/cases/${item.id}`);
-                                warmCaseDetail(item.id);
-                              }}
-                              onMouseEnter={() => {
-                                router.prefetch(`/cases/${item.id}`);
-                                warmCaseDetail(item.id);
-                              }}
+                              className="block truncate text-sm font-medium text-[#111827] hover:underline"
+                              title={getCustomerName(item)}
+                              onFocus={() => prefetchCase(item.id)}
+                              onMouseEnter={() => prefetchCase(item.id)}
                             >
-                              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#e6ded2] bg-[#f3eee7] text-[#5b4b3d]">
-                                <Folder className="h-4 w-4" />
-                              </span>
-                              <span className="min-w-0">
-                                <span className="block max-w-[330px] truncate text-sm font-medium text-[#111827]">
-                                  {getCaseTitle(item)}
-                                </span>
-                                <span className="mt-0.5 block max-w-[280px] truncate text-xs font-medium text-[#596579]">
-                                  {getCaseSubtitle(item)}
-                                </span>
-                              </span>
+                              {getCustomerName(item)}
                             </Link>
                           </TableCell>
-                          <TableCell className="px-4 py-2">
-                            <CaseSignalBadge {...getAnalysisBadge(item)} />
+                          <TableCell className="max-w-[200px] truncate px-0 py-2 pr-4 text-sm text-[#4b5563]">
+                            {getInvoiceLabel(item)}
                           </TableCell>
-                          <TableCell className="px-4 py-2">
-                            <CaseSignalBadge
-                              {...getReconciliationBadge(item)}
-                            />
+                          <TableCell className="px-0 py-2 pr-4">
+                            <ApprovalPill item={item} />
                           </TableCell>
-                          <TableCell className="px-4 py-2">
-                            <CaseSignalBadge {...getDecisionBadge(item)} />
+                          <TableCell className="px-0 py-2 pr-4">
+                            <ReconciliationText item={item} />
                           </TableCell>
-                          <TableCell className="px-4 py-2">
-                            <span className="block text-sm font-medium leading-5 text-[#334155]">
-                              {formatDate(item.createdAt)}
-                            </span>
-                            <span className="block text-sm font-medium leading-5 text-[#334155]">
-                              {formatTime(item.createdAt)}
-                            </span>
+                          <TableCell className="px-0 py-2 pr-4 text-center text-sm text-[#4b5563]">
+                            {item.documentCount}
                           </TableCell>
-                          <TableCell className="px-4 py-2">
-                            <span className="inline-flex items-center gap-2 text-sm font-medium text-[#475569]">
-                              <FileText className="h-4 w-4 text-[#647084]" />
-                              {item.documentCount} docs
-                            </span>
+                          <TableCell className="whitespace-nowrap px-0 py-2 pr-4 text-sm text-[#4b5563]">
+                            {formatDate(item.createdAt)}
                           </TableCell>
-                          <TableCell className="px-4 py-2 text-right">
-                            <div className="flex justify-end">
+                          <TableCell className="px-0 py-2 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <Link
+                                href={`/cases/${item.id}`}
+                                className="rounded-md px-1.5 py-1 text-sm font-semibold text-[#111827] hover:bg-[#ebe4da]"
+                                onFocus={() => prefetchCase(item.id)}
+                                onMouseEnter={() => prefetchCase(item.id)}
+                              >
+                                View
+                              </Link>
                               <button
                                 type="button"
-                                className="rounded-lg p-2 text-[#111827] transition hover:bg-[#f4eee6] hover:text-rose-700"
+                                className="rounded-md p-1.5 text-[#8a8f98] transition hover:bg-rose-50 hover:text-rose-700"
                                 aria-label="Move to recycle bin"
                                 onClick={() => setPendingCase(item)}
                               >
-                                <Trash2 className="h-5 w-5" />
+                                <Trash2 className="h-4 w-4" />
                               </button>
                             </div>
                           </TableCell>
@@ -832,61 +753,57 @@ export function CasesPage() {
                     </TableBody>
                   </Table>
                 </div>
-              )}
+              </>
+            )}
 
             {status === "ready" && totalCount > 0 && (
-              <div className="flex flex-col gap-4 border-t border-[#eee7df] px-4 py-4 text-sm font-medium text-[#475569] md:flex-row md:items-center md:justify-between md:px-6">
-                <div>
-                  Showing {pageStart} to {pageEnd} of {totalCount} cases
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col gap-3 py-5 text-sm text-[#4b5563] sm:flex-row sm:items-center sm:justify-between">
+                <label className="flex items-center gap-2">
+                  Rows per page:
+                  <span className="relative inline-flex items-center">
+                    <select
+                      value={pageSize}
+                      onChange={(event) => {
+                        setPageSize(Number(event.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="h-8 cursor-pointer appearance-none rounded-lg border border-[#e2dbd1] bg-white pl-3 pr-8 text-sm text-[#1f2937] outline-none focus:border-[#b9aa99]"
+                    >
+                      {PAGE_SIZE_OPTIONS.map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-[#6b7280]" />
+                  </span>
+                </label>
+                <div className="flex items-center gap-3">
                   <Button
                     type="button"
                     variant="outline"
-                    size="icon-sm"
-                    className="h-9 w-9 rounded-lg border-[#ded8d0] bg-white text-[#647084]"
+                    className="h-8 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm text-[#1f2937] hover:bg-[#fbfaf8]"
                     disabled={currentPage <= 1}
                     onClick={() =>
                       setCurrentPage((page) => Math.max(1, page - 1))
                     }
-                    aria-label="Previous page"
                   >
                     <ChevronLeft className="h-4 w-4" />
+                    Previous
                   </Button>
-                  {visiblePages.map((page, index) => {
-                    const previousPage = visiblePages[index - 1];
-                    return (
-                      <div key={page} className="flex items-center gap-2">
-                        {previousPage && page - previousPage > 1 && (
-                          <span className="px-1 text-[#8b94a4]">...</span>
-                        )}
-                        <Button
-                          type="button"
-                          variant={page === currentPage ? "default" : "outline"}
-                          size="sm"
-                          className={
-                            page === currentPage
-                              ? "h-9 min-w-9 rounded-lg bg-[#f1e7db] px-3 font-medium text-[#2b1a10] hover:bg-[#eadccd]"
-                              : "h-9 min-w-9 rounded-lg border-[#ded8d0] bg-white px-3 font-medium text-[#475569] hover:bg-[#fbfaf8]"
-                          }
-                          onClick={() => setCurrentPage(page)}
-                        >
-                          {page}
-                        </Button>
-                      </div>
-                    );
-                  })}
+                  <span className="whitespace-nowrap">
+                    Page {currentPage} of {totalPages}
+                  </span>
                   <Button
                     type="button"
                     variant="outline"
-                    size="icon-sm"
-                    className="h-9 w-9 rounded-lg border-[#ded8d0] bg-white text-[#647084]"
+                    className="h-8 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm text-[#1f2937] hover:bg-[#fbfaf8]"
                     disabled={currentPage >= totalPages}
                     onClick={() =>
                       setCurrentPage((page) => Math.min(totalPages, page + 1))
                     }
-                    aria-label="Next page"
                   >
+                    Next
                     <ChevronRight className="h-4 w-4" />
                   </Button>
                 </div>

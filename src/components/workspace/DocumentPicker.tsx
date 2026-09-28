@@ -315,16 +315,16 @@ export function DocumentPicker({
           </PopoverContent>
         </Popover>
       ) : (
-        <div className="mx-auto mt-6 flex flex-wrap justify-center gap-3">
+        <div className="mx-auto mt-6 flex flex-wrap justify-center gap-2.5">
           {choices.map(({ label, icon: Icon, action }, index) => (
             <Button
               key={label}
               disabled={disabled}
               variant={index === 0 ? "default" : "outline"}
               onClick={action}
-              className={`rounded-xl px-5 py-5 text-base font-bold shadow-sm ${index === 0 ? "bg-[#1a1a1a] text-white shadow-lg shadow-[#1a1a1a]/15 hover:bg-[#2d2d2d]" : "border-[#e5ddd0] bg-white text-[#5a5046] hover:bg-[#faf8f4]"}`}
+              className={`h-9 rounded-lg px-4 text-sm font-semibold shadow-sm ${index === 0 ? "bg-[#2b1a10] text-white hover:bg-[#3b271a]" : "border-[#e2dbd1] bg-white text-[#3f3a34] hover:bg-[#fbfaf8]"}`}
             >
-              <Icon className="mr-2 h-5 w-5" />
+              <Icon className="mr-1.5 h-4 w-4" />
               {label}
             </Button>
           ))}

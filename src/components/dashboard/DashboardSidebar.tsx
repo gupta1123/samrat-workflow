@@ -2,6 +2,7 @@
 
 import {
   ChevronLeft,
+  ChevronsUpDown,
   FileStack,
   FolderOpen,
   LayoutDashboard,
@@ -11,8 +12,21 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { PopoverClose } from "@radix-ui/react-popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import styles from "./DashboardSidebar.module.css";
+
+const settingsItem = {
+  href: "/settings",
+  label: "Review settings",
+  icon: Settings,
+};
 
 const sections = [
   {
@@ -28,12 +42,68 @@ const sections = [
   },
   {
     title: "System",
-    items: [
-      { href: "/recycle-bin", label: "Recycle Bin", icon: Trash2 },
-      { href: "/settings", label: "Review settings", icon: Settings },
-    ],
+    items: [{ href: "/recycle-bin", label: "Recycle Bin", icon: Trash2 }],
   },
 ];
+type SidebarUser = { name: string; email: string };
+
+// Kept for the page lifetime so navigating between pages does not flash an empty user row.
+let cachedSidebarUser: SidebarUser | null = null;
+
+function nameFromEmail(email: string) {
+  const local = email.split("@")[0] || "User";
+  return local
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const initials =
+    parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
+  return initials.toUpperCase();
+}
+
+function useSidebarUser() {
+  const [user, setUser] = useState<SidebarUser | null>(cachedSidebarUser);
+
+  useEffect(() => {
+    if (cachedSidebarUser) return;
+    let active = true;
+    try {
+      // getSession reads the saved session locally; it makes no backend request.
+      void createSupabaseBrowserClient()
+        .auth.getSession()
+        .then(({ data: { session } }) => {
+          const email = session?.user?.email;
+          if (!active || !email) return;
+          const metadata = session.user.user_metadata ?? {};
+          const metadataName =
+            typeof metadata.full_name === "string"
+              ? metadata.full_name
+              : typeof metadata.name === "string"
+                ? metadata.name
+                : "";
+          cachedSidebarUser = {
+            name: metadataName.trim() || nameFromEmail(email),
+            email,
+          };
+          setUser(cachedSidebarUser);
+        })
+        .catch(() => {});
+    } catch {
+      // Missing browser configuration only hides the user details.
+    }
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return user;
+}
+
 export function DashboardSidebar({
   defaultCollapsed = false,
 }: {
@@ -41,6 +111,8 @@ export function DashboardSidebar({
 }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const user = useSidebarUser();
+  const displayName = user?.name ?? "Account";
   const navItem = ({
     href,
     label,
@@ -109,7 +181,10 @@ export function DashboardSidebar({
         className={`${styles.navSection} ${styles.mobileNav}`}
       >
         <ul className={styles.navList}>
-          {sections.flatMap((section) => section.items).map(navItem)}
+          {/* Phones have no account popover, so settings stays in the bottom bar. */}
+          {[...sections.flatMap((section) => section.items), settingsItem].map(
+            navItem,
+          )}
           <li className={styles.mobileLogoutItem}>
             <form action="/auth/signout" method="post">
               <button
@@ -126,23 +201,73 @@ export function DashboardSidebar({
         </ul>
       </nav>
       <div className={styles.spacer} />
-      <form
-        method="post"
-        action="/auth/signout"
-        className={`${styles.userRowWrapper} p-3`}
-      >
-        <button
-          type="submit"
-          aria-label="Sign out"
-          title={collapsed ? "Sign out" : undefined}
-          className={`${styles.navItem} w-full`}
-        >
-          <span className={styles.navItemLeft}>
-            <LogOut className={styles.navIcon} />
-            <span className={styles.navTitle}>Sign out</span>
-          </span>
-        </button>
-      </form>
+      <div className={`${styles.userRowWrapper} p-2`}>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label="Account menu"
+              title={collapsed ? displayName : undefined}
+              className={`${styles.userRow} ${collapsed ? styles.userRowCollapsed : ""}`}
+            >
+              <span className={styles.userAvatar}>
+                {getInitials(displayName)}
+              </span>
+              {!collapsed && (
+                <>
+                  <span className={styles.userText}>
+                    <span className={styles.userName}>{displayName}</span>
+                    {user?.email && (
+                      <span className={styles.userEmail}>{user.email}</span>
+                    )}
+                  </span>
+                  <ChevronsUpDown className={styles.userChevron} />
+                </>
+              )}
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            side={collapsed ? "right" : "top"}
+            align={collapsed ? "end" : "start"}
+            sideOffset={8}
+            className="w-[var(--radix-popover-trigger-width)] min-w-56 rounded-xl border-[#e5ddd0] bg-white p-1.5 shadow-lg"
+          >
+            {user?.email && (
+              <div className="border-b border-[#efe9e1] px-2.5 pb-2 pt-1.5">
+                <div className="truncate text-sm font-medium text-[#1f2937]">
+                  {displayName}
+                </div>
+                <div className="truncate text-xs text-[#8a8174]">
+                  {user.email}
+                </div>
+              </div>
+            )}
+            <div className="border-b border-[#efe9e1] py-1">
+              <PopoverClose asChild>
+                <Link
+                  href={settingsItem.href}
+                  aria-current={
+                    pathname.startsWith(settingsItem.href) ? "page" : undefined
+                  }
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition hover:bg-[#f4efe8] ${pathname.startsWith(settingsItem.href) ? "bg-[#f1ebe2] text-[#1f1b17]" : "text-[#3f3a34]"}`}
+                >
+                  <Settings className="h-4 w-4" />
+                  {settingsItem.label}
+                </Link>
+              </PopoverClose>
+            </div>
+            <form method="post" action="/auth/signout" className="pt-1">
+              <button
+                type="submit"
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-[#9f3a2f] transition hover:bg-rose-50"
+              >
+                <LogOut className="h-4 w-4" />
+                Log out
+              </button>
+            </form>
+          </PopoverContent>
+        </Popover>
+      </div>
     </aside>
   );
 }

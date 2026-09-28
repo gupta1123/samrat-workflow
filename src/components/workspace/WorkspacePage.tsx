@@ -333,26 +333,31 @@ export function WorkspacePage() {
   return (
     <AppShell>
       {!savedCase ? (
-        <div className="flex min-h-screen flex-col bg-[#f7f7f5] px-4 pb-20 text-[#1a1a1a] sm:px-6 md:pb-8">
-          <header className="mx-auto mb-5 w-full max-w-2xl border-b border-[#e5ddd0] pb-4 pt-5">
-            <div className="flex items-center gap-3 sm:gap-4">
-              <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#e5ddd0] bg-[#f0ece6] shadow-sm sm:flex">
-                <UploadCloud className="h-6 w-6" />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold sm:text-xl">
-                  Add case documents
-                </h1>
-                <p className="mt-0.5 text-xs font-medium leading-snug text-[#8a7f72] sm:text-sm">
-                  Upload or scan the documents for one case.
-                </p>
-              </div>
+        <div className="flex min-h-screen flex-col bg-[#f7f4ef] px-4 pb-20 text-[#1a1a1a] sm:px-6 md:pb-8 lg:px-8">
+          <header className="mx-auto mb-6 flex w-full max-w-[1540px] items-center justify-between gap-3 border-b border-[#e7e0d6] pb-3 pt-6">
+            <div className="flex min-w-0 items-baseline gap-2">
+              <h1 className="text-xl font-semibold tracking-[-0.01em] text-[#111827]">
+                Add Case
+              </h1>
+              <span className="hidden truncate text-sm text-[#8a8174] sm:inline">
+                · Upload or scan documents for one case
+              </span>
             </div>
+            <Button
+              asChild
+              variant="outline"
+              className="h-9 shrink-0 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm font-medium text-[#1f2937] hover:bg-[#fbfaf8]"
+            >
+              <Link href="/cases">
+                <Folder className="h-4 w-4" />
+                All Cases
+              </Link>
+            </Button>
           </header>
-          <div className="flex flex-1 items-center justify-center">
-            <div className="w-full max-w-2xl">
+          <div className="flex flex-1 justify-center">
+            <div className="w-full max-w-[672px]">
               <div
-                className={`w-full rounded-[2rem] border-2 border-dashed px-5 py-7 text-center shadow-sm transition-all sm:px-8 sm:py-8 ${dragActive ? "border-[#22c55e] bg-[#f0fdf4] ring-4 ring-emerald-100" : "border-[#e5ddd0] bg-white hover:border-[#d4c9b8] hover:shadow-md"}`}
+                className={`w-full rounded-2xl border-2 border-dashed px-5 py-9 text-center transition-all sm:px-8 ${dragActive ? "border-[#22c55e] bg-[#f0fdf4] ring-4 ring-emerald-100" : "border-[#ddd5ca] bg-white hover:border-[#cfc4b5]"}`}
                 onDragEnter={(event) => {
                   event.preventDefault();
                   if (!disabled) {
@@ -377,20 +382,20 @@ export function WorkspacePage() {
                 }}
               >
                 <div
-                  className={`mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[1.25rem] border shadow-sm ${dragActive ? "border-[#bbf7d0] bg-white text-[#15803d]" : "border-[#e5ddd0] bg-[#f0ece6]"}`}
+                  className={`mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl border shadow-sm ${dragActive ? "border-[#bbf7d0] bg-white text-[#15803d]" : "border-[#e5ddd0] bg-[#f7f4ef]"}`}
                 >
-                  <UploadCloud className="h-7 w-7" />
+                  <UploadCloud className="h-5 w-5" />
                 </div>
-                <h2 className="text-2xl font-extrabold sm:text-3xl">
+                <h2 className="text-2xl font-bold tracking-[-0.01em]">
                   {dragActive ? "Drop files to add them" : "Upload case packet"}
                 </h2>
-                <p className="mt-2 text-base font-medium text-[#5a5046]">
-                  Drag and drop PDFs/images here, or{" "}
+                <p className="mt-1.5 text-sm text-[#4b5563]">
+                  Drag and drop PDFs or images here, or{" "}
                   <button
                     type="button"
                     disabled={disabled}
                     onClick={() => browseInput.current?.click()}
-                    className="font-bold text-[#15803d] hover:underline disabled:opacity-50"
+                    className="font-semibold text-[#111827] underline underline-offset-2 hover:text-[#3b271a] disabled:opacity-50"
                   >
                     click to browse
                   </button>
@@ -409,7 +414,7 @@ export function WorkspacePage() {
                     void addFiles(files).catch(() => {});
                   }}
                 />
-                <div className="mx-auto mt-5 flex max-w-2xl flex-wrap justify-center gap-2">
+                <div className="mx-auto mt-4 flex max-w-lg flex-wrap justify-center gap-1.5">
                   {[
                     "PDF",
                     "JPG",
@@ -424,7 +429,7 @@ export function WorkspacePage() {
                   ].map((label) => (
                     <span
                       key={label}
-                      className={`rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider ${label === "PDF" || label === "Tax Invoice" ? "border-[#c9ead2] bg-[#eaf7ee] text-[#15803d]" : "border-[#e5ddd0] bg-[#faf8f4] text-[#5a5046]"}`}
+                      className={`rounded-md border px-2 py-0.5 text-xs font-medium ${label === "PDF" || label === "Tax Invoice" ? "border-[#e2d6c6] bg-[#efe6da] text-[#2b1a10]" : "border-[#e5ddd0] bg-white text-[#5a5046]"}`}
                     >
                       {label}
                     </span>
