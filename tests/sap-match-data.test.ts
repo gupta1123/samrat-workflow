@@ -62,6 +62,10 @@ function sapClient(overrides: Record<string, unknown> = {}) {
       { CardCode: "V-TATA01", CardName: "Tata Steel Limited" },
       { CardCode: "V-OTHER", CardName: "Other Traders" },
     ],
+    getSupplier: async (cardCode: string) =>
+      cardCode === "V-TATA01"
+        ? { CardCode: "V-TATA01", CardName: "Tata Steel Limited" }
+        : null,
     listOpenReceiptDocumentsForVendor: async () => [
       {
         DocEntry: 8412,
@@ -223,18 +227,14 @@ test("an explicit vendor choice applies to this case when GSTIN is shared", asyn
   const match = await computeCaseMatch({
     db: fakeDb(data) as never,
     client: sapClient({
-      listSuppliers: async () => [
-        {
-          CardCode: "V-TATA01",
-          CardName: "TATA STEEL LIMITED(WIRON)",
-          BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
-        },
-        {
-          CardCode: "V-TATA02",
-          CardName: "TATA STEEL LIMITED(RETAIL)",
-          BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
-        },
-      ],
+      listSuppliers: async () => {
+        throw new Error("A confirmed vendor must not trigger a full supplier scan.");
+      },
+      getSupplier: async () => ({
+        CardCode: "V-TATA01",
+        CardName: "TATA STEEL LIMITED(WIRON)",
+        BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+      }),
     }) as never,
     caseRow: CASE,
   });
@@ -248,7 +248,13 @@ test("a vendor linked earlier is used even when the names differ", async () => {
   const match = await computeCaseMatch({
     db: fakeDb(data) as never,
     client: sapClient({
-      listSuppliers: async () => [{ CardCode: "V-TATA01", CardName: "TSL Steel (Jamshedpur)" }],
+      listSuppliers: async () => {
+        throw new Error("An exact saved link must not trigger a full supplier scan.");
+      },
+      getSupplier: async () => ({
+        CardCode: "V-TATA01",
+        CardName: "TSL Steel (Jamshedpur)",
+      }),
     }) as never,
     caseRow: CASE,
   });

@@ -220,28 +220,28 @@ export async function computeCaseMatch(params: {
   ]);
   const config = sapFieldConfig();
   const branch = branchForShipTo(invoice.shipToGstin, rules);
-  const suppliers = await client.listSuppliers();
   const keys = vendorKeys(invoice);
   let vendor: { cardCode: string; cardName: string } | null = null;
   let ambiguous: Array<{ cardCode: string; cardName: string; why: string }> = [];
+  let suppliersRead: number | undefined;
   // A reviewer-confirmed choice is scoped to this case and never inferred.
   const selectedCardCode = state.decisions["vendor-link"]?.choice;
   if (selectedCardCode) {
-    const supplier =
-      suppliers.find((row) => row.CardCode === selectedCardCode) ??
-      (await client.getSupplier(selectedCardCode));
+    const supplier = await client.getSupplier(selectedCardCode);
     if (supplier) vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
   }
   // A prior explicit link may be reused only for the same exact GSTIN and
   // vendor material code (or the same exact name when no GSTIN was available).
   const linked = vendor ? null : await loadVendorMapping(db, keys);
   if (linked) {
-    const supplier =
-      suppliers.find((row) => row.CardCode === linked.cardCode) ??
-      (await client.getSupplier(linked.cardCode));
+    const supplier = await client.getSupplier(linked.cardCode);
     if (supplier) vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
   }
-  if (!vendor) ({ vendor, ambiguous } = resolveVendor(invoice, suppliers));
+  if (!vendor) {
+    const suppliers = await client.listSuppliers();
+    suppliersRead = suppliers.length;
+    ({ vendor, ambiguous } = resolveVendor(invoice, suppliers));
+  }
 
   let receiptDocuments: Awaited<ReturnType<Client["listOpenReceiptDocumentsForVendor"]>> = [];
   let purchaseOrders: Awaited<ReturnType<Client["listOpenPurchaseOrdersForVendor"]>> = [];
@@ -297,7 +297,7 @@ export async function computeCaseMatch(params: {
     vendor,
     ambiguousVendors: ambiguous,
     vendorKey: keys[0] ?? null,
-    suppliersRead: suppliers.length,
+    suppliersRead,
     branch,
     itemMap,
     items,
