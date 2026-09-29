@@ -241,6 +241,19 @@ async function handle(
     const expectedInvoiceDate = dateOnly(payload.invoiceDate);
     const expectedBaseEntry = positiveInteger(payload.baseDocEntry);
     const expectedBaseType = payload.baseKind === "PO" ? 22 : 20;
+    // A matched draft can be based on several receipts/POs. Every one of them is
+    // recorded in the saved payload; a single-document draft has just the one.
+    const allowedBases: Array<{ type: number; entry: number }> = [];
+    if (Array.isArray(payload.baseDocuments)) {
+      for (const candidate of payload.baseDocuments) {
+        const base = record(candidate);
+        const entry = positiveInteger(base.docEntry);
+        if (entry) allowedBases.push({ type: base.kind === "PO" ? 22 : 20, entry });
+      }
+    }
+    if (!allowedBases.length && expectedBaseEntry) {
+      allowedBases.push({ type: expectedBaseType, entry: expectedBaseEntry });
+    }
     if (
       !expectedVendorCode ||
       !expectedInvoiceNumber ||
@@ -355,10 +368,11 @@ async function handle(
         const lines = draft.DocumentLines ?? [];
         if (
           lines.length === 0 ||
-          !lines.every(
-            (line) =>
-              line.BaseType === expectedBaseType &&
-              line.BaseEntry === expectedBaseEntry,
+          !lines.every((line) =>
+            allowedBases.some(
+              (base) =>
+                line.BaseType === base.type && line.BaseEntry === base.entry,
+            ),
           )
         ) {
           throw new ApiError(

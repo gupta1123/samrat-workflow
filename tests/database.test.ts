@@ -133,6 +133,15 @@ before(async () => {
       "utf8",
     ),
   );
+  await db.exec(
+    readFileSync(
+      new URL(
+        "../supabase/migrations/20260929090000_sap_match_settings.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   await db.query("insert into auth.users(id) values($1),($2)", [user, other]);
 });
 after(async () => db.close());
@@ -267,10 +276,11 @@ test("migration enables RLS on every application table and restricts internal fu
   const rows = await db.query<{ relname: string; relrowsecurity: boolean }>(
     "select relname,relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relkind='r'",
   );
-  assert.equal(rows.rows.length, 12);
+  assert.equal(rows.rows.length, 15);
   assert.ok(rows.rows.every((r) => r.relrowsecurity));
   assert.ok(rows.rows.some((row) => row.relname === "packet_file_revisions"));
   assert.ok(rows.rows.some((row) => row.relname === "sap_postings"));
+  assert.ok(rows.rows.some((row) => row.relname === "sap_match_state"));
   assert.equal(
     await scalar(
       "select has_function_privilege('authenticated','public.reserve_upload(uuid,uuid,text,text,bigint,text,text)','EXECUTE') result",
@@ -1233,6 +1243,37 @@ test("sap_postings table tracks one GRN/AP record per case and environment", asy
     db.query(
       "insert into public.sap_postings(case_id, owner_user_id, kind, status) values($1,$2,$3,$4)",
       [randomUUID(), user, "INVOICE", "prepared"],
+    ),
+  );
+});
+
+test("SAP match rules start with safe defaults and the match tables are service-role only", async () => {
+  const rules = await db.query<{
+    qty_tolerance_pct: string;
+    freight_policy: string;
+    posting_date: string;
+  }>("select * from public.sap_match_rules");
+  assert.equal(rules.rows.length, 1);
+  assert.equal(Number(rules.rows[0].qty_tolerance_pct), 1);
+  assert.equal(rules.rows[0].freight_policy, "expense");
+  assert.equal(rules.rows[0].posting_date, "invoice");
+  await assert.rejects(
+    db.query("update public.sap_match_rules set freight_policy='free'"),
+  );
+  await assert.rejects(
+    db.query("update public.sap_match_rules set qty_tolerance_pct=-1"),
+  );
+  const grants = await db.query<{ grantee: string }>(
+    "select grantee from information_schema.role_table_grants where table_schema='public' and table_name in ('sap_match_rules','sap_item_mappings','sap_match_state') and grantee in ('anon','authenticated')",
+  );
+  assert.equal(grants.rows.length, 0);
+  // One mapping per vendor and vendor material code.
+  await db.query(
+    "insert into public.sap_item_mappings(vendor_card_code, vendor_item_key, sap_item_code) values('V1','3434405','BW-TW20-091')",
+  );
+  await assert.rejects(
+    db.query(
+      "insert into public.sap_item_mappings(vendor_card_code, vendor_item_key, sap_item_code) values('V1','3434405','OTHER')",
     ),
   );
 });
