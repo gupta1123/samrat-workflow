@@ -12,6 +12,7 @@ import {
 import type { SapWithholdingTaxRow } from "./draft-total";
 import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
 import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
+import { readODataCollection } from "./odata-pagination";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -42,7 +43,11 @@ type SapItemInventoryState = {
   InventoryItem?: string;
 };
 
-export type SapSupplierRow = { CardCode: string; CardName: string };
+export type SapSupplierRow = {
+  CardCode: string;
+  CardName: string;
+  BPAddresses?: Array<{ GSTIN?: string | null }>;
+};
 export type SapItemRow = {
   ItemCode: string;
   ItemName?: string;
@@ -122,6 +127,8 @@ export async function withTestServiceLayer<T>(
     ) => Promise<Record<string, unknown>[]>;
     findDraft: (comment: string) => Promise<SapDraftResponse | null>;
     listSuppliers: () => Promise<SapSupplierRow[]>;
+    searchSuppliers: (query: string) => Promise<SapSupplierRow[]>;
+    getSupplier: (cardCode: string) => Promise<SapSupplierRow | null>;
     listOpenReceiptDocumentsForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
@@ -230,63 +237,33 @@ export async function withTestServiceLayer<T>(
     return Number.isInteger(body.Series) ? [body as SapNumberingSeries] : [];
   }
 
-  // Follows $top/$skip paging and stops if SAP repeats a page or the cap is hit.
   async function pageAll<T>(path: string, max: number): Promise<T[]> {
-    const pageSize = Math.min(100, max);
-    const rows: T[] = [];
-    let previousFirst = "";
-    for (let skip = 0; rows.length < max; skip += pageSize) {
-      const separator = path.includes("?") ? "&" : "?";
-      const { body } = await request(
-        `${path}${separator}$top=${pageSize}&$skip=${skip}`,
-      );
-      const page = Array.isArray(body.value) ? (body.value as T[]) : [];
-      if (page.length === 0) break;
-      const first = JSON.stringify(page[0]);
-      if (skip > 0 && first === previousFirst) {
-        throw new Error(
-          "SAP repeated a result page; the read was stopped to avoid an incomplete match.",
-        );
-      }
-      previousFirst = first;
-      rows.push(...page);
-      if (page.length < pageSize) break;
-    }
-    return rows.slice(0, max);
+    return readODataCollection<T>({
+      initialPath: path,
+      baseUrl: config.baseUrl,
+      max,
+      read: async (nextPath) => (await request(nextPath)).body,
+    });
   }
 
   async function listOpenGrposByFilter(filter: string): Promise<SapGrpo[]> {
-    const rows: SapGrpo[] = [];
-    const seenDocEntries = new Set<number>();
-    const pageSize = 100;
-
-    for (let skip = 0; ; skip += pageSize) {
-      const query =
-        "/PurchaseDeliveryNotes?$select=DocEntry,DocNum,CardCode,CardName,DocumentStatus,Cancelled,DocumentLines" +
+    const rows = await pageAll<SapGrpo>(
+      "/PurchaseDeliveryNotes?$select=DocEntry,DocNum,CardCode,CardName,DocumentStatus,Cancelled,DocumentLines" +
         `&$filter=${encodeURIComponent(filter)}` +
-        "&$orderby=DocEntry%20asc" +
-        `&$top=${pageSize}&$skip=${skip}`;
-      const { body } = await request(query);
-      const page = Array.isArray(body.value) ? (body.value as SapGrpo[]) : [];
-      let newDocuments = 0;
-      for (const document of page) {
-        if (
-          typeof document.DocEntry !== "number" ||
-          seenDocEntries.has(document.DocEntry)
-        ) {
-          continue;
-        }
-        seenDocEntries.add(document.DocEntry);
-        rows.push(document);
-        newDocuments += 1;
+        "&$orderby=DocEntry%20asc",
+      5000,
+    );
+    const seenDocEntries = new Set<number>();
+    return rows.filter((document) => {
+      if (
+        typeof document.DocEntry !== "number" ||
+        seenDocEntries.has(document.DocEntry)
+      ) {
+        return false;
       }
-      if (page.length < pageSize) return rows;
-      if (newDocuments === 0) {
-        throw new Error(
-          "SAP Test repeated an open-GRPO result page; document selection was stopped to avoid an incomplete match.",
-        );
-      }
-    }
+      seenDocEntries.add(document.DocEntry);
+      return true;
+    });
   }
 
   try {
@@ -441,17 +418,11 @@ export async function withTestServiceLayer<T>(
         const filter = encodeURIComponent(
           `DocDate ge '${financialYear.start}' and DocDate le '${onOrBefore}' and Cancelled eq 'tNO'`,
         );
-        const dates: string[] = [];
-        for (let skip = 0; skip < 500; skip += 100) {
-          const { body } = await request(
-            `/PurchaseInvoices?$select=DocEntry,DocDate&$filter=${filter}&$orderby=DocDate%20desc,DocEntry%20desc&$top=100&$skip=${skip}`,
-          );
-          const page = Array.isArray(body.value)
-            ? (body.value as Array<{ DocEntry?: number; DocDate?: string }>)
-            : [];
-          dates.push(...page.map((row) => row.DocDate ?? "").filter(Boolean));
-          if (page.length < 100) break;
-        }
+        const rows = await pageAll<{ DocEntry?: number; DocDate?: string }>(
+          `/PurchaseInvoices?$select=DocEntry,DocDate&$filter=${filter}&$orderby=DocDate%20desc,DocEntry%20desc`,
+          500,
+        );
+        const dates = rows.map((row) => row.DocDate ?? "").filter(Boolean);
         return [...new Set(dates)];
       },
       async resolveGstApInvoiceSeries(postingDate, branchId, baseSeries) {
@@ -500,17 +471,10 @@ export async function withTestServiceLayer<T>(
         const filter = encodeURIComponent(
           `DocDate ge '${financialYear.start}' and DocDate le '${financialYear.end}'`,
         );
-        const invoices: SapNumberedApInvoice[] = [];
-        for (let skip = 0; skip < 1000; skip += 100) {
-          const { body } = await request(
-            `/PurchaseInvoices?$select=DocEntry,DocDate,Series,DocumentSubType,BPL_IDAssignedToInvoice,Cancelled&$filter=${filter}&$orderby=DocDate%20desc,DocEntry%20desc&$top=100&$skip=${skip}`,
-          );
-          const page = Array.isArray(body.value)
-            ? (body.value as SapNumberedApInvoice[])
-            : [];
-          invoices.push(...page);
-          if (page.length < 100) break;
-        }
+        const invoices = await pageAll<SapNumberedApInvoice>(
+          `/PurchaseInvoices?$select=DocEntry,DocDate,Series,DocumentSubType,BPL_IDAssignedToInvoice,Cancelled&$filter=${filter}&$orderby=DocDate%20desc,DocEntry%20desc`,
+          1000,
+        );
         const historicalSeries = selectExistingGstApInvoiceSeries({
           postingDate,
           branchId,
@@ -528,11 +492,33 @@ export async function withTestServiceLayer<T>(
       },
       async listSuppliers() {
         return pageAll<SapSupplierRow>(
-          "/BusinessPartners?$select=CardCode,CardName&$filter=" +
+          "/BusinessPartners?$select=CardCode,CardName,BPAddresses&$filter=" +
             encodeURIComponent("CardType eq 'cSupplier' and Valid eq 'tYES'") +
             "&$orderby=CardCode%20asc",
           5000,
         );
+      },
+      async searchSuppliers(query) {
+        const term = query.trim().replaceAll("'", "''").slice(0, 60);
+        if (term.length < 2) return [];
+        const variants = [...new Set([term, term.toUpperCase(), term.toLowerCase()])];
+        const filter = variants
+          .flatMap((variant) => [
+            `contains(CardName,'${variant}')`,
+            `contains(CardCode,'${variant}')`,
+          ])
+          .join(" or ");
+        return pageAll<SapSupplierRow>(
+          `/BusinessPartners?$select=CardCode,CardName,BPAddresses&$filter=${encodeURIComponent(`CardType eq 'cSupplier' and (${filter})`)}&$orderby=CardCode%20asc`,
+          25,
+        );
+      },
+      async getSupplier(cardCode) {
+        const rows = await pageAll<SapSupplierRow>(
+          `/BusinessPartners?$select=CardCode,CardName,BPAddresses&$filter=${encodeURIComponent(`CardCode eq '${cardCode.replaceAll("'", "''")}' and CardType eq 'cSupplier'`)}`,
+          1,
+        );
+        return rows[0] ?? null;
       },
       async listOpenReceiptDocumentsForVendor(cardCode) {
         return pageAll<SapMatchDocument>(

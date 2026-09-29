@@ -18,6 +18,7 @@ import {
   mapReceiptLines,
   resolveVendor,
   rulesFromRow,
+  vendorKeys,
   type SapFieldConfig,
 } from "./match-mapping";
 import type { withTestServiceLayer } from "./service-layer";
@@ -111,6 +112,40 @@ export async function saveMatchState(
   dbCheck(error);
 }
 
+async function loadVendorMapping(db: Db, keys: string[]) {
+  if (!keys.length) return null;
+  const { data, error } = await db
+    .from("sap_vendor_mappings")
+    .select("vendor_key, sap_card_code, sap_card_name")
+    .in("vendor_key", keys);
+  dbCheck(error);
+  const matched = data ?? [];
+  if (!matched.length) return null;
+  const cardCodes = new Set(matched.map((row) => String(row.sap_card_code)));
+  if (cardCodes.size !== 1) return null;
+  const row = matched[0];
+  return {
+    cardCode: String(row.sap_card_code),
+    cardName: String(row.sap_card_name ?? row.sap_card_code),
+  };
+}
+
+export async function saveVendorMapping(
+  db: Db,
+  input: { vendorKeys: string[]; cardCode: string; cardName: string | null; userId: string },
+) {
+  const { error } = await db.from("sap_vendor_mappings").upsert(
+    input.vendorKeys.map((vendorKey) => ({
+      vendor_key: vendorKey,
+      sap_card_code: input.cardCode,
+      sap_card_name: input.cardName,
+      created_by: input.userId,
+    })),
+    { onConflict: "vendor_key" },
+  );
+  dbCheck(error);
+}
+
 async function loadItemMappings(db: Db, vendorCardCode: string) {
   const { data, error } = await db
     .from("sap_item_mappings")
@@ -186,7 +221,27 @@ export async function computeCaseMatch(params: {
   const config = sapFieldConfig();
   const branch = branchForShipTo(invoice.shipToGstin, rules);
   const suppliers = await client.listSuppliers();
-  const { vendor, ambiguous } = resolveVendor(invoice.vendorName, suppliers);
+  const keys = vendorKeys(invoice);
+  let vendor: { cardCode: string; cardName: string } | null = null;
+  let ambiguous: Array<{ cardCode: string; cardName: string; why: string }> = [];
+  // A reviewer-confirmed choice is scoped to this case and never inferred.
+  const selectedCardCode = state.decisions["vendor-link"]?.choice;
+  if (selectedCardCode) {
+    const supplier =
+      suppliers.find((row) => row.CardCode === selectedCardCode) ??
+      (await client.getSupplier(selectedCardCode));
+    if (supplier) vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
+  }
+  // A prior explicit link may be reused only for the same exact GSTIN and
+  // vendor material code (or the same exact name when no GSTIN was available).
+  const linked = vendor ? null : await loadVendorMapping(db, keys);
+  if (linked) {
+    const supplier =
+      suppliers.find((row) => row.CardCode === linked.cardCode) ??
+      (await client.getSupplier(linked.cardCode));
+    if (supplier) vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
+  }
+  if (!vendor) ({ vendor, ambiguous } = resolveVendor(invoice, suppliers));
 
   let receiptDocuments: Awaited<ReturnType<Client["listOpenReceiptDocumentsForVendor"]>> = [];
   let purchaseOrders: Awaited<ReturnType<Client["listOpenPurchaseOrdersForVendor"]>> = [];
@@ -241,6 +296,8 @@ export async function computeCaseMatch(params: {
   const context: MatchContext = {
     vendor,
     ambiguousVendors: ambiguous,
+    vendorKey: keys[0] ?? null,
+    suppliersRead: suppliers.length,
     branch,
     itemMap,
     items,

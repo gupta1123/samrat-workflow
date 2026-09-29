@@ -86,13 +86,14 @@ function sapClient(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const tables = () => ({
+const tables = (): Record<string, Array<Record<string, unknown>>> => ({
   packet_documents: [
     { case_id: "case-1", document_type: "Tax Invoice", extracted_fields: invoiceFields },
     { case_id: "case-1", document_type: "E-Way Bill", extracted_fields: { vehicleNumber: "JH 02 BR 9642" } },
   ],
   sap_match_rules: [{ organization_id: "default", qty_tolerance_pct: 1, rate_tolerance_pct: 0.5, freight_policy: "expense", posting_date: "invoice", receipt_window_days: 30, branches: [{ stateCode: "36", name: "Hyderabad", bplId: 1, warehouse: "HYD-01" }] }],
   sap_match_state: [],
+  sap_vendor_mappings: [],
   sap_item_mappings: [{ vendor_card_code: "V-TATA01", vendor_item_key: "3434405", sap_item_code: "BW-TW20-091" }],
 });
 
@@ -172,5 +173,114 @@ test("an unknown vendor blocks with a clear reason instead of guessing", async (
   if (match.available) {
     assert.equal(match.result.status, "blocked");
     assert.match(match.result.checks.find((c) => c.id === "vendor")!.title, /No SAP vendor found/);
+  }
+});
+
+test("multiple exact SAP GSTIN matches require an explicit vendor choice", async () => {
+  const match = await computeCaseMatch({
+    db: fakeDb(tables()) as never,
+    client: sapClient({
+      listSuppliers: async () => [
+        {
+          CardCode: "V-TSL-RETAIL",
+          CardName: "TATA STEEL LIMITED(RETAIL)",
+          BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+        },
+        {
+          CardCode: "V-TSL-WIRON",
+          CardName: "TATA STEEL LIMITED(WIRON)",
+          BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+        },
+      ],
+    }) as never,
+    caseRow: CASE,
+  });
+  assert.ok(match.available);
+  if (match.available) {
+    const check = match.result.checks.find((c) => c.id === "vendor")!;
+    assert.deepEqual(
+      check.vendorSuggestions?.map((vendor) => vendor.cardCode),
+      ["V-TSL-RETAIL", "V-TSL-WIRON"],
+    );
+    assert.match(check.help ?? "", /exact GSTIN/);
+    assert.equal(check.vendorKey, "G:20AAACT2803M2ZO|I:3434405");
+  }
+});
+
+test("an explicit vendor choice applies to this case when GSTIN is shared", async () => {
+  const data = tables();
+  data.sap_match_state = [{
+    case_id: "case-1",
+    decisions: {
+      "vendor-link": {
+        choice: "V-TATA01",
+        reason: "Reviewer selected Tata Steel Limited",
+        at: "2026-09-29T10:00:00.000Z",
+      },
+    },
+    allocations: {},
+  }];
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    client: sapClient({
+      listSuppliers: async () => [
+        {
+          CardCode: "V-TATA01",
+          CardName: "TATA STEEL LIMITED(WIRON)",
+          BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+        },
+        {
+          CardCode: "V-TATA02",
+          CardName: "TATA STEEL LIMITED(RETAIL)",
+          BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+        },
+      ],
+    }) as never,
+    caseRow: CASE,
+  });
+  assert.ok(match.available);
+  if (match.available) assert.equal(match.vendor?.cardCode, "V-TATA01");
+});
+
+test("a vendor linked earlier is used even when the names differ", async () => {
+  const data = tables();
+  data.sap_vendor_mappings = [{ vendor_key: "G:20AAACT2803M2ZO|I:3434405", sap_card_code: "V-TATA01", sap_card_name: "Tata Steel Limited" }];
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    client: sapClient({
+      listSuppliers: async () => [{ CardCode: "V-TATA01", CardName: "TSL Steel (Jamshedpur)" }],
+    }) as never,
+    caseRow: CASE,
+  });
+  assert.ok(match.available);
+  if (match.available) {
+    assert.equal(match.vendor?.cardCode, "V-TATA01");
+    assert.equal(match.result.status, "ready");
+  }
+});
+
+test("a linked vendor missing from the supplier list is looked up directly", async () => {
+  const data = tables();
+  data.sap_vendor_mappings = [{ vendor_key: "G:20AAACT2803M2ZO|I:3434405", sap_card_code: "V-TATA01", sap_card_name: "Tata" }];
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    client: sapClient({
+      listSuppliers: async () => [],
+      getSupplier: async () => ({ CardCode: "V-TATA01", CardName: "Tata Steel Limited" }),
+    }) as never,
+    caseRow: CASE,
+  });
+  assert.ok(match.available && match.vendor?.cardCode === "V-TATA01");
+});
+
+test("no suppliers at all points to a permission problem", async () => {
+  const match = await computeCaseMatch({
+    db: fakeDb(tables()) as never,
+    client: sapClient({ listSuppliers: async () => [] }) as never,
+    caseRow: CASE,
+  });
+  assert.ok(match.available);
+  if (match.available) {
+    assert.match(match.result.checks.find((c) => c.id === "vendor")!.help ?? "", /no suppliers at all/);
   }
 });

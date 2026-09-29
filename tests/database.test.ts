@@ -142,6 +142,15 @@ before(async () => {
       "utf8",
     ),
   );
+  await db.exec(
+    readFileSync(
+      new URL(
+        "../supabase/migrations/20260929100000_sap_vendor_mappings.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
   await db.query("insert into auth.users(id) values($1),($2)", [user, other]);
 });
 after(async () => db.close());
@@ -276,7 +285,7 @@ test("migration enables RLS on every application table and restricts internal fu
   const rows = await db.query<{ relname: string; relrowsecurity: boolean }>(
     "select relname,relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and relkind='r'",
   );
-  assert.equal(rows.rows.length, 15);
+  assert.equal(rows.rows.length, 16);
   assert.ok(rows.rows.every((r) => r.relrowsecurity));
   assert.ok(rows.rows.some((row) => row.relname === "packet_file_revisions"));
   assert.ok(rows.rows.some((row) => row.relname === "sap_postings"));
@@ -1276,4 +1285,19 @@ test("SAP match rules start with safe defaults and the match tables are service-
       "insert into public.sap_item_mappings(vendor_card_code, vendor_item_key, sap_item_code) values('V1','3434405','OTHER')",
     ),
   );
+});
+
+test("a vendor is remembered once per key and the table is service-role only", async () => {
+  await db.query(
+    "insert into public.sap_vendor_mappings(vendor_key, sap_card_code) values('G:20AAACT2803M2ZO','V-TATA01')",
+  );
+  await assert.rejects(
+    db.query(
+      "insert into public.sap_vendor_mappings(vendor_key, sap_card_code) values('G:20AAACT2803M2ZO','V-OTHER')",
+    ),
+  );
+  const grants = await db.query(
+    "select 1 from information_schema.role_table_grants where table_schema='public' and table_name='sap_vendor_mappings' and grantee in ('anon','authenticated')",
+  );
+  assert.equal(grants.rows.length, 0);
 });

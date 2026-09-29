@@ -129,8 +129,12 @@ export type SapItemInfo = {
 
 export type MatchContext = {
   vendor: { cardCode: string; cardName: string } | null;
-  /** More than one SAP vendor code resembles the invoice vendor. */
-  ambiguousVendors: Array<{ cardCode: string; cardName: string }>;
+  /** More than one SAP vendor has the same authoritative invoice identifier. */
+  ambiguousVendors: Array<{ cardCode: string; cardName: string; why: string }>;
+  /** How this invoice's vendor is remembered (GSTIN or name), used when linking it to a SAP vendor. */
+  vendorKey?: string | null;
+  /** How many SAP suppliers were read; 0 usually means a permission problem. */
+  suppliersRead?: number;
   branch: { bplId: number | null; name: string; stateCode: string | null; warehouse: string | null } | null;
   /** vendor material code (normalised) → SAP item code */
   itemMap: Record<string, string>;
@@ -196,6 +200,9 @@ export type MatchCheck = {
   open: boolean;
   /** Suggested SAP items, shown when an item is not yet linked. */
   itemSuggestions?: Array<{ itemCode: string; name: string; why: string }>;
+  /** Set on the vendor check when the vendor could not be matched. */
+  vendorSuggestions?: Array<{ cardCode: string; cardName: string; why: string }>;
+  vendorKey?: string | null;
 };
 
 export type CandidateView = {

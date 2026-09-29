@@ -65,7 +65,8 @@ export type SapMatchAction =
   | { action: "undo"; checkId: string }
   | { action: "allocate"; lineIndex: number; allocations: Record<string, number> }
   | { action: "reset-allocation"; lineIndex: number }
-  | { action: "map-item"; vendorCardCode: string; mappingKey: string; sapItemCode: string };
+  | { action: "map-item"; vendorCardCode: string; mappingKey: string; sapItemCode: string }
+  | { action: "map-vendor"; cardCode: string };
 
 export async function postSapMatchAction(caseId: string, action: SapMatchAction) {
   const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/sap-match`, {
@@ -114,4 +115,16 @@ export async function saveSapMatchRules(rules: MatchRules) {
   });
   const body = await readJson(response);
   return { ok: response.ok, error: response.ok ? null : errorText(body, "Could not save the rules.") };
+}
+
+export type SapVendorChoice = { cardCode: string; cardName: string };
+
+export async function searchSapVendors(caseId: string, query: string): Promise<SapVendorChoice[]> {
+  const response = await apiFetch(
+    `/api/cases/${encodeURIComponent(caseId)}/sap-match/vendors?q=${encodeURIComponent(query)}`,
+    { cache: "no-store" },
+  );
+  const body = await readJson(response);
+  if (!response.ok) throw new Error(errorText(body, "Could not search SAP vendors."));
+  return Array.isArray(body.vendors) ? (body.vendors as SapVendorChoice[]) : [];
 }

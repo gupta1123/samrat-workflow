@@ -1,7 +1,6 @@
 // Pure translators between stored/SAP data and the matching engine's types.
 // No network or database access here, so all of it is unit-tested.
 
-import { normalizeRef } from "@/lib/sap-match/engine";
 import {
   DEFAULT_MATCH_RULES,
   type BranchMapping,
@@ -11,7 +10,7 @@ import {
   type SapPoLine,
   type SapReceiptLine,
 } from "@/lib/sap-match/types";
-import { parseSapAmount, scoreVendorNames } from "@/lib/sap-decision";
+import { parseSapAmount } from "@/lib/sap-decision";
 import { readStoredLineItems } from "@/server/line-items";
 import { sapInvoiceDate } from "./dates";
 import type { SapMatchDocument } from "./service-layer";
@@ -158,32 +157,99 @@ export function buildMatchInvoice(input: {
 
 // ---- Vendor ----
 
+type VendorSupplier = {
+  CardCode: string;
+  CardName: string;
+  BPAddresses?: Array<{ GSTIN?: string | null }>;
+};
+
+function exactName(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLocaleUpperCase("en-IN")
+    .split(" ")
+    .filter(Boolean)
+    .join(" ");
+}
+
+function exactGstin(value: unknown): string {
+  return String(value ?? "").trim().toLocaleUpperCase("en-IN");
+}
+
 export function resolveVendor(
-  invoiceVendorName: string | null,
-  suppliers: Array<{ CardCode: string; CardName: string }>,
+  invoice: { vendorName: string | null; vendorGstin: string | null },
+  suppliers: VendorSupplier[],
 ): {
   vendor: { cardCode: string; cardName: string } | null;
-  ambiguous: Array<{ cardCode: string; cardName: string }>;
+  ambiguous: Array<{ cardCode: string; cardName: string; why: string }>;
 } {
-  const name = (invoiceVendorName ?? "").trim();
-  if (!name) return { vendor: null, ambiguous: [] };
-  const wanted = normalizeRef(name);
-  const toVendor = (row: { CardCode: string; CardName: string }) => ({
+  const toVendor = (row: VendorSupplier) => ({
     cardCode: row.CardCode,
     cardName: row.CardName,
   });
-  const exact = suppliers.filter((row) => normalizeRef(row.CardName) === wanted);
-  if (exact.length === 1) return { vendor: toVendor(exact[0]), ambiguous: [] };
-  if (exact.length > 1) return { vendor: null, ambiguous: exact.map(toVendor) };
-  const scored = suppliers
-    .map((row) => ({ row, score: scoreVendorNames(name, row.CardName) }))
-    .filter((entry) => entry.score >= 0.8)
-    .sort((a, b) => b.score - a.score);
-  if (!scored.length) return { vendor: null, ambiguous: [] };
-  const best = scored[0].score;
-  const top = scored.filter((entry) => entry.score === best);
-  if (top.length === 1) return { vendor: toVendor(top[0].row), ambiguous: [] };
-  return { vendor: null, ambiguous: top.map((entry) => toVendor(entry.row)) };
+
+  const gstin = exactGstin(invoice.vendorGstin);
+  if (gstin) {
+    const gstinMatches = suppliers.filter((supplier) =>
+      (supplier.BPAddresses ?? []).some(
+        (address) => exactGstin(address.GSTIN) === gstin,
+      ),
+    );
+    if (gstinMatches.length === 1) {
+      return { vendor: toVendor(gstinMatches[0]), ambiguous: [] };
+    }
+    if (gstinMatches.length > 1) {
+      return {
+        vendor: null,
+        ambiguous: gstinMatches.map((supplier) => ({
+          ...toVendor(supplier),
+          why: "Exact GSTIN match",
+        })),
+      };
+    }
+  }
+
+  const name = exactName(invoice.vendorName);
+  if (!name) return { vendor: null, ambiguous: [] };
+  const nameMatches = suppliers.filter(
+    (supplier) => exactName(supplier.CardName) === name,
+  );
+  if (nameMatches.length === 1) {
+    return { vendor: toVendor(nameMatches[0]), ambiguous: [] };
+  }
+  if (nameMatches.length > 1) {
+    return {
+      vendor: null,
+      ambiguous: nameMatches.map((supplier) => ({
+        ...toVendor(supplier),
+        why: "Exact vendor-name match",
+      })),
+    };
+  }
+  return { vendor: null, ambiguous: [] };
+}
+
+/** Exact identities that are safe to reuse across cases after reviewer confirmation. */
+export function vendorKeys(invoice: {
+  vendorGstin: string | null;
+  vendorName: string | null;
+  lines?: Array<{ vendorItemCode?: string | null }>;
+}): string[] {
+  const gstin = exactGstin(invoice.vendorGstin);
+  if (gstin.length === 15) {
+    const materialCodes = [
+      ...new Set(
+        (invoice.lines ?? [])
+          .map((line) => exactName(line.vendorItemCode))
+          .filter(Boolean),
+      ),
+    ].sort();
+    return materialCodes.map((materialCode) =>
+      `G:${gstin}|I:${materialCode}`,
+    );
+  }
+  const name = exactName(invoice.vendorName);
+  return name ? [`N:${name}`] : [];
 }
 
 // ---- SAP documents → engine lines ----

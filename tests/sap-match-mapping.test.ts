@@ -10,6 +10,7 @@ import {
   parseRulesInput,
   resolveVendor,
   rulesFromRow,
+  vendorKeys,
 } from "../src/server/sap/match-mapping";
 import { DEFAULT_MATCH_RULES } from "../src/lib/sap-match/types";
 
@@ -123,14 +124,61 @@ test("vendor resolution prefers an exact name and refuses ambiguity", () => {
     { CardCode: "V-TATA02", CardName: "Tata Steel Long Products Limited" },
     { CardCode: "V-SSLT01", CardName: "Sri Srinivasa Lorry Transport" },
   ];
-  assert.equal(resolveVendor("TATA STEEL LIMITED", suppliers).vendor?.cardCode, "V-TATA01");
-  assert.equal(resolveVendor("Unknown Traders", suppliers).vendor, null);
-  const duplicated = resolveVendor("Sri Srinivasa Lorry Transport", [
+  assert.equal(
+    resolveVendor({ vendorName: "TATA STEEL LIMITED", vendorGstin: null }, suppliers).vendor?.cardCode,
+    "V-TATA01",
+  );
+  assert.equal(
+    resolveVendor({ vendorName: "Unknown Traders", vendorGstin: null }, suppliers).vendor,
+    null,
+  );
+  const duplicated = resolveVendor({ vendorName: "Sri Srinivasa Lorry Transport", vendorGstin: null }, [
     ...suppliers,
     { CardCode: "V-SSLT09", CardName: "SRI SRINIVASA LORRY TRANSPORT" },
   ]);
   assert.equal(duplicated.vendor, null);
   assert.equal(duplicated.ambiguous.length, 2);
+});
+
+test("vendor resolution uses SAP GSTIN data and never guesses between exact records", () => {
+  const resolved = resolveVendor(
+    { vendorName: "Name printed differently", vendorGstin: "20AAACT2803M2ZO" },
+    [
+      {
+        CardCode: "TSPL001",
+        CardName: "TATA STEEL LIMITED(RETAIL)",
+        BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+      },
+      {
+        CardCode: "OTHER",
+        CardName: "OTHER SUPPLIER",
+        BPAddresses: [{ GSTIN: "29AAAAA0000A1Z5" }],
+      },
+    ],
+  );
+  assert.equal(resolved.vendor?.cardCode, "TSPL001");
+
+  const ambiguous = resolveVendor(
+    { vendorName: "TATA STEEL LIMITED", vendorGstin: "20AAACT2803M2ZO" },
+    [
+      {
+        CardCode: "TSPL001",
+        CardName: "TATA STEEL LIMITED(RETAIL)",
+        BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+      },
+      {
+        CardCode: "TSPL003",
+        CardName: "TATA STEEL LIMITED(WIRON)",
+        BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+      },
+    ],
+  );
+  assert.equal(ambiguous.vendor, null);
+  assert.deepEqual(
+    ambiguous.ambiguous.map((vendor) => vendor.cardCode),
+    ["TSPL001", "TSPL003"],
+  );
+  assert.ok(ambiguous.ambiguous.every((vendor) => vendor.why === "Exact GSTIN match"));
 });
 
 test("goods receipts become engine lines with their PO references and vehicle", () => {
@@ -225,4 +273,22 @@ test("rules validate strictly and map branches by ship-to state", () => {
       }),
     /only one branch/,
   );
+});
+
+test("a vendor is remembered by its strongest exact identity", () => {
+  assert.deepEqual(vendorKeys({
+    vendorGstin: "20AAACT2803M2ZO",
+    vendorName: "Tata Steel Limited",
+    lines: [{ vendorItemCode: "3434405" }, { vendorItemCode: "3434405" }],
+  }), [
+    "G:20AAACT2803M2ZO|I:3434405",
+  ]);
+  assert.deepEqual(
+    vendorKeys({ vendorGstin: "20AAACT2803M2ZO", vendorName: "Tata Steel Limited" }),
+    [],
+  );
+  assert.deepEqual(vendorKeys({ vendorGstin: null, vendorName: "Tata Steel Limited" }), [
+    "N:TATA STEEL LIMITED",
+  ]);
+  assert.deepEqual(vendorKeys({ vendorGstin: "bad", vendorName: null }), []);
 });

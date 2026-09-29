@@ -285,16 +285,23 @@ export function evaluateMatch(input: EvaluateInput): MatchResult {
   }
 
   if (!context.vendor) {
+    const read = context.suppliersRead;
     checks.push({
       id: "vendor",
       lineIndex: null,
       sev: "block",
       title: context.ambiguousVendors.length
-        ? "More than one SAP vendor looks like this vendor"
+        ? "More than one exact SAP vendor record matches this invoice"
         : "No SAP vendor found for this invoice",
       help: context.ambiguousVendors.length
-        ? `Candidates: ${context.ambiguousVendors.map((v) => `${v.cardCode} ${v.cardName}`).join("; ")}. The vendor must be unambiguous before matching.`
-        : `Could not find a vendor in SAP with open purchase orders or receipts named "${invoice.vendorName ?? "unknown"}".`,
+        ? `SAP has multiple records with the invoice's exact GSTIN or vendor name. Choose the correct SAP vendor code below; no vendor has been guessed.`
+        : read === 0
+          ? `SAP returned no suppliers at all for the connected user, so nothing could be compared with "${invoice.vendorName ?? "unknown"}". Check that the SAP user may read business partners.`
+          : `No exact GSTIN or vendor-name match was found for "${invoice.vendorName ?? "unknown"}" among ${read ?? "the"} SAP suppliers. Search SAP and explicitly choose the correct vendor; the system will not guess.`,
+      vendorSuggestions: context.ambiguousVendors.length
+        ? context.ambiguousVendors
+        : [],
+      vendorKey: context.vendorKey ?? null,
     });
   } else {
     checks.push({

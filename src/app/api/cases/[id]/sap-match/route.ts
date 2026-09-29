@@ -12,7 +12,9 @@ import {
   loadMatchState,
   saveItemMapping,
   saveMatchState,
+  saveVendorMapping,
 } from "@/server/sap/match-data";
+import { buildMatchInvoice, vendorKeys } from "@/server/sap/match-mapping";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 
 type Context = { params: Promise<{ id: string }> };
@@ -101,7 +103,7 @@ export async function POST(request: Request, context: Context) {
         posting.sap_env === "test" &&
         (posting.status === "prepared" || posting.status === "posted"),
     );
-    if (existing && action !== "map-item") {
+    if (existing && action !== "map-item" && action !== "map-vendor") {
       throw new ApiError(
         "A SAP draft already exists for this case, so the match is locked. Discard the draft in SAP first.",
         409,
@@ -191,6 +193,45 @@ export async function POST(request: Request, context: Context) {
         userId: user,
       });
       await audit("sap_item_linked", { vendorCardCode, mappingKey, sapItemCode });
+      return { ok: true };
+    }
+
+    if (action === "map-vendor") {
+      const cardCode = typeof body.cardCode === "string" ? body.cardCode.trim() : "";
+      if (!cardCode || cardCode.length > 50) throw new ApiError("Choose the SAP vendor to link.");
+      if (readSapEnvironment() !== "test") {
+        throw new ApiError("SAP matching is available only against the SAP Test company for now.", 409);
+      }
+      const documents = await db
+        .from("packet_documents")
+        .select("document_type, extracted_fields")
+        .eq("case_id", id);
+      dbCheck(documents.error);
+      const invoice = buildMatchInvoice({
+        caseInvoiceNumber: row.invoice_number,
+        casePoNumber: row.po_number,
+        documents: documents.data ?? [],
+      });
+      const keys = invoice ? vendorKeys(invoice) : [];
+      if (!invoice) throw new ApiError("This case has no numbered vendor invoice to link.", 409);
+      const supplier = await withTestServiceLayer((client) => client.getSupplier(cardCode));
+      if (!supplier) throw new ApiError("That vendor does not exist in SAP as a supplier.", 409);
+      const state = await loadMatchState(db, id);
+      state.decisions["vendor-link"] = {
+        choice: supplier.CardCode,
+        reason: `Reviewer selected ${supplier.CardName}`,
+        at: new Date().toISOString(),
+      };
+      await saveMatchState(db, id, user, state);
+      if (keys.length) {
+        await saveVendorMapping(db, {
+          vendorKeys: keys,
+          cardCode: supplier.CardCode,
+          cardName: supplier.CardName,
+          userId: user,
+        });
+      }
+      await audit("sap_vendor_linked", { cardCode: supplier.CardCode, keys });
       return { ok: true };
     }
 

@@ -28,6 +28,7 @@ import { FinalPostSection } from "./sap-match/FinalPostSection";
 import { inr } from "./sap-match/format";
 import { MatchLineCard } from "./sap-match/MatchLineCard";
 import { RulesEditor } from "./sap-match/RulesEditor";
+import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
 
 const STATUS: Record<
@@ -201,6 +202,7 @@ export function SapMatchPanel({
       onUndo={(check) => void act({ action: "undo", checkId: check.id })}
       onAllocate={(lineIndex, allocations) => void act({ action: "allocate", lineIndex, allocations })}
       onResetAllocation={(lineIndex) => void act({ action: "reset-allocation", lineIndex })}
+      onLinkVendor={(cardCode) => void act({ action: "map-vendor", cardCode })}
       onLink={(line: LineResult, itemCode: string) => {
         const invoiceLine = data.invoice.lines[line.index];
         const key = invoiceLine ? itemMappingKey(invoiceLine) : null;
@@ -231,6 +233,7 @@ function Matched({
   onAllocate,
   onResetAllocation,
   onLink,
+  onLinkVendor,
 }: {
   caseId: string;
   variant: "full" | "sidebar";
@@ -251,6 +254,7 @@ function Matched({
   onAllocate: (lineIndex: number, allocations: Record<string, number>) => void;
   onResetAllocation: (lineIndex: number) => void;
   onLink: (line: LineResult, itemCode: string) => void;
+  onLinkVendor: (cardCode: string) => void;
 }) {
   const { result, invoice } = data;
   const locked = Boolean(ap);
@@ -325,7 +329,10 @@ function Matched({
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">{actionError}</div>
       ) : null}
 
-      {generalOpen.map((check) => (
+      {generalOpen.map((check) =>
+        check.id === "vendor" && check.sev === "block" ? (
+          <VendorLinker key={check.id} caseId={caseId} check={check} busy={busy || locked} onLink={onLinkVendor} />
+        ) : (
         <CheckBlock
           key={check.id}
           check={check}
@@ -334,7 +341,8 @@ function Matched({
           onChoose={(choice, reason) => onChoose(check, choice, reason)}
           onUndo={() => onUndo(check)}
         />
-      ))}
+        ),
+      )}
 
       {result.lines.map((line) => (
         <MatchLineCard
