@@ -42,6 +42,26 @@ type SapItemInventoryState = {
   InventoryItem?: string;
 };
 
+export type SapSupplierRow = { CardCode: string; CardName: string };
+export type SapItemRow = {
+  ItemCode: string;
+  ItemName?: string;
+  InventoryItem?: string;
+};
+/** A purchase order or goods receipt as returned for matching, with all its lines. */
+export type SapMatchDocument = Record<string, unknown> & {
+  DocEntry?: number;
+  DocNum?: number;
+  DocDate?: string;
+  CardCode?: string;
+  CardName?: string;
+  NumAtCard?: string | null;
+  Comments?: string | null;
+  BPL_IDAssignedToInvoice?: number | null;
+  DocCurrency?: string;
+  DocumentLines?: Array<Record<string, unknown>>;
+};
+
 export type SapReadDocument = Omit<SapGrpo, "DocumentLines"> & {
   NumAtCard?: string | null;
   DocTotal?: number;
@@ -101,6 +121,22 @@ export async function withTestServiceLayer<T>(
       cardCode: string,
     ) => Promise<Record<string, unknown>[]>;
     findDraft: (comment: string) => Promise<SapDraftResponse | null>;
+    listSuppliers: () => Promise<SapSupplierRow[]>;
+    listOpenReceiptDocumentsForVendor: (
+      cardCode: string,
+    ) => Promise<SapMatchDocument[]>;
+    listOpenPurchaseOrdersForVendor: (
+      cardCode: string,
+    ) => Promise<SapMatchDocument[]>;
+    listPurchaseOrdersByEntries: (
+      entries: number[],
+    ) => Promise<SapMatchDocument[]>;
+    listItemsByCodes: (codes: string[]) => Promise<SapItemRow[]>;
+    searchItems: (query: string) => Promise<SapItemRow[]>;
+    findDraftByVendorReference: (
+      cardCode: string,
+      vendorReference: string,
+    ) => Promise<SapDraftResponse | null>;
     listApInvoicePostingDates: (onOrBefore: string) => Promise<string[]>;
     resolveGstApInvoiceSeries: (
       postingDate: string,
@@ -192,6 +228,31 @@ export async function withTestServiceLayer<T>(
       return [body.Series as SapNumberingSeries];
     }
     return Number.isInteger(body.Series) ? [body as SapNumberingSeries] : [];
+  }
+
+  // Follows $top/$skip paging and stops if SAP repeats a page or the cap is hit.
+  async function pageAll<T>(path: string, max: number): Promise<T[]> {
+    const pageSize = Math.min(100, max);
+    const rows: T[] = [];
+    let previousFirst = "";
+    for (let skip = 0; rows.length < max; skip += pageSize) {
+      const separator = path.includes("?") ? "&" : "?";
+      const { body } = await request(
+        `${path}${separator}$top=${pageSize}&$skip=${skip}`,
+      );
+      const page = Array.isArray(body.value) ? (body.value as T[]) : [];
+      if (page.length === 0) break;
+      const first = JSON.stringify(page[0]);
+      if (skip > 0 && first === previousFirst) {
+        throw new Error(
+          "SAP repeated a result page; the read was stopped to avoid an incomplete match.",
+        );
+      }
+      previousFirst = first;
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
+    return rows.slice(0, max);
   }
 
   async function listOpenGrposByFilter(filter: string): Promise<SapGrpo[]> {
@@ -464,6 +525,95 @@ export async function withTestServiceLayer<T>(
             series: configured,
           }) ?? historicalSeries
         );
+      },
+      async listSuppliers() {
+        return pageAll<SapSupplierRow>(
+          "/BusinessPartners?$select=CardCode,CardName&$filter=" +
+            encodeURIComponent("CardType eq 'cSupplier' and Valid eq 'tYES'") +
+            "&$orderby=CardCode%20asc",
+          5000,
+        );
+      },
+      async listOpenReceiptDocumentsForVendor(cardCode) {
+        return pageAll<SapMatchDocument>(
+          "/PurchaseDeliveryNotes?$filter=" +
+            encodeURIComponent(
+              `CardCode eq '${cardCode.replaceAll("'", "''")}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO'`,
+            ) +
+            "&$orderby=DocEntry%20asc",
+          1000,
+        );
+      },
+      async listOpenPurchaseOrdersForVendor(cardCode) {
+        return pageAll<SapMatchDocument>(
+          "/PurchaseOrders?$filter=" +
+            encodeURIComponent(
+              `CardCode eq '${cardCode.replaceAll("'", "''")}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO'`,
+            ) +
+            "&$orderby=DocEntry%20asc",
+          1000,
+        );
+      },
+      async listPurchaseOrdersByEntries(entries) {
+        const unique = [...new Set(entries.filter(Number.isInteger))];
+        const documents: SapMatchDocument[] = [];
+        for (let start = 0; start < unique.length; start += 15) {
+          const filter = unique
+            .slice(start, start + 15)
+            .map((entry) => `DocEntry eq ${entry}`)
+            .join(" or ");
+          documents.push(
+            ...(await pageAll<SapMatchDocument>(
+              `/PurchaseOrders?$filter=${encodeURIComponent(filter)}`,
+              100,
+            )),
+          );
+        }
+        return documents;
+      },
+      async listItemsByCodes(codes) {
+        const unique = [...new Set(codes.filter(Boolean))];
+        const rows: SapItemRow[] = [];
+        for (let start = 0; start < unique.length; start += 15) {
+          const filter = unique
+            .slice(start, start + 15)
+            .map((code) => `ItemCode eq '${code.replaceAll("'", "''")}'`)
+            .join(" or ");
+          rows.push(
+            ...(await pageAll<SapItemRow>(
+              `/Items?$select=ItemCode,ItemName,InventoryItem&$filter=${encodeURIComponent(filter)}`,
+              100,
+            )),
+          );
+        }
+        return rows;
+      },
+      async searchItems(query) {
+        const term = query.trim().replaceAll("'", "''").slice(0, 60);
+        if (term.length < 2) return [];
+        const variants = [...new Set([term, term.toUpperCase(), term.toLowerCase()])];
+        const filter = variants
+          .flatMap((variant) => [
+            `contains(ItemName,'${variant}')`,
+            `contains(ItemCode,'${variant}')`,
+          ])
+          .join(" or ");
+        return pageAll<SapItemRow>(
+          `/Items?$select=ItemCode,ItemName,InventoryItem&$filter=${encodeURIComponent(`Valid eq 'tYES' and (${filter})`)}&$orderby=ItemCode%20asc`,
+          25,
+        );
+      },
+      async findDraftByVendorReference(cardCode, vendorReference) {
+        const filter = encodeURIComponent(
+          `CardCode eq '${cardCode.replaceAll("'", "''")}' and NumAtCard eq '${vendorReference.replaceAll("'", "''")}' and DocObjectCode eq 'oPurchaseInvoices'`,
+        );
+        const { body } = await request(
+          `/Drafts?$select=DocEntry,DocNum,CardCode,NumAtCard,Comments,DocObjectCode&$filter=${filter}&$top=5`,
+        );
+        const rows = Array.isArray(body.value)
+          ? (body.value as SapDraftResponse[])
+          : [];
+        return rows[0] ?? null;
       },
       async createDraft(payload) {
         const { body } = await request("/Drafts", {

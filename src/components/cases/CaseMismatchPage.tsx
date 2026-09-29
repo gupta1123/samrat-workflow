@@ -2,7 +2,7 @@
 import { AppShell } from "@/components/dashboard/AppShell";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SapInvoicePreparePanel } from "@/components/cases/SapInvoicePreparePanel";
+import { SapMatchPanel } from "@/components/cases/SapMatchPanel";
 import {
   fetchCaseDetail,
   updateCaseMismatchDecision,
@@ -1347,7 +1347,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
 
                 {reviewMode === "sap" ? (
                   <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-                    <SapInvoicePreparePanel caseId={caseId} variant="sidebar" />
+                    <SapMatchPanel caseId={caseId} variant="sidebar" />
                   </div>
                 ) : visibleMismatches.length === 0 ? (
                   <div className="p-5 text-xs font-normal text-[#8a7f72]">All clear — no issues to review.</div>
@@ -1491,7 +1491,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                 {sapOpened ? (
                   <div className={reviewMode === "sap" ? "contents" : "hidden"} aria-hidden={reviewMode !== "sap"}>
                     <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
-                      <SapInvoicePreparePanel caseId={caseId} />
+                      <SapMatchPanel caseId={caseId} />
                     </div>
                   </div>
                 ) : null}

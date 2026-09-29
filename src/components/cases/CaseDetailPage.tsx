@@ -43,7 +43,7 @@ import { ExtractedFieldsPanel, type ExtractedFieldItem } from "@/components/case
 import { PdfEvidencePreview } from "@/components/cases/PdfEvidencePreview";
 import { PacketIntelligencePanel } from "@/components/cases/PacketIntelligencePanel";
 import { ShipmentBatchPanel } from "@/components/cases/ShipmentBatchPanel";
-import { SapPostingPanel } from "@/components/cases/SapPostingPanel";
+import { SapMatchPanel } from "@/components/cases/SapMatchPanel";
 import styles from "@/components/cases/CaseDetailPage.module.css";
 import { AnalysisOptionsDialog } from "@/components/workspace/AnalysisOptionsDialog";
 import { AnalysisModeActions } from "@/components/workspace/AnalysisModeActions";
@@ -3138,7 +3138,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           detail.case.status,
         ) ? (
           <div className="mx-auto w-full max-w-6xl px-6 pb-6">
-            <SapPostingPanel caseId={caseId} />
+            <SapMatchPanel caseId={caseId} />
           </div>
         ) : null}
 
