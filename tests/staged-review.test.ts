@@ -170,6 +170,24 @@ test("compact own-source ledger removes a category without inventing a blank inv
   );
 });
 
+test("a semantic non-reference verdict removes an echoed candidate value", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const raw = await compact(documents[1]);
+  raw.references.referenceInvoiceNumber = {
+    ...raw.references.referenceInvoiceNumber,
+    value: "TAX INVOICE",
+    valueKind: "document_type",
+  };
+  const result = parseCompactSourceAudit(
+    JSON.stringify(raw),
+    documents[1],
+    [pages[1]],
+  );
+  assert.equal(result.document.fields.referenceInvoiceNumber, undefined);
+  assert.equal(result.audit.status, "corrected");
+});
+
 test("source tasks reject omitted checks, foreign pointers, foreign pages and empty proof", async () => {
   const { parseCompactSourceAudit } =
     await import("../src/server/processing/staged-review-contract");
@@ -715,6 +733,58 @@ test("full staged review resumes verified sources after a truncated packet respo
   });
   assert.equal(mandatory.length, 1);
   assert.ok(stages.some((stage) => stage.includes("2 of 2 documents")));
+});
+
+test("an invalid reference proof is repaired from the original source page without rerunning extraction", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const sourcePayloads = await Promise.all(documents.map(compact));
+  const invalid = structuredClone(sourcePayloads[0]);
+  invalid.references.referencePoNumber.quote = "PO:";
+  const sourceCalls = [0, 0];
+  let repairCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        const index = context.sourcePageNumbers[0] - 1;
+        sourceCalls[index]++;
+        return response(index === 0 ? invalid : sourcePayloads[index]);
+      }
+      if (name === "source_reference_repair") {
+        repairCalls++;
+        assert.deepEqual(context.referencesToReview, ["referencePoNumber"]);
+        assert.equal(context.originalReferenceValues.referencePoNumber, "ORDER-27");
+        return response({
+          references: sourcePayloads[0].references,
+          newReferences: sourcePayloads[0].newReferences,
+        });
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.deepEqual(sourceCalls, [2, 1]);
+  assert.equal(repairCalls, 1);
+  assert.equal(result.documents[0].fields.referencePoNumber, "ORDER-27");
+  assert.equal(result.review.sourceReviewCount, 2);
 });
 
 test("targeted packet contradiction rechecks only the affected source", async (t) => {

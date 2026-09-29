@@ -9,7 +9,7 @@ import {
 import { REFERENCE_FIELD_DEFINITIONS } from "./semantic-grounding";
 
 export const STAGED_REVIEW_CONTRACT_VERSION =
-  "vision-oriented-source-decisions-and-typed-evidence-v7";
+  "vision-oriented-source-decisions-and-typed-evidence-v8";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -231,6 +231,22 @@ export function buildSourceAuditSchema(
   };
 }
 
+export function buildSourceReferenceRepairSchema(
+  document: CaseDoc,
+  pages: ReviewSourcePage[],
+) {
+  const full = buildSourceAuditSchema(document, pages);
+  return {
+    type: "object",
+    properties: {
+      references: full.properties.references,
+      newReferences: full.properties.newReferences,
+    },
+    required: ["references", "newReferences"],
+    additionalProperties: false,
+  };
+}
+
 function exactSupport(keys: string[], raw: unknown) {
   const verdicts =
     raw && typeof raw === "object" && !Array.isArray(raw)
@@ -355,8 +371,12 @@ export function parseCompactSourceAudit(
       throw new Error(
         `Reference ${field} must be a known keyed value-and-proof entry, without a repeated field property.`,
       );
+    // valueKind is the model's semantic decision. A candidate classified as a
+    // date, party, heading or other non-reference is a removal, even if the
+    // model unnecessarily echoed the candidate text in `value`.
     fields[field] = {
       ...reference,
+      value: reference.valueKind === "reference" ? reference.value : null,
       sourceFileName: document.sourceFileName,
     };
   }
@@ -389,6 +409,14 @@ export function parseCompactSourceAudit(
       throw new Error(
         `New reference ${field} has unexpected evidence properties.`,
       );
+    // A discovered candidate that the reviewer itself classifies as something
+    // other than a reference is not a reference-ledger entry.
+    if (
+      reference.valueKind !== "reference" ||
+      typeof reference.value !== "string" ||
+      !reference.value.trim()
+    )
+      continue;
     fields[field] = { ...entry, sourceFileName: document.sourceFileName };
   }
   const bindEvidence = (value: unknown, finding: string) => {

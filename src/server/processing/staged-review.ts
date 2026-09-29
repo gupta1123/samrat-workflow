@@ -22,6 +22,7 @@ import {
 import { ReviewContractError } from "./review-contract-error";
 import {
   buildSourceAuditSchema,
+  buildSourceReferenceRepairSchema,
   ownDocumentPages,
   parseCompactSourceAudit,
   parseGroundedReviewIssues,
@@ -166,6 +167,7 @@ async function completeReviewRequest<T>(options: {
   }
   throw new ReviewContractError(
     `Review task ${options.operation} could not be verified after two attempts. ${defect}`,
+    { operation: options.operation, defect, rejected },
   );
 }
 
@@ -194,6 +196,22 @@ const SOURCE_REVIEW_INSTRUCTION =
   "Use reviewIssues only for unresolved source findings with printed evidence; no invented business conflicts. " +
   "Return all required arrays, using empty arrays where appropriate. Keep reasons brief and do not include document IDs or filenames: the task binds its own source pointers.";
 
+const SOURCE_REFERENCE_REPAIR_INSTRUCTION =
+  "You are repairing ONLY the reference ledger for one source document after its full audit failed validation. " +
+  "Return exactly the requested references and newReferences JSON. Re-read the supplied original page images. " +
+  "For each original candidate, decide from its printed label and layout whether it is truly that reference field. " +
+  "If it is, use valueKind reference and copy the literal printed value, literal label, page pointer and a brief quote containing both. " +
+  "If it is actually a heading, date, party, document type, unrelated ID, absent or unreadable, return value null and the corresponding valueKind. " +
+  "Do not infer from formats, filenames or other documents. Do not return any non-reference audit fields.";
+
+function parseObjectOrNull(raw: string) {
+  try {
+    return object(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 async function reviewOneSource(options: {
   document: CaseDoc;
   pages: ReviewSourcePage[];
@@ -219,33 +237,108 @@ async function reviewOneSource(options: {
     key,
     store: options.store,
     validate,
-    run: () =>
-      completeReviewRequest({
-        operation: "source-document-review",
-        validate,
-        maxTokens: configuredPositive(
-          "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
-          8192,
-          32768,
-        ),
-        schema: buildSourceAuditSchema(options.document, options.pages),
-        messages: [
-          { role: "system", content: SOURCE_REVIEW_INSTRUCTION },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: JSON.stringify(context) },
-              ...options.pages.flatMap((page, index) => [
-                {
-                  type: "text" as const,
-                  text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
-                },
-                { type: "image_url" as const, image_url: { url: page.image } },
-              ]),
-            ],
+    run: async () => {
+      const sourceMessages: OpenRouterMessage[] = [
+        { role: "system", content: SOURCE_REVIEW_INSTRUCTION },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: JSON.stringify(context) },
+            ...options.pages.flatMap((page, index) => [
+              {
+                type: "text" as const,
+                text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+              },
+              { type: "image_url" as const, image_url: { url: page.image } },
+            ]),
+          ],
+        },
+      ];
+      try {
+        return await completeReviewRequest({
+          operation: "source-document-review",
+          validate,
+          maxTokens: configuredPositive(
+            "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+            8192,
+            32768,
+          ),
+          schema: buildSourceAuditSchema(options.document, options.pages),
+          messages: sourceMessages,
+        });
+      } catch (error) {
+        if (!(error instanceof ReviewContractError) || !error.rejected)
+          throw error;
+        const rejected = parseObjectOrNull(error.rejected);
+        if (!rejected) throw error;
+        const repairContext = {
+          validationDefect: error.defect,
+          referencesToReview: context.referencesToReview,
+          originalReferenceValues: Object.fromEntries(
+            context.referencesToReview.map((field) => [
+              field,
+              options.document.fields[field],
+            ]),
+          ),
+          sourcePagePointers: context.sourcePagePointers,
+        };
+        const repaired = await completeReviewRequest({
+          operation: "source-reference-repair",
+          schema: buildSourceReferenceRepairSchema(
+            options.document,
+            options.pages,
+          ),
+          maxTokens: configuredPositive(
+            "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+            8192,
+            32768,
+          ),
+          messages: [
+            { role: "system", content: SOURCE_REFERENCE_REPAIR_INSTRUCTION },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: JSON.stringify(repairContext) },
+                ...options.pages.flatMap((page, index) => [
+                  {
+                    type: "text" as const,
+                    text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                  },
+                  {
+                    type: "image_url" as const,
+                    image_url: { url: page.image },
+                  },
+                ]),
+              ],
+            },
+          ],
+          validate: (raw) => {
+            const patch = object(JSON.parse(raw));
+            if (
+              Object.keys(patch).some(
+                (key) => key !== "references" && key !== "newReferences",
+              ) ||
+              !Object.hasOwn(patch, "references") ||
+              !Object.hasOwn(patch, "newReferences")
+            )
+              throw new Error(
+                "Reference repair returned fields outside its repair contract.",
+              );
+            const merged = JSON.stringify({
+              ...rejected,
+              references: patch.references,
+              newReferences: patch.newReferences,
+            });
+            return { raw: merged, result: validate(merged) };
           },
-        ],
-      }),
+        });
+        return {
+          raw: repaired.result.raw,
+          result: repaired.result.result,
+          attempts: 2 + repaired.attempts,
+        };
+      }
+    },
   });
   return { ...cached, key };
 }
