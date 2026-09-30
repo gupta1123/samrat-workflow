@@ -80,6 +80,8 @@ export type SapReadDocument = Omit<SapGrpo, "DocumentLines"> & {
   >;
 };
 
+export type SapInspectorServiceLayerDataset = "po" | "grpo" | "ap-invoice";
+
 function testConfig() {
   const baseUrl = (process.env.SAP_SL_TEST_BASE_URL ?? "")
     .trim()
@@ -166,6 +168,11 @@ export async function withTestServiceLayer<T>(
     getUserFields: (
       tableName: string,
       description: string,
+    ) => Promise<Record<string, unknown>[]>;
+    listInspectorDocuments: (
+      dataset: SapInspectorServiceLayerDataset,
+      max: number,
+      additionalHeaderFields?: string[],
     ) => Promise<Record<string, unknown>[]>;
   }) => Promise<T>,
 ): Promise<T> {
@@ -652,6 +659,43 @@ export async function withTestServiceLayer<T>(
         return Array.isArray(body.value)
           ? (body.value as Record<string, unknown>[])
           : [];
+      },
+      async listInspectorDocuments(
+        dataset,
+        max,
+        additionalHeaderFields = [],
+      ) {
+        const entity =
+          dataset === "po"
+            ? "PurchaseOrders"
+            : dataset === "grpo"
+              ? "PurchaseDeliveryNotes"
+              : "PurchaseInvoices";
+        const safeAdditionalFields = additionalHeaderFields.filter((field) =>
+          /^[A-Za-z_][A-Za-z0-9_]*$/.test(field),
+        );
+        const selectedFields = [
+          "DocEntry",
+          "DocNum",
+          "DocDate",
+          "TaxDate",
+          "CardCode",
+          "CardName",
+          "NumAtCard",
+          "DocTotal",
+          "DocCurrency",
+          "DocumentStatus",
+          "Cancelled",
+          "Series",
+          "BPL_IDAssignedToInvoice",
+          "Comments",
+          "DocumentLines",
+          ...safeAdditionalFields,
+        ];
+        return pageAll<Record<string, unknown>>(
+          `/${entity}?$select=${[...new Set(selectedFields)].join(",")}&$orderby=DocEntry%20desc`,
+          Math.min(500, Math.max(1, Math.floor(max))),
+        );
       },
     });
   } finally {
