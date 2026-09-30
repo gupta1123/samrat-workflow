@@ -254,12 +254,25 @@ export async function withTestServiceLayer<T>(
   }
 
   async function pageAll<T>(path: string, max: number): Promise<T[]> {
-    return readODataCollection<T>({
-      initialPath: path,
-      baseUrl: config.baseUrl,
-      max,
-      read: async (nextPath) => (await request(nextPath)).body,
-    });
+    try {
+      return await readODataCollection<T>({
+        initialPath: path,
+        baseUrl: config.baseUrl,
+        max,
+        read: async (nextPath) => (await request(nextPath)).body,
+      });
+    } catch (error) {
+      const entity = path.split("?", 1)[0];
+      throw new Error(
+        `${entity} paging failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async function collectionOnce<T>(path: string, max: number): Promise<T[]> {
+    const separator = path.includes("?") ? "&" : "?";
+    const { body } = await request(`${path}${separator}$top=${max}`);
+    return Array.isArray(body.value) ? (body.value as T[]).slice(0, max) : [];
   }
 
   async function listOpenGrposByFilter(filter: string): Promise<SapGrpo[]> {
@@ -524,13 +537,13 @@ export async function withTestServiceLayer<T>(
             `contains(CardCode,'${variant}')`,
           ])
           .join(" or ");
-        return pageAll<SapSupplierRow>(
+        return collectionOnce<SapSupplierRow>(
           `/BusinessPartners?$select=CardCode,CardName,BPAddresses&$filter=${encodeURIComponent(`CardType eq 'cSupplier' and (${filter})`)}&$orderby=CardCode%20asc`,
           25,
         );
       },
       async getSupplier(cardCode) {
-        const rows = await pageAll<SapSupplierRow>(
+        const rows = await collectionOnce<SapSupplierRow>(
           `/BusinessPartners?$select=CardCode,CardName,BPAddresses&$filter=${encodeURIComponent(`CardCode eq '${cardCode.replaceAll("'", "''")}' and CardType eq 'cSupplier'`)}`,
           1,
         );
@@ -576,7 +589,7 @@ export async function withTestServiceLayer<T>(
         // one missing field cannot break NumAtCard or the other configured keys.
         for (const identifier of identifiers) {
           try {
-            const rows = await pageAll<SapMatchDocument>(
+            const rows = await collectionOnce<SapMatchDocument>(
               "/PurchaseDeliveryNotes?$filter=" +
                 encodeURIComponent(
                   `CardCode eq '${literal(input.cardCode)}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO' and ${identifier.filter}`,
@@ -613,9 +626,9 @@ export async function withTestServiceLayer<T>(
             .map((entry) => `DocEntry eq ${entry}`)
             .join(" or ");
           documents.push(
-            ...(await pageAll<SapMatchDocument>(
+            ...(await collectionOnce<SapMatchDocument>(
               `/PurchaseOrders?$filter=${encodeURIComponent(filter)}`,
-              100,
+              15,
             )),
           );
         }
@@ -630,9 +643,9 @@ export async function withTestServiceLayer<T>(
             .map((code) => `ItemCode eq '${code.replaceAll("'", "''")}'`)
             .join(" or ");
           rows.push(
-            ...(await pageAll<SapItemRow>(
+            ...(await collectionOnce<SapItemRow>(
               `/Items?$select=ItemCode,ItemName,InventoryItem&$filter=${encodeURIComponent(filter)}`,
-              100,
+              15,
             )),
           );
         }
@@ -648,7 +661,7 @@ export async function withTestServiceLayer<T>(
             `contains(ItemCode,'${variant}')`,
           ])
           .join(" or ");
-        return pageAll<SapItemRow>(
+        return collectionOnce<SapItemRow>(
           `/Items?$select=ItemCode,ItemName,InventoryItem&$filter=${encodeURIComponent(`Valid eq 'tYES' and (${filter})`)}&$orderby=ItemCode%20asc`,
           25,
         );
