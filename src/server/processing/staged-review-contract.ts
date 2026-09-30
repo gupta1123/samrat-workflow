@@ -262,6 +262,33 @@ export function buildSourceFieldChangesRepairSchema(
   };
 }
 
+const SOURCE_AUDIT_REPAIR_KEYS = [
+  "sourceVerdict",
+  "fieldChecks",
+  "lineItemChecks",
+  "removalEvidence",
+  "structureChange",
+  "pageQuality",
+  "reviewIssues",
+  "reason",
+] as const;
+
+export function buildSourceAuditRepairSchema(
+  document: CaseDoc,
+  pages: ReviewSourcePage[],
+) {
+  const full = buildSourceAuditSchema(document, pages);
+  const properties = full.properties as Record<string, unknown>;
+  return {
+    type: "object",
+    properties: Object.fromEntries(
+      SOURCE_AUDIT_REPAIR_KEYS.map((key) => [key, properties[key]]),
+    ),
+    required: [...SOURCE_AUDIT_REPAIR_KEYS],
+    additionalProperties: false,
+  };
+}
+
 function exactSupport(keys: string[], raw: unknown) {
   const verdicts =
     raw && typeof raw === "object" && !Array.isArray(raw)

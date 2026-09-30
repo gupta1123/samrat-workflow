@@ -1312,6 +1312,82 @@ test("a non-reference correction with normalized evidence is repaired without en
   assert.equal(result.documents[0].fields.igstRate, "18%");
 });
 
+test("an inconsistent source audit is repaired from its own page without fabricating removal evidence", async (t) => {
+  const previousConcurrency = process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+  process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = "1";
+  t.after(() => {
+    if (previousConcurrency === undefined) {
+      delete process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+    } else {
+      process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = previousConcurrency;
+    }
+  });
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const payloads = await Promise.all(documents.map(compact));
+  const invalid = structuredClone(payloads[0]);
+  const unsupportedField = Object.keys(invalid.fieldChecks)[0];
+  assert.ok(unsupportedField);
+  invalid.fieldChecks[unsupportedField] = "unsupported";
+  invalid.removalEvidence = null;
+  const sourceCalls = [0, 0];
+  let auditRepairCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        const index = context.sourcePageNumbers[0] - 1;
+        sourceCalls[index]++;
+        return response(index === 0 ? invalid : payloads[index]);
+      }
+      if (name === "source_audit_repair") {
+        auditRepairCalls++;
+        assert.equal(context.validationDefect.includes("removalEvidence"), true);
+        const validAudit = payloads[0] as unknown as Record<string, unknown>;
+        return response(
+          Object.fromEntries(
+            [
+              "sourceVerdict",
+              "fieldChecks",
+              "lineItemChecks",
+              "removalEvidence",
+              "structureChange",
+              "pageQuality",
+              "reviewIssues",
+              "reason",
+            ].map((key) => [key, validAudit[key]]),
+          ),
+        );
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.deepEqual(sourceCalls, [1, 1]);
+  assert.equal(auditRepairCalls, 1);
+  assert.equal(
+    result.documents[0].fields[unsupportedField as keyof CaseDoc["fields"]],
+    documents[0].fields[unsupportedField as keyof CaseDoc["fields"]],
+  );
+});
+
 test("targeted packet contradiction rechecks only the affected source", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");

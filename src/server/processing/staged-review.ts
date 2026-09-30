@@ -27,6 +27,7 @@ import {
   type SourceReviewValidationSection,
 } from "./review-contract-error";
 import {
+  buildSourceAuditRepairSchema,
   buildSourceAuditSchema,
   buildSourceFieldChangesRepairSchema,
   buildSourceReferenceRepairSchema,
@@ -279,6 +280,25 @@ const SOURCE_FIELD_CHANGES_REPAIR_INSTRUCTION =
   "If a proposed change is unnecessary, inferred, absent, unreadable or cannot be paired with exact own-page evidence, omit it. An empty fieldChanges array is valid. " +
   "Do not return references, support votes, quality findings, structure changes or any other audit fields.";
 
+const SOURCE_AUDIT_REPAIR_KEYS = [
+  "sourceVerdict",
+  "fieldChecks",
+  "lineItemChecks",
+  "removalEvidence",
+  "structureChange",
+  "pageQuality",
+  "reviewIssues",
+  "reason",
+] as const;
+
+const SOURCE_AUDIT_REPAIR_INSTRUCTION =
+  "You are repairing ONLY the source-audit consistency for one document after its full audit failed validation. " +
+  "Return exactly sourceVerdict, fieldChecks, lineItemChecks, removalEvidence, structureChange, pageQuality, reviewIssues and reason. Re-read the supplied original page images. " +
+  "Return one support vote for every supplied field and line-item property. A supported vote means the current value is visibly supported by this source. " +
+  "An unsupported vote removes the current value and therefore requires a brief own-page removalEvidence quote showing why that value is not supported; if the source does not prove removal, mark it supported instead. " +
+  "Keep structureChange null unless the document type or table truly needs a source-proved correction. Do not repeat a table merely to remove properties selected by unsupported votes. " +
+  "Keep all quality findings and review issues tied to literal evidence on this source. Do not return references, newReferences or fieldChanges.";
+
 function parseObjectOrNull(raw: string) {
   try {
     return object(JSON.parse(raw));
@@ -334,7 +354,11 @@ async function reviewOneSource(options: {
           operation: "source-document-review",
           validate,
           outputLimitFallbackModel: getExtractionReviewFallbackModel(),
-          stopAfterValidationSections: ["references", "field-changes"],
+          stopAfterValidationSections: [
+            "references",
+            "field-changes",
+            "source-audit",
+          ],
           maxTokens: configuredPositive(
             "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
             8192,
@@ -347,8 +371,7 @@ async function reviewOneSource(options: {
         if (
           !(error instanceof ReviewContractError) ||
           !error.rejected ||
-          (error.validationSection !== "references" &&
-            error.validationSection !== "field-changes")
+          !error.validationSection
         )
           throw error;
         const rejected = parseObjectOrNull(error.rejected);
@@ -408,6 +431,76 @@ async function reviewOneSource(options: {
                 ...rejected,
                 fieldChanges: patch.fieldChanges,
               });
+              return { raw: merged, result: validate(merged) };
+            },
+          });
+          return {
+            raw: repaired.result.raw,
+            result: repaired.result.result,
+            attempts: 1 + repaired.attempts,
+          };
+        }
+        if (error.validationSection === "source-audit") {
+          const proposedAudit = Object.fromEntries(
+            SOURCE_AUDIT_REPAIR_KEYS.map((key) => [key, rejected[key]]),
+          );
+          const repairContext = {
+            validationDefect: error.defect,
+            document: context.document,
+            fieldChecksInOrder: context.fieldChecksInOrder,
+            lineItemChecksInOrder: context.lineItemChecksInOrder,
+            sourcePagePointers: context.sourcePagePointers,
+            proposedAudit,
+          };
+          const repaired = await completeReviewRequest({
+            operation: "source-audit-repair",
+            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+            schema: buildSourceAuditRepairSchema(
+              options.document,
+              options.pages,
+            ),
+            maxTokens: configuredPositive(
+              "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+              8192,
+              32768,
+            ),
+            messages: [
+              { role: "system", content: SOURCE_AUDIT_REPAIR_INSTRUCTION },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: JSON.stringify(repairContext) },
+                  ...options.pages.flatMap((page, index) => [
+                    {
+                      type: "text" as const,
+                      text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                    },
+                    {
+                      type: "image_url" as const,
+                      image_url: { url: page.image },
+                    },
+                  ]),
+                ],
+              },
+            ],
+            validate: (raw) => {
+              const patch = object(JSON.parse(raw));
+              if (
+                Object.keys(patch).length !== SOURCE_AUDIT_REPAIR_KEYS.length ||
+                Object.keys(patch).some(
+                  (key) =>
+                    !SOURCE_AUDIT_REPAIR_KEYS.includes(
+                      key as (typeof SOURCE_AUDIT_REPAIR_KEYS)[number],
+                    ),
+                ) ||
+                SOURCE_AUDIT_REPAIR_KEYS.some(
+                  (key) => !Object.hasOwn(patch, key),
+                )
+              )
+                throw new Error(
+                  "Source-audit repair returned fields outside its repair contract.",
+                );
+              const merged = JSON.stringify({ ...rejected, ...patch });
               return { raw: merged, result: validate(merged) };
             },
           });
