@@ -56,6 +56,8 @@ function receipt(
       price: poRate,
       vehicle: null,
       vendorRef: null,
+      eWayBill: null,
+      lorryReceipt: null,
       ...rest,
     },
     po: {
@@ -221,6 +223,31 @@ test("a rate above the limit needs a written reason", () => {
   const done = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, "rate-0", "confirm", "Market rise agreed by phone") });
   assert.equal(done.status, "ready");
   assert.equal(done.payload!.lines[0].unitPrice, 63887);
+});
+
+test("the Tata Wiron invoice rate below PO 275 still needs a written approval", () => {
+  const inv = invoice({
+    poReferences: ["TGPO26-"],
+    freightAmount: 0,
+    taxableTotal: 34.98 * 68000,
+  });
+  const ctx = context([
+    receipt(691, {
+      poRef: "275",
+      poRate: 72750,
+      price: 72750,
+      poQty: 100,
+      vendorRef: "1444099137",
+      itemCode: "BW-TW20-091",
+      quantity: 34.98,
+      openQty: 34.98,
+    }),
+  ]);
+  const first = evaluateMatch({ invoice: inv, context: ctx });
+  const rate = first.checks.find((check) => check.id === "rate-0")!;
+  assert.equal(rate.sev, "confirm");
+  assert.match(rate.title, /below the PO/);
+  assert.equal(rate.options?.[0].needsReason, true);
 });
 
 test("an invoice that arrives before the truck waits", () => {

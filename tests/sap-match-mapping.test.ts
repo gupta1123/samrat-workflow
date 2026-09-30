@@ -203,6 +203,7 @@ test("goods receipts become engine lines with their PO references and vehicle", 
   assert.equal(lines.length, 1);
   assert.equal(lines[0].vehicle, "JH02BR9642");
   assert.equal(lines[0].vendorRef, "1444099137");
+  assert.equal(lines[0].eWayBill, null);
   assert.deepEqual(lines[0].poRefs, ["412", "TGPO26-0412"]);
   assert.equal(lines[0].poLineNum, 3);
   assert.equal(lines[0].branchId, 1);
@@ -216,13 +217,25 @@ test("a configured user-defined field supplies the truck and PO reference", () =
         DocNum: 2,
         CardCode: "V",
         U_Truck: "AP 02 TH 2989",
+        U_Invoice: "INV-9",
+        U_EWay: "481735818614",
+        U_LR: "LR-1",
         DocumentLines: [{ LineNum: 0, ItemCode: "X", Quantity: 5, RemainingOpenQuantity: 5, LineStatus: "bost_Open", BaseType: 22, BaseEntry: 9, BaseLine: 0 }],
       },
     ],
     [{ DocEntry: 9, DocNum: 90, U_PORef: "APPO26-0229" }],
-    { vehicleField: "U_Truck", poRefFields: ["U_PORef"] },
+    {
+      vehicleField: "U_Truck",
+      invoiceRefField: "U_Invoice",
+      eWayBillField: "U_EWay",
+      lorryReceiptField: "U_LR",
+      poRefFields: ["U_PORef"],
+    },
   );
   assert.equal(line.vehicle, "AP02TH2989");
+  assert.equal(line.vendorRef, "INV-9");
+  assert.equal(line.eWayBill, "481735818614");
+  assert.equal(line.lorryReceipt, "LR-1");
   assert.ok(line.poRefs.includes("APPO26-0229"));
 });
 

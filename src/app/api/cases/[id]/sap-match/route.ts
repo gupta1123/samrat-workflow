@@ -8,12 +8,12 @@ import {
 } from "@/server/api/helpers";
 import { readSapEnvironment } from "@/server/sap/config";
 import {
-  computeCaseMatch,
   loadMatchState,
   saveItemMapping,
   saveMatchState,
   saveVendorMapping,
 } from "@/server/sap/match-data";
+import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
 import { buildMatchInvoice, vendorKeys } from "@/server/sap/match-mapping";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 
@@ -67,10 +67,35 @@ export async function GET(request: Request, context: Context) {
       };
     }
     try {
-      const match = await withTestServiceLayer((client) =>
-        computeCaseMatch({ db, client, caseRow: row }),
-      );
-      return { ...base, ...match };
+      const force = new URL(request.url).searchParams.get("refresh") === "1";
+      let job = await readSapMatchJob(db, user, id);
+      if (!job || force) job = await enqueueSapMatch(db, user, id, force);
+      const matchJob = {
+        status: job.status,
+        stage: job.stage,
+        error: job.error,
+        attempt: job.attempt_count,
+        requestedAt: job.requested_at,
+        finishedAt: job.finished_at,
+      };
+      if (job.status === "succeeded" && job.result) {
+        return { ...base, ...job.result, matchJob };
+      }
+      if (job.status === "failed") {
+        return {
+          ...base,
+          available: false,
+          matchJob,
+          sapError: job.error ?? "SAP matching failed.",
+          reason: "SAP matching could not finish. Re-check to try again.",
+        };
+      }
+      return {
+        ...base,
+        available: false,
+        matchJob,
+        reason: "SAP matching is running in the background.",
+      };
     } catch (error) {
       console.error("SAP match failed", {
         caseId: id,
@@ -119,6 +144,7 @@ export async function POST(request: Request, context: Context) {
       });
       if (event.error) console.error("Could not record SAP match event:", event.error.message);
     };
+    const requeue = () => enqueueSapMatch(db, user, id, true);
 
     if (action === "decide" || action === "undo") {
       const checkId = typeof body.checkId === "string" ? body.checkId : "";
@@ -128,6 +154,7 @@ export async function POST(request: Request, context: Context) {
         delete state.decisions[checkId];
         await saveMatchState(db, id, user, state);
         await audit("sap_match_decision_undone", { checkId });
+        await requeue();
         return { ok: true };
       }
       const choice = typeof body.choice === "string" ? body.choice.trim() : "";
@@ -140,6 +167,7 @@ export async function POST(request: Request, context: Context) {
       };
       await saveMatchState(db, id, user, state);
       await audit("sap_match_decision", { checkId, choice, reason: reason || null });
+      await requeue();
       return { ok: true };
     }
 
@@ -153,6 +181,7 @@ export async function POST(request: Request, context: Context) {
         delete state.allocations[String(lineIndex)];
         await saveMatchState(db, id, user, state);
         await audit("sap_match_allocation_reset", { lineIndex });
+        await requeue();
         return { ok: true };
       }
       const raw = record(body.allocations);
@@ -169,6 +198,7 @@ export async function POST(request: Request, context: Context) {
       state.allocations[String(lineIndex)] = allocations;
       await saveMatchState(db, id, user, state);
       await audit("sap_match_allocation_set", { lineIndex, allocations });
+      await requeue();
       return { ok: true };
     }
 
@@ -193,6 +223,7 @@ export async function POST(request: Request, context: Context) {
         userId: user,
       });
       await audit("sap_item_linked", { vendorCardCode, mappingKey, sapItemCode });
+      await requeue();
       return { ok: true };
     }
 
@@ -232,6 +263,7 @@ export async function POST(request: Request, context: Context) {
         });
       }
       await audit("sap_vendor_linked", { cardCode: supplier.CardCode, keys });
+      await requeue();
       return { ok: true };
     }
 

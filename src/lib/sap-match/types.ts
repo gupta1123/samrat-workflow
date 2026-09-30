@@ -6,7 +6,7 @@ export type FreightPolicy = "expense" | "item" | "separate";
 export type MatchRules = {
   /** How much more than received a vendor may bill before the invoice is blocked (percent of received). */
   qtyTolerancePct: number;
-  /** How much above the PO rate is accepted with a simple confirmation (percent). */
+  /** How much the invoice rate may differ from the PO with a simple confirmation (percent). */
   rateTolerancePct: number;
   freightPolicy: FreightPolicy;
   /** Which date SAP books the invoice on. The GST (tax) date is always the vendor's invoice date. */
@@ -95,6 +95,9 @@ export type SapReceiptLine = {
   vehicle: string | null;
   /** The vendor invoice number stores may have written on the receipt. */
   vendorRef: string | null;
+  /** Strong logistics identifiers copied from the receipt header. */
+  eWayBill: string | null;
+  lorryReceipt: string | null;
   /** Free text such as "Two trucks were unloaded on one receipt". */
   note?: string | null;
   /** Set when the receipt is already fully billed, to explain the rejection. */

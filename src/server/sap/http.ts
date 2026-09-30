@@ -1,5 +1,3 @@
-import "server-only";
-
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 let proxyUrl: string | null = null;

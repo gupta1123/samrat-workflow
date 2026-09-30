@@ -1,5 +1,3 @@
-import "server-only";
-
 import { sapFetch } from "./http";
 import type { SapGrpo } from "./ap-draft";
 import {
@@ -134,6 +132,17 @@ export async function withTestServiceLayer<T>(
     listOpenReceiptDocumentsForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
+    findOpenReceiptDocumentsForInvoice: (input: {
+      cardCode: string;
+      invoiceNumber: string;
+      eWayBill: string | null;
+      lorryReceipt: string | null;
+      vehicles: string[];
+      invoiceRefField?: string;
+      eWayBillField?: string;
+      lorryReceiptField?: string;
+      vehicleField?: string;
+    }) => Promise<SapMatchDocument[]>;
     listOpenPurchaseOrdersForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
@@ -536,6 +545,54 @@ export async function withTestServiceLayer<T>(
             "&$orderby=DocEntry%20asc",
           1000,
         );
+      },
+      async findOpenReceiptDocumentsForInvoice(input) {
+        const safeField = (value: string | undefined) =>
+          value && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : null;
+        const literal = (value: string) => value.replaceAll("'", "''");
+        const identifiers: Array<{ label: string; filter: string }> = [];
+        if (input.invoiceNumber.trim()) {
+          const value = literal(input.invoiceNumber.trim());
+          identifiers.push({ label: "NumAtCard", filter: `NumAtCard eq '${value}'` });
+          const field = safeField(input.invoiceRefField);
+          if (field) identifiers.push({ label: field, filter: `${field} eq '${value}'` });
+        }
+        const add = (fieldName: string | undefined, value: string | null) => {
+          const field = safeField(fieldName);
+          const wanted = value?.trim();
+          if (field && wanted) identifiers.push({ label: field, filter: `${field} eq '${literal(wanted)}'` });
+        };
+        add(input.eWayBillField, input.eWayBill);
+        add(input.lorryReceiptField, input.lorryReceipt);
+        const vehicleField = safeField(input.vehicleField);
+        if (vehicleField) {
+          for (const vehicle of input.vehicles.filter(Boolean).slice(0, 4)) {
+            identifiers.push({ label: vehicleField, filter: `${vehicleField} eq '${literal(vehicle)}'` });
+          }
+        }
+        if (!identifiers.length) return [];
+        // Query identifiers independently in strength order. Besides returning
+        // as soon as an exact key succeeds, this makes optional SAP UDFs safe:
+        // one missing field cannot break NumAtCard or the other configured keys.
+        for (const identifier of identifiers) {
+          try {
+            const rows = await pageAll<SapMatchDocument>(
+              "/PurchaseDeliveryNotes?$filter=" +
+                encodeURIComponent(
+                  `CardCode eq '${literal(input.cardCode)}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO' and ${identifier.filter}`,
+                ) +
+                "&$orderby=DocEntry%20desc",
+              100,
+            );
+            if (rows.length) return rows;
+          } catch (error) {
+            console.warn(
+              `Could not query SAP receipts by ${identifier.label}; trying the next exact identifier.`,
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+        return [];
       },
       async listOpenPurchaseOrdersForVendor(cardCode) {
         return pageAll<SapMatchDocument>(

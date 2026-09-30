@@ -69,11 +69,11 @@ export function SapMatchPanel({
   const [showPassed, setShowPassed] = useState(false);
 
   const load = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, refresh = false) => {
       if (!quiet) setLoading(true);
       setLoadError(null);
       try {
-        setData(await fetchSapMatch(caseId));
+        setData(await fetchSapMatch(caseId, refresh));
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : "Could not load the SAP match.");
       } finally {
@@ -89,6 +89,12 @@ export function SapMatchPanel({
     setActionError(null);
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (data?.matchJob?.status !== "queued" && data?.matchJob?.status !== "running") return;
+    const timer = window.setTimeout(() => void load(true), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [data?.matchJob?.status, data?.matchJob?.attempt, data?.matchJob?.stage, load]);
 
   async function act(action: SapMatchAction) {
     setBusy(true);
@@ -117,6 +123,13 @@ export function SapMatchPanel({
     await load(true);
   }
 
+  async function recheck() {
+    setBusy(true);
+    setActionError(null);
+    await load(true, true);
+    setBusy(false);
+  }
+
   if (loading) {
     return (
       <div className="flex items-center gap-2 px-4 py-6 text-xs text-[#8a7f72]">
@@ -134,6 +147,28 @@ export function SapMatchPanel({
           <Button size="sm" variant="outline" className="ml-3 h-7 px-2.5 text-[11px]" onClick={() => void load()}>
             Retry
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (data.matchJob?.status === "queued" || data.matchJob?.status === "running") {
+    const stage = data.matchJob.stage || "Matching with SAP";
+    return (
+      <div className="px-4 py-4">
+        <div className="flex items-start gap-2.5 rounded-lg border border-[#d8d0c5] bg-[#fbfaf8] px-4 py-3">
+          <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-[#8a5a2b]" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[12px] font-semibold text-[#3d3530]">{stage}</div>
+            <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">
+              This continues safely in the background. You can leave this tab and return later.
+            </div>
+            {data.matchJob.error ? (
+              <div className="mt-1 text-[10px] text-[#9a5a0a]">
+                Previous attempt: {data.matchJob.error}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     );
@@ -174,7 +209,7 @@ export function SapMatchPanel({
             <div className="mt-0.5 text-[11px] text-[#8a7f72]">{message}</div>
             {data.sapError ? <div className="mt-1 break-words text-[10px] text-[#b3261e]">{data.sapError}</div> : null}
           </div>
-          <Button size="sm" variant="outline" className="h-7 px-2.5 text-[11px]" onClick={() => void load()}>
+          <Button size="sm" variant="outline" className="h-7 px-2.5 text-[11px]" onClick={() => void recheck()}>
             <RefreshCw className="h-3 w-3" /> Try again
           </Button>
         </div>
@@ -197,7 +232,7 @@ export function SapMatchPanel({
       onTogglePassed={() => setShowPassed((current) => !current)}
       onConfirmDraft={(value) => setConfirmingDraft(value)}
       onCreateDraft={() => void createDraft()}
-      onRefresh={() => void load(true)}
+      onRefresh={() => void recheck()}
       onChoose={choose}
       onUndo={(check) => void act({ action: "undo", checkId: check.id })}
       onAllocate={(lineIndex, allocations) => void act({ action: "allocate", lineIndex, allocations })}

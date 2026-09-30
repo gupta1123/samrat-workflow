@@ -257,6 +257,10 @@ export function vendorKeys(invoice: {
 export type SapFieldConfig = {
   /** User-defined field on the receipt that stores the truck number, e.g. U_VehicleNo. */
   vehicleField?: string;
+  /** User-defined receipt fields carrying exact packet identifiers. */
+  invoiceRefField?: string;
+  eWayBillField?: string;
+  lorryReceiptField?: string;
   /** User-defined fields on the PO that carry the PO number printed on vendor invoices. */
   poRefFields?: string[];
 };
@@ -306,6 +310,8 @@ export function mapReceiptLines(
         findVehicles(explicitVehicle)[0] ??
         findVehicles(document.Comments)[0] ??
         null;
+      const receiptField = (field: string | undefined) =>
+        field ? text(line[field]) || text(document[field]) : "";
       lines.push({
         kind: "GRPO",
         docEntry,
@@ -324,7 +330,10 @@ export function mapReceiptLines(
         openQty: open,
         price: amount(line.Price),
         vehicle,
-        vendorRef: text(document.NumAtCard) || null,
+        vendorRef:
+          receiptField(config.invoiceRefField) || text(document.NumAtCard) || null,
+        eWayBill: receiptField(config.eWayBillField) || null,
+        lorryReceipt: receiptField(config.lorryReceiptField) || null,
         note: text(document.Comments) || null,
       });
     }
