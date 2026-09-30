@@ -28,6 +28,7 @@ import {
 } from "./review-contract-error";
 import {
   buildSourceAuditSchema,
+  buildSourceFieldChangesRepairSchema,
   buildSourceReferenceRepairSchema,
   ownDocumentPages,
   parseCompactSourceAudit,
@@ -124,6 +125,7 @@ async function completeReviewRequest<T>(options: {
   messages: OpenRouterMessage[];
   maxTokens: number;
   outputLimitFallbackModel?: string;
+  stopAfterValidationSections?: SourceReviewValidationSection[];
   validate: (raw: string) => T;
 }) {
   let defect = "";
@@ -206,6 +208,20 @@ async function completeReviewRequest<T>(options: {
         attempt,
         defect,
       });
+      if (
+        validationSection &&
+        options.stopAfterValidationSections?.includes(validationSection)
+      ) {
+        throw new ReviewContractError(
+          `Review task ${options.operation} requires targeted repair. ${defect}`,
+          {
+            operation: options.operation,
+            defect,
+            rejected,
+            validationSection,
+          },
+        );
+      }
       if (canFailOver && !fallbackActivated) fallbackActivated = true;
     }
   }
@@ -253,6 +269,15 @@ const SOURCE_REFERENCE_REPAIR_INSTRUCTION =
   "If it is, use valueKind reference and copy the literal printed value, literal label, page pointer and a brief quote containing both. " +
   "If it is actually a heading, date, party, document type, unrelated ID, absent or unreadable, return value null and the corresponding valueKind. " +
   "Do not infer from formats, filenames or other documents. Do not return any non-reference audit fields.";
+
+const SOURCE_FIELD_CHANGES_REPAIR_INSTRUCTION =
+  "You are repairing ONLY the non-reference fieldChanges for one source document after its full audit failed validation. " +
+  "Return exactly one fieldChanges array and no other audit properties. Re-read the supplied original page images. " +
+  "Keep only actual additions or corrections that are visibly supported on this source. " +
+  "For printed evidence, copy the value verbatim from a brief own-page quote that contains that exact value; do not normalize units, punctuation, percentages, dates or numbers. " +
+  "For visual_observation evidence, use it only for fields whose supplied field meaning declares that evidence kind. " +
+  "If a proposed change is unnecessary, inferred, absent, unreadable or cannot be paired with exact own-page evidence, omit it. An empty fieldChanges array is valid. " +
+  "Do not return references, support votes, quality findings, structure changes or any other audit fields.";
 
 function parseObjectOrNull(raw: string) {
   try {
@@ -309,6 +334,7 @@ async function reviewOneSource(options: {
           operation: "source-document-review",
           validate,
           outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+          stopAfterValidationSections: ["references", "field-changes"],
           maxTokens: configuredPositive(
             "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
             8192,
@@ -321,11 +347,76 @@ async function reviewOneSource(options: {
         if (
           !(error instanceof ReviewContractError) ||
           !error.rejected ||
-          error.validationSection !== "references"
+          (error.validationSection !== "references" &&
+            error.validationSection !== "field-changes")
         )
           throw error;
         const rejected = parseObjectOrNull(error.rejected);
         if (!rejected) throw error;
+        if (error.validationSection === "field-changes") {
+          const repairContext = {
+            validationDefect: error.defect,
+            currentFields: options.document.fields,
+            proposedFieldChanges: rejected.fieldChanges,
+            fieldMeanings: context.fieldMeanings,
+            sourcePagePointers: context.sourcePagePointers,
+          };
+          const repaired = await completeReviewRequest({
+            operation: "source-field-changes-repair",
+            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+            schema: buildSourceFieldChangesRepairSchema(
+              options.document,
+              options.pages,
+            ),
+            maxTokens: configuredPositive(
+              "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+              8192,
+              32768,
+            ),
+            messages: [
+              {
+                role: "system",
+                content: SOURCE_FIELD_CHANGES_REPAIR_INSTRUCTION,
+              },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: JSON.stringify(repairContext) },
+                  ...options.pages.flatMap((page, index) => [
+                    {
+                      type: "text" as const,
+                      text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                    },
+                    {
+                      type: "image_url" as const,
+                      image_url: { url: page.image },
+                    },
+                  ]),
+                ],
+              },
+            ],
+            validate: (raw) => {
+              const patch = object(JSON.parse(raw));
+              if (
+                Object.keys(patch).some((key) => key !== "fieldChanges") ||
+                !Object.hasOwn(patch, "fieldChanges")
+              )
+                throw new Error(
+                  "Field-change repair returned fields outside its repair contract.",
+                );
+              const merged = JSON.stringify({
+                ...rejected,
+                fieldChanges: patch.fieldChanges,
+              });
+              return { raw: merged, result: validate(merged) };
+            },
+          });
+          return {
+            raw: repaired.result.raw,
+            result: repaired.result.result,
+            attempts: 1 + repaired.attempts,
+          };
+        }
         const repairContext = {
           validationDefect: error.defect,
           referencesToReview: context.referencesToReview,
@@ -391,7 +482,7 @@ async function reviewOneSource(options: {
         return {
           raw: repaired.result.raw,
           result: repaired.result.result,
-          attempts: 2 + repaired.attempts,
+          attempts: 1 + repaired.attempts,
         };
       }
     },

@@ -1,4 +1,5 @@
-export type SourceReviewValidationSection = "references" | "source-audit";
+export type SourceReviewValidationSection =
+  "references" | "field-changes" | "source-audit";
 
 export class SourceReviewValidationError extends Error {
   constructor(

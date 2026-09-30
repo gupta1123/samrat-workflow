@@ -1228,13 +1228,13 @@ test("an invalid reference proof is repaired from the original source page witho
   const result = await reviewExtractedDocumentsInStages(documents, {
     sourcePages: pages,
   });
-  assert.deepEqual(sourceCalls, [2, 1]);
+  assert.deepEqual(sourceCalls, [1, 1]);
   assert.equal(repairCalls, 1);
   assert.equal(result.documents[0].fields.referencePoNumber, "ORDER-27");
   assert.equal(result.review.sourceReviewCount, 2);
 });
 
-test("a non-reference source defect never enters the reference-only repair contract", async (t) => {
+test("a non-reference correction with normalized evidence is repaired without entering the reference contract", async (t) => {
   const previousConcurrency = process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
   process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = "1";
   t.after(() => {
@@ -1246,41 +1246,70 @@ test("a non-reference source defect never enters the reference-only repair contr
   });
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");
-  const invalid = await compact(documents[0]);
+  const payloads = await Promise.all(documents.map(compact));
+  const invalid = structuredClone(payloads[0]);
   invalid.fieldChanges = [
     {
-      field: "buyerName",
-      value: "",
+      field: "igstRate",
+      value: "18.00 %",
       evidenceKind: "printed",
       pageNumber: "p1",
-      quote: "Buyer:",
+      quote: "IGST @ 18%",
     },
   ];
   const models: string[] = [];
   let referenceRepairCalls = 0;
+  let fieldRepairCalls = 0;
   t.mock.method(
     globalThis,
     "fetch",
     async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
       const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
       if (name === "source_reference_repair") referenceRepairCalls++;
       if (name === "source_document_review") {
-        models.push(body.model);
-        return response(invalid);
+        const index = context.sourcePageNumbers[0] - 1;
+        if (index === 0) models.push(body.model);
+        return response(index === 0 ? invalid : payloads[index]);
       }
-      throw new Error(`Unexpected task ${name}`);
+      if (name === "source_field_changes_repair") {
+        fieldRepairCalls++;
+        assert.equal(context.proposedFieldChanges[0].field, "igstRate");
+        return response({
+          fieldChanges: [
+            {
+              field: "igstRate",
+              value: "18%",
+              evidenceKind: "printed",
+              pageNumber: "p1",
+              quote: "IGST @ 18%",
+            },
+          ],
+        });
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
     },
   );
-  await assert.rejects(
-    reviewExtractedDocumentsInStages([documents[0]], {
-      sourcePages: [pages[0]],
-    }),
-    /source-document-review/,
-  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
   assert.equal(models[0], "~google/gemini-pro-latest");
-  assert.ok(models.includes("google/gemini-2.5-flash"));
+  assert.deepEqual(models, ["~google/gemini-pro-latest"]);
   assert.equal(referenceRepairCalls, 0);
+  assert.equal(fieldRepairCalls, 1);
+  assert.equal(result.documents[0].fields.igstRate, "18%");
 });
 
 test("targeted packet contradiction rechecks only the affected source", async (t) => {

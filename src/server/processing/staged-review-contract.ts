@@ -249,6 +249,19 @@ export function buildSourceReferenceRepairSchema(
   };
 }
 
+export function buildSourceFieldChangesRepairSchema(
+  document: CaseDoc,
+  pages: ReviewSourcePage[],
+) {
+  const full = buildSourceAuditSchema(document, pages);
+  return {
+    type: "object",
+    properties: { fieldChanges: full.properties.fieldChanges },
+    required: ["fieldChanges"],
+    additionalProperties: false,
+  };
+}
+
 function exactSupport(keys: string[], raw: unknown) {
   const verdicts =
     raw && typeof raw === "object" && !Array.isArray(raw)
@@ -477,56 +490,63 @@ export function parseCompactSourceAudit(
       ({ semanticKind }) => semanticKind !== "reference",
     ).map(({ key }) => key),
   );
-  for (const rawChange of array(payload.fieldChanges)) {
-    const change = object(rawChange);
-    const field = change.field as FieldKey;
-    if (
-      !nonReferences.has(field) ||
-      Object.hasOwn(changes, field) ||
-      Object.keys(change).some(
-        (key) =>
-          !["field", "value", "evidenceKind", "pageNumber", "quote"].includes(
-            key,
-          ),
-      ) ||
-      typeof change.value !== "string" ||
-      !change.value.trim()
-    )
-      throw new Error(
-        `Invalid or duplicate printed field change: ${String(change.field)}.`,
+  try {
+    for (const rawChange of array(payload.fieldChanges)) {
+      const change = object(rawChange);
+      const field = change.field as FieldKey;
+      if (
+        !nonReferences.has(field) ||
+        Object.hasOwn(changes, field) ||
+        Object.keys(change).some(
+          (key) =>
+            !["field", "value", "evidenceKind", "pageNumber", "quote"].includes(
+              key,
+            ),
+        ) ||
+        typeof change.value !== "string" ||
+        !change.value.trim()
+      )
+        throw new Error(
+          `Invalid or duplicate printed field change: ${String(change.field)}.`,
+        );
+      const value = change.value.trim();
+      const evidenceKind = change.evidenceKind ?? "printed";
+      if (evidenceKind !== "printed" && evidenceKind !== "visual_observation")
+        throw new Error(`Field ${field} has an unknown evidence kind.`);
+      const expectedKind =
+        FIELD_DEFINITIONS.find((definition) => definition.key === field)
+          ?.evidenceKind ?? "printed";
+      if (evidenceKind !== expectedKind)
+        throw new Error(
+          `Field ${field} requires ${expectedKind} evidence; visual observations cannot supply printed identifiers, amounts or weights.`,
+        );
+      const evidence = bindEvidence(
+        { pageNumber: change.pageNumber, quote: change.quote },
+        `Field ${field}`,
       );
-    const value = change.value.trim();
-    const evidenceKind = change.evidenceKind ?? "printed";
-    if (evidenceKind !== "printed" && evidenceKind !== "visual_observation")
-      throw new Error(`Field ${field} has an unknown evidence kind.`);
-    const expectedKind =
-      FIELD_DEFINITIONS.find((definition) => definition.key === field)
-        ?.evidenceKind ?? "printed";
-    if (evidenceKind !== expectedKind)
-      throw new Error(
-        `Field ${field} requires ${expectedKind} evidence; visual observations cannot supply printed identifiers, amounts or weights.`,
-      );
-    const evidence = bindEvidence(
-      { pageNumber: change.pageNumber, quote: change.quote },
-      `Field ${field}`,
+      if (evidenceKind === "printed" && !evidence.quote.includes(value))
+        throw new Error(
+          `Field ${field}: the proposed value must appear literally in its paired own-page quote; do not normalize or infer it.`,
+        );
+      if (fieldSupport[field] === "unsupported")
+        throw new Error(
+          `Field ${field} cannot be both unsupported and supplied as a printed correction.`,
+        );
+      pairedChanges.push({ field, value, evidenceKind, evidence });
+      changes[field] = value;
+      // One validated observation supplies both the mutation and the audit. The
+      // model never predicts the same missing value in a second list.
+      if (
+        evidenceKind === "printed" &&
+        !String(document.fields[field] ?? "").trim()
+      )
+        omissions.push({ field, value, evidence });
+    }
+  } catch (error) {
+    throw new SourceReviewValidationError(
+      "field-changes",
+      error instanceof Error ? error.message : String(error),
     );
-    if (evidenceKind === "printed" && !evidence.quote.includes(value))
-      throw new Error(
-        `Field ${field}: the proposed value must appear literally in its paired own-page quote; do not normalize or infer it.`,
-      );
-    if (fieldSupport[field] === "unsupported")
-      throw new Error(
-        `Field ${field} cannot be both unsupported and supplied as a printed correction.`,
-      );
-    pairedChanges.push({ field, value, evidenceKind, evidence });
-    changes[field] = value;
-    // One validated observation supplies both the mutation and the audit. The
-    // model never predicts the same missing value in a second list.
-    if (
-      evidenceKind === "printed" &&
-      !String(document.fields[field] ?? "").trim()
-    )
-      omissions.push({ field, value, evidence });
   }
   const unsupportedFields = Object.keys(fieldSupport).filter(
     (field) => fieldSupport[field] === "unsupported",
