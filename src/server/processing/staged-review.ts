@@ -114,6 +114,7 @@ async function completeReviewRequest<T>(options: {
 }) {
   let defect = "";
   let rejected = "";
+  let maxTokens = options.maxTokens;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const messages: OpenRouterMessage[] =
       attempt === 1
@@ -135,7 +136,7 @@ async function completeReviewRequest<T>(options: {
     try {
       raw = await callExtractionReviewModel(messages, {
         operation: options.operation,
-        maxTokens: options.maxTokens,
+        maxTokens,
         responseSchema: {
           name: options.operation.replaceAll("-", "_"),
           strict: true,
@@ -150,6 +151,7 @@ async function completeReviewRequest<T>(options: {
         attempt,
         defect,
       });
+      maxTokens = Math.min(32768, maxTokens * 2);
       rejected = "";
       continue;
     }

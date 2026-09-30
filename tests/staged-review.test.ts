@@ -674,7 +674,7 @@ test("full staged review resumes verified sources after a truncated packet respo
       }
       if (name === "packet_reconciliation") {
         packetCalls++;
-        assert.equal(body.max_tokens, 8192);
+        assert.equal(body.max_tokens, packetCalls === 2 ? 16384 : 8192);
         return response(packet(), failPacket ? "length" : "stop");
       }
       const context = JSON.parse(body.messages[1].content[0].text);
