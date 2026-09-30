@@ -17,10 +17,15 @@ import {
   getExtractionReviewModel,
   getExtractionReviewProvider,
   getExtractionReviewReasoningEffort,
+  isRetryableOpenRouterError,
   OpenRouterOutputLimitError,
   type OpenRouterMessage,
 } from "./openrouter";
-import { ReviewContractError } from "./review-contract-error";
+import {
+  ReviewContractError,
+  SourceReviewValidationError,
+  type SourceReviewValidationSection,
+} from "./review-contract-error";
 import {
   buildSourceAuditSchema,
   buildSourceReferenceRepairSchema,
@@ -126,7 +131,12 @@ async function completeReviewRequest<T>(options: {
   let maxTokens = options.maxTokens;
   let fallbackActivated = false;
   let attemptsUsed = 0;
-  for (let attempt = 1; attempt <= (fallbackActivated ? 3 : 2); attempt++) {
+  let validationSection: SourceReviewValidationSection | undefined;
+  const fallbackModel = options.outputLimitFallbackModel?.trim();
+  const canFailOver = Boolean(
+    fallbackModel && fallbackModel !== getExtractionReviewModel(),
+  );
+  for (let attempt = 1; attempt <= 2; attempt++) {
     attemptsUsed = attempt;
     const messages: OpenRouterMessage[] =
       attempt === 1
@@ -149,7 +159,11 @@ async function completeReviewRequest<T>(options: {
       raw = await callExtractionReviewModel(messages, {
         operation: options.operation,
         maxTokens,
-        model: fallbackActivated ? options.outputLimitFallbackModel : undefined,
+        model: fallbackActivated ? fallbackModel : undefined,
+        // A configured independent model is the retry for a transient primary
+        // provider response. Do not spend three attempts on the same provider
+        // before trying the already configured failover.
+        maxRetries: canFailOver && !fallbackActivated ? 0 : undefined,
         responseSchema: {
           name: options.operation.replaceAll("-", "_"),
           strict: true,
@@ -157,18 +171,23 @@ async function completeReviewRequest<T>(options: {
         },
       });
     } catch (error) {
-      if (!(error instanceof OpenRouterOutputLimitError)) throw error;
+      const outputLimited = error instanceof OpenRouterOutputLimitError;
+      const transientResponse = isRetryableOpenRouterError(error);
+      if (!outputLimited && !transientResponse) throw error;
       defect = error instanceof Error ? error.message : String(error);
       console.warn("[staged-review] task response rejected", {
         operation: options.operation,
         attempt,
         defect,
       });
-      if (options.outputLimitFallbackModel && !fallbackActivated) {
+      validationSection = undefined;
+      if (canFailOver && !fallbackActivated) {
         fallbackActivated = true;
         maxTokens = options.maxTokens;
-      } else {
+      } else if (outputLimited) {
         maxTokens = Math.min(32768, maxTokens * 2);
+      } else {
+        throw error;
       }
       rejected = "";
       continue;
@@ -178,28 +197,33 @@ async function completeReviewRequest<T>(options: {
       return { raw, result: options.validate(raw), attempts: attempt };
     } catch (error) {
       defect = error instanceof Error ? error.message : String(error);
+      validationSection =
+        error instanceof SourceReviewValidationError
+          ? error.section
+          : "source-audit";
       console.warn("[staged-review] task response rejected", {
         operation: options.operation,
         attempt,
         defect,
       });
+      if (canFailOver && !fallbackActivated) fallbackActivated = true;
     }
   }
-  const attemptLabel =
-    attemptsUsed === 2
-      ? "two"
-      : attemptsUsed === 3
-        ? "three"
-        : String(attemptsUsed);
+  const attemptLabel = attemptsUsed === 2 ? "two" : String(attemptsUsed);
   throw new ReviewContractError(
     `Review task ${options.operation} could not be verified after ${attemptLabel} attempts. ${defect}`,
-    { operation: options.operation, defect, rejected },
+    {
+      operation: options.operation,
+      defect,
+      rejected,
+      validationSection,
+    },
   );
 }
 
 const SOURCE_REVIEW_INSTRUCTION =
   "You are the Pro source-reviewer for ONE document. Return ONLY the required compact JSON. " +
-  "Read its original pages; first-pass fields and visibleText are untrusted proposals. " +
+  "Read its original pages; first-pass fields are untrusted proposals. The original page images are the source of truth. " +
   "Every pageNumber is a supplied sourcePagePointers pointer such as p1, NOT an integer. The app binds it to the exact original page. Do not use local numbers or an extracted table's sourcePage. " +
   'The response structure is {"sourceVerdict":"verified|needs_review","fieldChecks":{"requestedField":"supported|unsupported"},"lineItemChecks":{"requestedProperty":"supported|unsupported"},"references":{"canonicalReferenceField":{"value":"literal printed value or null","sourceLabel":"literal label","valueKind":"reference|document_type|date|party|other|absent|unreadable","pageNumber":"supplied pointer","quote":"literal own-page label and value"}},"newReferences":[],"fieldChanges":[{"field":"canonical non-reference field","value":"source-based value","evidenceKind":"printed|visual_observation","pageNumber":"supplied pointer","quote":"literal own-page words"}],"removalEvidence":null,"structureChange":null,"pageQuality":[{"pageNumber":"supplied pointer","issues":[],"approvalSafe":true,"confidence":"high|medium|low","reason":"visual assessment"}],"reviewIssues":[],"reason":"source-based explanation"}. This is a shape guide, not findings: inspect the pixels to fill every nested evidence and quality property; never return empty evidence objects. references can be {} when no references exist. Empty arrays mean no entries, not one empty object. ' +
   "Check EVERY populated field and every populated line-item property, and inspect for omitted, explicitly labelled values. " +
@@ -294,7 +318,11 @@ async function reviewOneSource(options: {
           messages: sourceMessages,
         });
       } catch (error) {
-        if (!(error instanceof ReviewContractError) || !error.rejected)
+        if (
+          !(error instanceof ReviewContractError) ||
+          !error.rejected ||
+          error.validationSection !== "references"
+        )
           throw error;
         const rejected = parseObjectOrNull(error.rejected);
         if (!rejected) throw error;
@@ -672,7 +700,6 @@ export async function reviewExtractedDocumentsInStages(
           sourcePageNumbers: document.sourcePageNumbers,
           fields: document.fields,
           lineItems: document.lineItems ?? [],
-          visibleText: document.md,
         })),
         sourceAudits: sourceReviews.map((result) => ({
           docId: result.document.id,
@@ -719,6 +746,7 @@ export async function reviewExtractedDocumentsInStages(
         const result = await completeReviewRequest({
           operation: "packet-reconciliation",
           validate: parsePacket,
+          outputLimitFallbackModel: getExtractionReviewFallbackModel(),
           schema: packetTaskSchema(currentDocuments, options.sourcePages),
           messages,
           maxTokens: configuredPositive(
@@ -835,6 +863,7 @@ export async function reviewExtractedDocumentsInStages(
           const result = await completeReviewRequest({
             operation: "packet-mismatch-decisions",
             validate,
+            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
             schema,
             maxTokens: configuredPositive(
               "PACKET_DECISION_REVIEW_MAX_OUTPUT_TOKENS",
@@ -901,9 +930,10 @@ export async function reviewExtractedDocumentsInStages(
     options.sourcePages,
     "packet",
   );
-  const rootCauseCandidates = buildRootCauseCandidates(
-    [...result.authoritativeReview.mismatches, ...packetReviewIssues],
-  );
+  const rootCauseCandidates = buildRootCauseCandidates([
+    ...result.authoritativeReview.mismatches,
+    ...packetReviewIssues,
+  ]);
   if (rootCauseCandidates.length) {
     await report(96, "Validating the root cause of every packet issue");
     const rootContext = object(
@@ -942,6 +972,7 @@ export async function reviewExtractedDocumentsInStages(
         const reviewed = await completeReviewRequest({
           operation: "packet-mismatch-root-causes",
           validate: validateRoot,
+          outputLimitFallbackModel: getExtractionReviewFallbackModel(),
           schema: ROOT_CAUSE_REVIEW_SCHEMA,
           maxTokens: configuredPositive(
             "PACKET_ROOT_CAUSE_MAX_OUTPUT_TOKENS",

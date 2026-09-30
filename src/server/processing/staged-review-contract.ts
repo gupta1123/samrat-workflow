@@ -7,9 +7,11 @@ import {
   type ReviewSourcePage,
 } from "./pipeline";
 import { REFERENCE_FIELD_DEFINITIONS } from "./semantic-grounding";
+import { readReferenceLedger } from "./reference-ledger";
+import { SourceReviewValidationError } from "./review-contract-error";
+import { STAGED_REVIEW_CONTRACT_VERSION } from "./checkpoint-contract";
 
-export const STAGED_REVIEW_CONTRACT_VERSION =
-  "all-packet-issues-root-cause-reviewed-v12";
+export { STAGED_REVIEW_CONTRACT_VERSION } from "./checkpoint-contract";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -419,6 +421,16 @@ export function parseCompactSourceAudit(
       continue;
     fields[field] = { ...entry, sourceFileName: document.sourceFileName };
   }
+  try {
+    // Validate the reference section independently so a later repair can be
+    // routed by contract ownership instead of parsing an error message.
+    readReferenceLedger({ document, fields, sourcePages: pages });
+  } catch (error) {
+    throw new SourceReviewValidationError(
+      "references",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   const bindEvidence = (value: unknown, finding: string) => {
     const proof = object(value);
     if (
@@ -757,7 +769,6 @@ export function sourceAuditContext(
       title: document.title,
       fields: document.fields,
       lineItems: document.lineItems ?? [],
-      visibleText: document.md,
       qualityIssues: document.qualityIssues ?? [],
     },
     sourcePageNumbers: pages.map((page) => page.pageNumber),

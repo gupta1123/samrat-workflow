@@ -16,12 +16,7 @@ import {
   type ReferenceGrounding,
 } from "./semantic-grounding";
 
-import sharp from "sharp";
-
-// Long-lived workers process many packets. Native image-cache allocations are
-// not useful after a page has been converted and can otherwise accumulate
-// outside the JavaScript heap between jobs.
-sharp.cache(false);
+import sharp from "./image-runtime";
 
 import { summarizeCase } from "@/server/case-summary";
 import {
@@ -2704,25 +2699,11 @@ function materializeReferenceLedgerReview(
         ...(Array.isArray(correction.fields) ? correction.fields : []),
         ...ledger.changes.map(({ field, value }) => ({ field, value })),
       ];
-      const omissions = Array.isArray(audit.visibleOmittedFields)
-        ? audit.visibleOmittedFields
-        : [];
-      for (const change of ledger.changes) {
-        if (
-          !document.fields[change.field] &&
-          change.value !== null &&
-          !omissions.some(
-            (item) => readObjectRecord(item)?.field === change.field,
-          )
-        ) {
-          omissions.push({
-            field: change.field,
-            value: change.value,
-            evidence: change.evidence,
-          });
-        }
-      }
-      audit.visibleOmittedFields = omissions;
+      // Reference changes already have their own semantic value-and-proof
+      // ledger and referenceEvidence. Do not duplicate them into the generic
+      // visible-omission list, whose exact printed-value rule is intentionally
+      // for non-reference field corrections. Wrapped identifiers are valid in
+      // the reference ledger and must not be rejected by a second contract.
     }
   }
   payload.corrections = corrections;

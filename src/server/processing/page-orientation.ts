@@ -1,4 +1,4 @@
-import sharp from "sharp";
+import sharp from "./image-runtime";
 
 export const PAGE_ORIENTATION_ROTATIONS = [0, 90, 180, 270] as const;
 
@@ -50,8 +50,9 @@ export async function buildPageOrientationViews(
   image: string,
 ): Promise<PageOrientationView[]> {
   const input = decodeImageDataUrl(image);
-  return Promise.all(
-    PAGE_ORIENTATION_ROTATIONS.map(async (rotation, index) => ({
+  const views: PageOrientationView[] = [];
+  for (const [index, rotation] of PAGE_ORIENTATION_ROTATIONS.entries()) {
+    views.push({
       view: `view_${index + 1}`,
       image: jpegDataUrl(
         await rotatedJpeg(input, rotation, {
@@ -59,8 +60,9 @@ export async function buildPageOrientationViews(
           quality: 76,
         }),
       ),
-    })),
-  );
+    });
+  }
+  return views;
 }
 
 export async function orientPageImageWithVision(params: {

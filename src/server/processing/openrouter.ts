@@ -91,6 +91,13 @@ function isRetryableStatus(status: number) {
   );
 }
 
+export function isRetryableOpenRouterError(error: unknown) {
+  return (
+    error instanceof OpenRouterRequestError ||
+    (error instanceof OpenRouterResponseError && isRetryableStatus(error.status))
+  );
+}
+
 function normalizeMaxTokens(value: number) {
   if (!Number.isFinite(value) || value <= 0) {
     return undefined;
@@ -115,6 +122,13 @@ export class OpenRouterResponseError extends Error {
   ) {
     super(message);
     this.name = "OpenRouterResponseError";
+  }
+}
+
+export class OpenRouterRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenRouterRequestError";
   }
 }
 
@@ -180,6 +194,7 @@ export async function callOpenRouter(
     operation?: string;
     requireCompleteOutput?: boolean;
     responseSchema?: OpenRouterResponseSchema;
+    maxRetries?: number;
   },
 ) {
   if (!OPENROUTER_API_KEY) {
@@ -199,10 +214,14 @@ export async function callOpenRouter(
     Number.isFinite(options?.timeoutMs) && Number(options?.timeoutMs) > 0
       ? Number(options?.timeoutMs)
       : OPENROUTER_TIMEOUT_MS;
+  const maxRetries =
+    Number.isInteger(options?.maxRetries) && Number(options?.maxRetries) >= 0
+      ? Number(options?.maxRetries)
+      : MAX_RETRIES;
   let attempt = 0;
   let lastError = "OpenRouter request failed";
 
-  while (attempt <= MAX_RETRIES) {
+  while (attempt <= maxRetries) {
     const requestStartedAt = Date.now();
     const abortController = new AbortController();
     const timeoutId = setTimeout(
@@ -293,7 +312,7 @@ export async function callOpenRouter(
         if (
           !isRetryableStatus(response.status) ||
           isHardQuotaError(errorText) ||
-          attempt === MAX_RETRIES
+          attempt === maxRetries
         ) {
           throw new OpenRouterResponseError(lastError, response.status);
         }
@@ -361,16 +380,15 @@ export async function callOpenRouter(
         attempt: attempt + 1,
         durationMs: Date.now() - requestStartedAt,
       });
-      if (isInvalidRequestConstruction(error) || attempt === MAX_RETRIES) {
-        throw new Error(lastError);
-      }
+      if (isInvalidRequestConstruction(error)) throw new Error(lastError);
+      if (attempt === maxRetries) throw new OpenRouterRequestError(lastError);
       const delayMs = RETRY_BASE_MS * Math.pow(2, attempt);
       await sleep(delayMs);
       attempt += 1;
     }
   }
 
-  throw new Error(lastError);
+  throw new OpenRouterRequestError(lastError);
 }
 
 export function getQualityExtractionModel() {
@@ -441,6 +459,7 @@ export async function callExtractionReviewModel(
     responseSchema?: OpenRouterResponseSchema;
     maxTokens?: number;
     model?: string;
+    maxRetries?: number;
   },
 ) {
   return callOpenRouter(messages, {
@@ -455,5 +474,6 @@ export async function callExtractionReviewModel(
     operation: options?.operation ?? "extraction-review",
     requireCompleteOutput: true,
     responseSchema: options?.responseSchema,
+    maxRetries: options?.maxRetries,
   });
 }

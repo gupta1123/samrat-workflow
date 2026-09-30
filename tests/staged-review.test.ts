@@ -186,6 +186,37 @@ test("a semantic non-reference verdict removes an echoed candidate value", async
   assert.equal(result.audit.status, "corrected");
 });
 
+test("a wrapped newly discovered reference is proved once without conflicting omission validation", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const raw = await compact(documents[0]);
+  raw.newReferences = [
+    {
+      field: "invoiceNumber",
+      value: "INV123456",
+      sourceLabel: "Invoice No",
+      valueKind: "reference",
+      pageNumber: "p1",
+      quote: "Invoice No: INV 123456",
+    },
+  ];
+  const result = parseCompactSourceAudit(JSON.stringify(raw), documents[0], [
+    pages[0],
+  ]);
+  assert.equal(result.document.fields.invoiceNumber, "INV123456");
+  assert.ok(
+    result.audit.referenceEvidence.some(
+      ({ field, value }) => field === "invoiceNumber" && value === "INV123456",
+    ),
+  );
+  assert.equal(
+    result.audit.visibleOmittedFields.some(
+      ({ field }) => field === "invoiceNumber",
+    ),
+    false,
+  );
+});
+
 test("source tasks reject omitted checks, foreign pointers, foreign pages and empty proof", async () => {
   const { parseCompactSourceAudit } =
     await import("../src/server/processing/staged-review-contract");
@@ -664,6 +695,10 @@ test("checkpoint reuse always revalidates; invalid responses and failed stages a
 test("checkpoint digests bind original content, fields, settings and contract, independent of object key order", async () => {
   const { reviewCheckpointKey } =
     await import("../src/server/processing/review-checkpoints");
+  const {
+    EXTRACTION_CHECKPOINT_CONTRACT_VERSION,
+    STAGED_REVIEW_CONTRACT_VERSION,
+  } = await import("../src/server/processing/checkpoint-contract");
   const input = {
     image: "original",
     field: "actual",
@@ -686,6 +721,14 @@ test("checkpoint digests bind original content, fields, settings and contract, i
       reviewCheckpointKey("source", { ...input, [field]: "changed" }),
     );
   assert.notEqual(key, reviewCheckpointKey("packet", input));
+  assert.notEqual(
+    EXTRACTION_CHECKPOINT_CONTRACT_VERSION,
+    STAGED_REVIEW_CONTRACT_VERSION,
+  );
+  assert.notEqual(
+    reviewCheckpointKey("extraction", input),
+    reviewCheckpointKey("source", input),
+  );
 });
 
 test("full staged review resumes verified sources after a truncated packet response and still blocks blank-invoice approval", async (t) => {
@@ -713,7 +756,9 @@ test("full staged review resumes verified sources after a truncated packet respo
       }
       if (name === "packet_reconciliation") {
         packetCalls++;
-        assert.equal(body.max_tokens, packetCalls === 2 ? 16384 : 8192);
+        assert.equal(body.max_tokens, 8192);
+        if (packetCalls === 2)
+          assert.equal(body.model, "google/gemini-2.5-flash");
         return response(packet(), failPacket ? "length" : "stop");
       }
       const context = JSON.parse(body.messages[1].content[0].text);
@@ -828,6 +873,111 @@ test("an incomplete source response fails over to the configured review model wi
   ]);
   assert.equal(result.review.sourceReviewCount, 2);
   assert.equal(result.review.authoritative, true);
+});
+
+test("a transient primary review response fails over without replaying the same provider", async (t) => {
+  const previousConcurrency = process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+  process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = "1";
+  t.after(() => {
+    if (previousConcurrency === undefined) {
+      delete process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+    } else {
+      process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = previousConcurrency;
+    }
+  });
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const sourcePayloads = await Promise.all(documents.map(compact));
+  const firstSourceModels: string[] = [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        const index = context.sourcePageNumbers[0] - 1;
+        if (index === 0) {
+          firstSourceModels.push(body.model);
+          if (firstSourceModels.length === 1)
+            return Response.json(
+              { error: { message: "temporary provider limit" } },
+              { status: 429 },
+            );
+        }
+        return response(sourcePayloads[index]);
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
+    },
+  );
+  await reviewExtractedDocumentsInStages(documents, { sourcePages: pages });
+  assert.deepEqual(firstSourceModels, [
+    "~google/gemini-pro-latest",
+    "google/gemini-2.5-flash",
+  ]);
+});
+
+test("a primary review network failure uses the independent fallback immediately", async (t) => {
+  const previousConcurrency = process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+  process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = "1";
+  t.after(() => {
+    if (previousConcurrency === undefined) {
+      delete process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+    } else {
+      process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = previousConcurrency;
+    }
+  });
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const sourcePayloads = await Promise.all(documents.map(compact));
+  const firstSourceModels: string[] = [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        const index = context.sourcePageNumbers[0] - 1;
+        if (index === 0) {
+          firstSourceModels.push(body.model);
+          if (firstSourceModels.length === 1)
+            throw new Error("simulated network reset");
+        }
+        return response(sourcePayloads[index]);
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
+    },
+  );
+  await reviewExtractedDocumentsInStages(documents, { sourcePages: pages });
+  assert.deepEqual(firstSourceModels, [
+    "~google/gemini-pro-latest",
+    "google/gemini-2.5-flash",
+  ]);
 });
 
 test("full staged review verifies all confirmed candidates through the root-cause contract", async (t) => {
@@ -1082,6 +1232,55 @@ test("an invalid reference proof is repaired from the original source page witho
   assert.equal(repairCalls, 1);
   assert.equal(result.documents[0].fields.referencePoNumber, "ORDER-27");
   assert.equal(result.review.sourceReviewCount, 2);
+});
+
+test("a non-reference source defect never enters the reference-only repair contract", async (t) => {
+  const previousConcurrency = process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+  process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = "1";
+  t.after(() => {
+    if (previousConcurrency === undefined) {
+      delete process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+    } else {
+      process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = previousConcurrency;
+    }
+  });
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const invalid = await compact(documents[0]);
+  invalid.fieldChanges = [
+    {
+      field: "buyerName",
+      value: "",
+      evidenceKind: "printed",
+      pageNumber: "p1",
+      quote: "Buyer:",
+    },
+  ];
+  const models: string[] = [];
+  let referenceRepairCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      if (name === "source_reference_repair") referenceRepairCalls++;
+      if (name === "source_document_review") {
+        models.push(body.model);
+        return response(invalid);
+      }
+      throw new Error(`Unexpected task ${name}`);
+    },
+  );
+  await assert.rejects(
+    reviewExtractedDocumentsInStages([documents[0]], {
+      sourcePages: [pages[0]],
+    }),
+    /source-document-review/,
+  );
+  assert.equal(models[0], "~google/gemini-pro-latest");
+  assert.ok(models.includes("google/gemini-2.5-flash"));
+  assert.equal(referenceRepairCalls, 0);
 });
 
 test("targeted packet contradiction rechecks only the affected source", async (t) => {

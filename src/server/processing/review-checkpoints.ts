@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { gzipSync, gunzipSync } from "node:zlib";
 import type { createSupabaseAdminClient } from "../supabase/admin";
-import { STAGED_REVIEW_CONTRACT_VERSION } from "./staged-review-contract";
+import {
+  checkpointContractForStage,
+  type ReviewCheckpointStage,
+} from "./checkpoint-contract";
 
 export type ReviewCheckpointStore = {
   read(key: string): Promise<string | null>;
@@ -25,10 +28,10 @@ export function reviewInputDigest(value: unknown) {
     .digest("hex");
 }
 export function reviewCheckpointKey(
-  stage: "extraction" | "source" | "packet" | "decisions" | "root-causes",
+  stage: ReviewCheckpointStage,
   input: unknown,
 ) {
-  return `${stage}/${reviewInputDigest({ contract: STAGED_REVIEW_CONTRACT_VERSION, input })}`;
+  return `${stage}/${reviewInputDigest({ contract: checkpointContractForStage(stage), input })}`;
 }
 
 // Server-only objects in the existing PRIVATE upload bucket. They have no
@@ -42,7 +45,7 @@ export function createReviewCheckpointStore(
   const prefix = `_review_checkpoints/${caseId}`;
   const usedPaths = new Set<string>();
   const ttlMs = 72 * 60 * 60_000;
-  const stageNames = new Set([
+  const stageNames = new Set<ReviewCheckpointStage>([
     "extraction",
     "source",
     "packet",
@@ -59,22 +62,26 @@ export function createReviewCheckpointStore(
           "Internal review checkpoints require a private storage bucket.",
         );
     })());
-  const pathFor = (key: string) => {
+  const addressFor = (key: string) => {
     const parts = key.split("/");
+    const stage = parts[0] as ReviewCheckpointStage;
     if (
       parts.length !== 2 ||
-      !stageNames.has(parts[0]) ||
+      !stageNames.has(stage) ||
       parts[1].length !== 64 ||
       [...parts[1]].some((char) => !"0123456789abcdef".includes(char))
     )
       throw new Error("Invalid internal review checkpoint address.");
-    return `${prefix}/${key}.json.gz`;
+    return {
+      path: `${prefix}/${key}.json.gz`,
+      contract: checkpointContractForStage(stage),
+    };
   };
   const store: ReviewCheckpointStore = {
     async read(key) {
       await assertLease();
       await requirePrivateBucket();
-      const path = pathFor(key);
+      const { path, contract } = addressFor(key);
       usedPaths.add(path);
       const { data, error } = await db.storage
         .from("packet-files")
@@ -92,7 +99,7 @@ export function createReviewCheckpointStore(
           gunzipSync(new Uint8Array(await data.arrayBuffer())).toString("utf8"),
         );
         if (
-          envelope.contract !== STAGED_REVIEW_CONTRACT_VERSION ||
+          envelope.contract !== contract ||
           envelope.key !== key ||
           typeof envelope.raw !== "string" ||
           typeof envelope.createdAt !== "number" ||
@@ -110,11 +117,11 @@ export function createReviewCheckpointStore(
     async write(key, raw) {
       await assertLease();
       await requirePrivateBucket();
-      const path = pathFor(key);
+      const { path, contract } = addressFor(key);
       usedPaths.add(path);
       const bytes = gzipSync(
         JSON.stringify({
-          contract: STAGED_REVIEW_CONTRACT_VERSION,
+          contract,
           key,
           createdAt: Date.now(),
           raw,
