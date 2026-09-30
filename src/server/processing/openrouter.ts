@@ -13,6 +13,8 @@ const OPENROUTER_REVIEW_MODEL =
   process.env.OPENROUTER_REVIEW_MODEL ||
   process.env.OPENROUTER_EXTRACTION_REVIEW_MODEL ||
   "~google/gemini-pro-latest";
+const OPENROUTER_REVIEW_FALLBACK_MODEL =
+  process.env.OPENROUTER_REVIEW_FALLBACK_MODEL || OPENROUTER_QUALITY_MODEL;
 const OPENROUTER_REVIEW_REASONING_EFFORT =
   process.env.OPENROUTER_REVIEW_REASONING_EFFORT ||
   process.env.EXTRACTION_REVIEW_REASONING_EFFORT ||
@@ -379,6 +381,10 @@ export function getExtractionReviewModel() {
   return OPENROUTER_REVIEW_MODEL;
 }
 
+export function getExtractionReviewFallbackModel() {
+  return OPENROUTER_REVIEW_FALLBACK_MODEL;
+}
+
 export function getExtractionReviewProvider() {
   return "openrouter";
 }
@@ -434,12 +440,13 @@ export async function callExtractionReviewModel(
     operation?: string;
     responseSchema?: OpenRouterResponseSchema;
     maxTokens?: number;
+    model?: string;
   },
 ) {
   return callOpenRouter(messages, {
     expectJson: true,
     jsonMode: true,
-    model: OPENROUTER_REVIEW_MODEL,
+    model: options?.model || OPENROUTER_REVIEW_MODEL,
     reasoning: getExtractionReviewReasoning(),
     maxTokens: normalizeMaxTokens(
       options?.maxTokens ?? OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS,

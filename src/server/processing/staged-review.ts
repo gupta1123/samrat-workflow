@@ -13,6 +13,7 @@ import {
 } from "./pipeline";
 import {
   callExtractionReviewModel,
+  getExtractionReviewFallbackModel,
   getExtractionReviewModel,
   getExtractionReviewProvider,
   getExtractionReviewReasoningEffort,
@@ -63,6 +64,7 @@ function sourceFingerprint(pages: ReviewSourcePage[]) {
 function modelSettings() {
   return {
     model: getExtractionReviewModel(),
+    fallbackModel: getExtractionReviewFallbackModel(),
     reasoning: getExtractionReviewReasoningEffort(),
   };
 }
@@ -116,12 +118,16 @@ async function completeReviewRequest<T>(options: {
   schema: Record<string, unknown>;
   messages: OpenRouterMessage[];
   maxTokens: number;
+  outputLimitFallbackModel?: string;
   validate: (raw: string) => T;
 }) {
   let defect = "";
   let rejected = "";
   let maxTokens = options.maxTokens;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  let fallbackActivated = false;
+  let attemptsUsed = 0;
+  for (let attempt = 1; attempt <= (fallbackActivated ? 3 : 2); attempt++) {
+    attemptsUsed = attempt;
     const messages: OpenRouterMessage[] =
       attempt === 1
         ? options.messages
@@ -143,6 +149,7 @@ async function completeReviewRequest<T>(options: {
       raw = await callExtractionReviewModel(messages, {
         operation: options.operation,
         maxTokens,
+        model: fallbackActivated ? options.outputLimitFallbackModel : undefined,
         responseSchema: {
           name: options.operation.replaceAll("-", "_"),
           strict: true,
@@ -157,7 +164,12 @@ async function completeReviewRequest<T>(options: {
         attempt,
         defect,
       });
-      maxTokens = Math.min(32768, maxTokens * 2);
+      if (options.outputLimitFallbackModel && !fallbackActivated) {
+        fallbackActivated = true;
+        maxTokens = options.maxTokens;
+      } else {
+        maxTokens = Math.min(32768, maxTokens * 2);
+      }
       rejected = "";
       continue;
     }
@@ -173,8 +185,14 @@ async function completeReviewRequest<T>(options: {
       });
     }
   }
+  const attemptLabel =
+    attemptsUsed === 2
+      ? "two"
+      : attemptsUsed === 3
+        ? "three"
+        : String(attemptsUsed);
   throw new ReviewContractError(
-    `Review task ${options.operation} could not be verified after two attempts. ${defect}`,
+    `Review task ${options.operation} could not be verified after ${attemptLabel} attempts. ${defect}`,
     { operation: options.operation, defect, rejected },
   );
 }
@@ -266,6 +284,7 @@ async function reviewOneSource(options: {
         return await completeReviewRequest({
           operation: "source-document-review",
           validate,
+          outputLimitFallbackModel: getExtractionReviewFallbackModel(),
           maxTokens: configuredPositive(
             "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
             8192,
@@ -292,6 +311,7 @@ async function reviewOneSource(options: {
         };
         const repaired = await completeReviewRequest({
           operation: "source-reference-repair",
+          outputLimitFallbackModel: getExtractionReviewFallbackModel(),
           schema: buildSourceReferenceRepairSchema(
             options.document,
             options.pages,

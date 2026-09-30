@@ -733,6 +733,62 @@ test("full staged review resumes verified sources after a truncated packet respo
   assert.ok(stages.some((stage) => stage.includes("2 of 2 documents")));
 });
 
+test("an incomplete source response fails over to the configured review model without weakening validation", async (t) => {
+  const previousConcurrency = process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+  process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = "1";
+  t.after(() => {
+    if (previousConcurrency === undefined) {
+      delete process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+    } else {
+      process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = previousConcurrency;
+    }
+  });
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const sourcePayloads = await Promise.all(documents.map(compact));
+  const firstSourceModels: string[] = [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        const index = context.sourcePageNumbers[0] - 1;
+        if (index === 0) {
+          firstSourceModels.push(body.model);
+          if (firstSourceModels.length === 1) {
+            return response({ incomplete: true }, "length");
+          }
+        }
+        return response(sourcePayloads[index]);
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.deepEqual(firstSourceModels, [
+    "~google/gemini-pro-latest",
+    "google/gemini-2.5-flash",
+  ]);
+  assert.equal(result.review.sourceReviewCount, 2);
+  assert.equal(result.review.authoritative, true);
+});
+
 test("full staged review verifies all confirmed candidates through the root-cause contract", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");

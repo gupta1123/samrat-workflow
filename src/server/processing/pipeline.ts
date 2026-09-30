@@ -18,6 +18,11 @@ import {
 
 import sharp from "sharp";
 
+// Long-lived workers process many packets. Native image-cache allocations are
+// not useful after a page has been converted and can otherwise accumulate
+// outside the JavaScript heap between jobs.
+sharp.cache(false);
+
 import { summarizeCase } from "@/server/case-summary";
 import {
   areComparableValuesEqual,
