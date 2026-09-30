@@ -32,39 +32,48 @@ async function getRows(
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.rows;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
-  try {
-    const response = await sapFetch(`${connection.baseUrl}/SPAPI/${path}`, {
-      method: "GET",
-      headers: {
-        Authorization: basicAuth(connection.username, connection.password),
-        Accept: "application/json",
-      },
-      signal: controller.signal,
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      throw new Error(`SAP ${path} responded with HTTP ${response.status}.`);
+  // The SAP gateway occasionally drops an otherwise valid read before it
+  // returns a response. Retry that idempotent GET once, with an independent
+  // timeout per attempt, so a transient socket does not hide live SAP data.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const response = await sapFetch(`${connection.baseUrl}/SPAPI/${path}`, {
+        method: "GET",
+        headers: {
+          Authorization: basicAuth(connection.username, connection.password),
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(`SAP ${path} responded with HTTP ${response.status}.`);
+      }
+      const body = (await response.json()) as {
+        success?: boolean;
+        data?: Record<string, unknown>[];
+        message?: string;
+      };
+      if (body.success === false) {
+        throw new Error(
+          typeof body.message === "string" && body.message
+            ? body.message
+            : `SAP ${path} reported failure.`,
+        );
+      }
+      const rows = Array.isArray(body.data) ? body.data : [];
+      cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, rows });
+      return rows;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    const body = (await response.json()) as {
-      success?: boolean;
-      data?: Record<string, unknown>[];
-      message?: string;
-    };
-    if (body.success === false) {
-      throw new Error(
-        typeof body.message === "string" && body.message
-          ? body.message
-          : `SAP ${path} reported failure.`,
-      );
-    }
-    const rows = Array.isArray(body.data) ? body.data : [];
-    cache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, rows });
-    return rows;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw new Error(`SAP ${path} could not be read.`);
 }
 
 export function fetchSapOpenPOs(env?: SapEnvironment) {

@@ -28,11 +28,9 @@ export function sapFetch(
   init: RequestInit = {},
 ): Promise<globalThis.Response> {
   const url = readProxyUrl();
-  if (!url) return fetch(input, init);
-
   const proxyInit = {
     ...init,
-    dispatcher: dispatcherFor(url),
+    ...(url ? { dispatcher: dispatcherFor(url) } : {}),
   } as unknown as Parameters<typeof undiciFetch>[1];
 
   return undiciFetch(input, proxyInit) as unknown as Promise<globalThis.Response>;
