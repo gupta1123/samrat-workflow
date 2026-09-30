@@ -383,13 +383,11 @@ test("paired changes reject blank, normalized, duplicate, foreign-page and confl
     () => run([{ ...change, field: "invoiceNumber" }]),
     /printed field change/,
   );
-  assert.throws(
-    () =>
-      run([change], {
-        fieldChecks: { vendorName: "supported", buyerName: "unsupported" },
-      }),
-    /both unsupported/,
-  );
+  // A quoted printed correction outweighs a contradictory unsupported vote.
+  const contradicted = run([change], {
+    fieldChecks: { vendorName: "supported", buyerName: "unsupported" },
+  });
+  assert.equal(contradicted.document.fields.buyerName, change.value);
 });
 
 test("unsupported votes derive removals without a duplicate correction table", async () => {
@@ -419,8 +417,30 @@ test("unsupported votes derive removals without a duplicate correction table", a
         JSON.stringify({ ...payload, removalEvidence: null }),
         document,
         [pages[0]],
-      ),
+    ),
     /require removalEvidence/,
+  );
+  assert.throws(
+    () =>
+      parseCompactSourceAudit(
+        JSON.stringify({
+          ...payload,
+          lineItemChecks: {
+            description: "unsupported",
+            itemCode: "supported",
+          },
+          structureChange: {
+            lineItems: [{ description: "Steel", itemCode: "Steel" }],
+            evidence: {
+              pageNumber: "p1",
+              quote: "Steel Steel",
+            },
+          },
+        }),
+        document,
+        [pages[0]],
+      ),
+    /Table correction contradicts the unsupported description verdict/,
   );
 });
 
@@ -1346,7 +1366,10 @@ test("an inconsistent source audit is repaired from its own page without fabrica
       }
       if (name === "source_audit_repair") {
         auditRepairCalls++;
-        assert.equal(context.validationDefect.includes("removalEvidence"), true);
+        assert.equal(
+          context.validationDefect.includes("removalEvidence"),
+          true,
+        );
         const validAudit = payloads[0] as unknown as Record<string, unknown>;
         return response(
           Object.fromEntries(

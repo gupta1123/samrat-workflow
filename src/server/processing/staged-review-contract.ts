@@ -555,10 +555,11 @@ export function parseCompactSourceAudit(
         throw new Error(
           `Field ${field}: the proposed value must appear literally in its paired own-page quote; do not normalize or infer it.`,
         );
+      // A value that is literally quoted from this document's own page proves
+      // the source supplies the field, so it outweighs a contradictory
+      // "unsupported" vote (which would otherwise erase the proven value).
       if (fieldSupport[field] === "unsupported")
-        throw new Error(
-          `Field ${field} cannot be both unsupported and supplied as a printed correction.`,
-        );
+        fieldSupport[field] = "supported";
       pairedChanges.push({ field, value, evidenceKind, evidence });
       changes[field] = value;
       // One validated observation supplies both the mutation and the audit. The
