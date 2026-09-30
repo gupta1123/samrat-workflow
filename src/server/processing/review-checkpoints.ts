@@ -25,7 +25,7 @@ export function reviewInputDigest(value: unknown) {
     .digest("hex");
 }
 export function reviewCheckpointKey(
-  stage: "extraction" | "source" | "packet" | "decisions",
+  stage: "extraction" | "source" | "packet" | "decisions" | "root-causes",
   input: unknown,
 ) {
   return `${stage}/${reviewInputDigest({ contract: STAGED_REVIEW_CONTRACT_VERSION, input })}`;
@@ -42,7 +42,13 @@ export function createReviewCheckpointStore(
   const prefix = `_review_checkpoints/${caseId}`;
   const usedPaths = new Set<string>();
   const ttlMs = 72 * 60 * 60_000;
-  const stageNames = new Set(["extraction", "source", "packet", "decisions"]);
+  const stageNames = new Set([
+    "extraction",
+    "source",
+    "packet",
+    "decisions",
+    "root-causes",
+  ]);
   let bucketCheck: Promise<void> | undefined;
   const requirePrivateBucket = () =>
     (bucketCheck ??= (async () => {

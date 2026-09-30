@@ -245,6 +245,8 @@ export interface MismatchValue {
    * actual outlier. False means corroborating/reference evidence.
    */
   isOutlier?: boolean;
+  /** Original compared field when several symptoms belong to one root issue. */
+  evidenceField?: string;
 }
 
 export interface Mismatch {

@@ -179,11 +179,9 @@ test("a semantic non-reference verdict removes an echoed candidate value", async
     value: "TAX INVOICE",
     valueKind: "document_type",
   };
-  const result = parseCompactSourceAudit(
-    JSON.stringify(raw),
-    documents[1],
-    [pages[1]],
-  );
+  const result = parseCompactSourceAudit(JSON.stringify(raw), documents[1], [
+    pages[1],
+  ]);
   assert.equal(result.document.fields.referenceInvoiceNumber, undefined);
   assert.equal(result.audit.status, "corrected");
 });
@@ -735,6 +733,78 @@ test("full staged review resumes verified sources after a truncated packet respo
   assert.ok(stages.some((stage) => stage.includes("2 of 2 documents")));
 });
 
+test("full staged review verifies all confirmed candidates through the root-cause contract", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const conflictingDocuments = documents.map((document, index) => ({
+    ...structuredClone(document),
+    fields: {
+      ...document.fields,
+      vehicleNumber: index === 0 ? "TRUCK-A" : "TRUCK-B",
+    },
+    md: `${document.md} Vehicle: ${index === 0 ? "TRUCK-A" : "TRUCK-B"}`,
+  }));
+  const sourcePayloads = await Promise.all(conflictingDocuments.map(compact));
+  let rootCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        return response(sourcePayloads[context.sourcePageNumbers[0] - 1]);
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      if (name === "packet_mismatch_decisions") {
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (candidate: { mismatchId: string }) => ({
+              mismatchId: candidate.mismatchId,
+              status: "confirmed",
+              primary: true,
+              outlierDocumentIds: [],
+              reason: "The original pages contain different values.",
+            }),
+          ),
+        });
+      }
+      assert.equal(name, "packet_mismatch_root_causes");
+      rootCalls++;
+      return response({
+        rootIssues: context.confirmedCandidates.map(
+          (candidate: { mismatchId: string }, index: number) => ({
+            issueId: `root-${index + 1}`,
+            kind: "field_discrepancy",
+            primaryMismatchId: candidate.mismatchId,
+            memberMismatchIds: [candidate.mismatchId],
+            outlierDocumentIds: [],
+            title: "Independent source discrepancy",
+            reason:
+              "The printed values differ and neither source is proved unrelated.",
+          }),
+        ),
+        dismissedMismatchIds: [],
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(conflictingDocuments, {
+    sourcePages: pages,
+  });
+  assert.equal(rootCalls, 1);
+  assert.ok(result.authoritativeReview.mismatches.length > 0);
+  assert.equal(
+    result.review.confirmedMismatchCount,
+    result.authoritativeReview.mismatches.length,
+  );
+  assert.ok(
+    result.authoritativeReview.mismatches.every((issue) =>
+      issue.analysis?.startsWith("Authoritative root-cause review:"),
+    ),
+  );
+});
+
 test("an invalid reference proof is repaired from the original source page without rerunning extraction", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");
@@ -758,7 +828,10 @@ test("an invalid reference proof is repaired from the original source page witho
       if (name === "source_reference_repair") {
         repairCalls++;
         assert.deepEqual(context.referencesToReview, ["referencePoNumber"]);
-        assert.equal(context.originalReferenceValues.referencePoNumber, "ORDER-27");
+        assert.equal(
+          context.originalReferenceValues.referencePoNumber,
+          "ORDER-27",
+        );
         return response({
           references: sourcePayloads[0].references,
           newReferences: sourcePayloads[0].newReferences,

@@ -24,6 +24,7 @@ import { ACTIVE_FIELD_DEFINITIONS } from "@/lib/document-schema";
 import { DUPLICATE_INVOICE_FIELD } from "@/lib/duplicate-invoice";
 import { isLineItemMismatchField } from "@/lib/line-items";
 import { MISSING_DOCUMENTS_FIELD } from "@/lib/missing-documents";
+import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import { WEIGHT_CALCULATION_FIELD } from "@/lib/weight-calculation";
 import {
   ArrowLeft,
@@ -76,6 +77,9 @@ export function getFieldLabel(fieldName: string) {
   }
   if (fieldName === WEIGHT_CALCULATION_FIELD) {
     return "Weight calculation";
+  }
+  if (fieldName === UNRELATED_DOCUMENT_FIELD) {
+    return "Unrelated document";
   }
   if (LINE_ITEM_FIELD_LABELS[fieldName]) {
     return LINE_ITEM_FIELD_LABELS[fieldName];
@@ -346,6 +350,8 @@ export type MismatchEvidence = {
   docId?: string;
   document?: SavedCaseDetail["documents"][number];
   value: unknown;
+  evidenceField?: string;
+  isOutlier?: boolean;
   contextRows: DocumentContextRow[];
 };
 type ParsedTaxValidationIssue = {
@@ -369,6 +375,7 @@ type MismatchGroupSection = {
 const LINE_ITEM_GROUP_KEY = "line_items";
 const TERMS_GROUP_KEY = "terms_compliance";
 const OTHER_GROUP_KEY = "other";
+const PACKET_INTEGRITY_GROUP_KEY = "packet_integrity";
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -389,6 +396,7 @@ function getGroupKeyForMismatch(
   fieldName: string,
   comparisonGroups: ComparisonFieldGroup[],
 ) {
+  if (fieldName === UNRELATED_DOCUMENT_FIELD) return PACKET_INTEGRITY_GROUP_KEY;
   if (isLineItemMismatchField(fieldName)) return LINE_ITEM_GROUP_KEY;
   if (fieldName === TERMS_COMPLIANCE_FIELD) return TERMS_GROUP_KEY;
   if (fieldName === WEIGHT_CALCULATION_FIELD) return "weight_quantity";
@@ -406,6 +414,11 @@ function buildMismatchGroupSections(
     label: string;
     sortOrder: number;
   }> = [
+    {
+      key: PACKET_INTEGRITY_GROUP_KEY,
+      label: "Packet integrity",
+      sortOrder: -10,
+    },
     { key: LINE_ITEM_GROUP_KEY, label: "Line items", sortOrder: 0 },
     ...comparisonGroups
       .filter((group) => group.enabled !== false)
@@ -529,6 +542,13 @@ export function getIssueDisplayTitle(
   mismatch: MismatchRecord,
   evidence: MismatchEvidence[],
 ) {
+  if (mismatch.fieldName === UNRELATED_DOCUMENT_FIELD) {
+    const outlier = evidence.find((entry) => entry.isOutlier);
+    const role = getEvidenceDocumentRole(outlier?.document);
+    return role && role !== "Document"
+      ? `Unrelated ${role}`
+      : "Unrelated document";
+  }
   if (mismatch.fieldName === WEIGHT_CALCULATION_FIELD) {
     return "Weight calculation does not balance";
   }
@@ -601,6 +621,9 @@ function getReviewerHint(
   mismatch: MismatchRecord,
   evidence?: MismatchEvidence[],
 ) {
+  if (mismatch.fieldName === UNRELATED_DOCUMENT_FIELD) {
+    return "This document conflicts with the rest of the packet across multiple identifying fields. Remove or replace it, then run the analysis again.";
+  }
   if (mismatch.fieldName === WEIGHT_CALCULATION_FIELD) {
     return "Check the three printed weights on the same slip. Approval stays blocked until Gross Weight − Tare Weight equals Net Weight or the source document is corrected.";
   }
@@ -794,9 +817,11 @@ export function buildMismatchEvidence(
       docId: entry.docId,
       document,
       value: entry.value,
+      evidenceField: entry.evidenceField,
+      isOutlier: entry.isOutlier,
       contextRows: buildDocumentContextRows(
         document,
-        mismatch.fieldName,
+        entry.evidenceField ?? mismatch.fieldName,
         entry.value,
       ),
     };
@@ -806,6 +831,14 @@ export function getIssueListDetail(
   mismatch: MismatchRecord,
   evidence: MismatchEvidence[],
 ) {
+  if (mismatch.fieldName === UNRELATED_DOCUMENT_FIELD) {
+    const outlier = evidence.find((entry) => entry.isOutlier);
+    const source = getCompactSourceLabel(outlier?.document);
+    const differenceCount = uniqueStrings(
+      evidence.map((entry) => entry.evidenceField ?? ""),
+    ).length;
+    return `${source} · ${differenceCount} supporting ${differenceCount === 1 ? "difference" : "differences"}`;
+  }
   if (isSingleDocumentIssue(mismatch, evidence)) {
     const sourceLabel = getCompactSourceLabel(evidence[0]?.document);
     const issueType = getIssueModeLabel(mismatch, evidence);
@@ -823,9 +856,10 @@ export function getIssueListDetail(
     return sourceLabel ? `${issueType} - ${sourceLabel}` : issueType;
   }
   const count = getValueCount(mismatch);
-  const status = mismatch.resolutionStatus === "pending"
-    ? ""
-    : ` · ${getMismatchResolutionLabel(mismatch.resolutionStatus)}`;
+  const status =
+    mismatch.resolutionStatus === "pending"
+      ? ""
+      : ` · ${getMismatchResolutionLabel(mismatch.resolutionStatus)}`;
   return `${count} value${count === 1 ? "" : "s"} compared${status}`;
 }
 function getSingleIssueRows(evidence: MismatchEvidence[], fieldName: string) {
@@ -922,7 +956,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [activeMismatchId, setActiveMismatchId] = useState<string | null>(null);
-  const [reviewMode, setReviewMode] = useState<"mismatches" | "sap">("mismatches");
+  const [reviewMode, setReviewMode] = useState<"mismatches" | "sap">(
+    "mismatches",
+  );
   const [sapOpened, setSapOpened] = useState(false);
   // Deep link from the case page: "Post to SAP" opens the SAP tab directly.
   const [initialTab] = useState<"mismatches" | "sap" | null>(() => {
@@ -983,7 +1019,10 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
   }, []);
   const visibleMismatches = useMemo(() => detail?.mismatches ?? [], [detail]);
   const hasInvoice = useMemo(
-    () => detail?.documents.some((document) => /invoice/i.test(document.documentType)) ?? false,
+    () =>
+      detail?.documents.some((document) =>
+        /invoice/i.test(document.documentType),
+      ) ?? false,
     [detail],
   );
 
@@ -1054,6 +1093,29 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
   const activeIsSingleDocumentIssue = activeMismatch
     ? isSingleDocumentIssue(activeMismatch, activeEvidence)
     : false;
+  const activeIsUnrelatedDocument =
+    activeMismatch?.fieldName === UNRELATED_DOCUMENT_FIELD;
+  const activeUnrelatedFields = useMemo(
+    () =>
+      uniqueStrings(
+        activeEvidence.map((evidence) => evidence.evidenceField ?? ""),
+      ),
+    [activeEvidence],
+  );
+  const activeUnrelatedDocuments = useMemo(() => {
+    const byId = new Map<string, MismatchEvidence>();
+    for (const evidence of activeEvidence) {
+      const id =
+        evidence.docId ||
+        evidence.document?.id ||
+        evidence.document?.clientDocumentId ||
+        evidence.key;
+      if (!byId.has(id)) byId.set(id, evidence);
+    }
+    return [...byId.values()].sort(
+      (left, right) => Number(left.isOutlier) - Number(right.isOutlier),
+    );
+  }, [activeEvidence]);
   const activeIssueDisplayTitle = activeMismatch
     ? getIssueDisplayTitle(activeMismatch, activeEvidence)
     : "";
@@ -1214,16 +1276,21 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
               )}
               {detail && reviewMode !== "sap" && (
                 <div className="hidden items-center gap-2 sm:flex shrink-0">
-                  <span className="hidden text-[#c4b9ad] sm:inline-block">·</span>
+                  <span className="hidden text-[#c4b9ad] sm:inline-block">
+                    ·
+                  </span>
                   <span
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium shadow-sm ${detail.case.status === "accepted"
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium shadow-sm ${
+                      detail.case.status === "accepted"
                         ? "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"
                         : detail.case.status === "rejected"
                           ? "border-[#f2c7c4] bg-[#fbf0ef] text-[#8c1d18]"
                           : "border-[#ded8d0] bg-[#fbfaf8] text-[#5b4b3d]"
-                      }`}
+                    }`}
                   >
-                    <span className={`h-1.5 w-1.5 rounded-full ${detail.case.status === "accepted" ? "bg-[#2d6a4f]" : detail.case.status === "rejected" ? "bg-[#b91c1c]" : "bg-[#8a7f72]"}`} />
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${detail.case.status === "accepted" ? "bg-[#2d6a4f]" : detail.case.status === "rejected" ? "bg-[#b91c1c]" : "bg-[#8a7f72]"}`}
+                    />
                     {detail.case.status === "accepted"
                       ? "Review complete"
                       : detail.case.status === "rejected"
@@ -1249,7 +1316,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                 <h3 className="text-lg font-bold tracking-tight text-[#111827]">
                   Unable to load review
                 </h3>
-                <p className="mt-1 text-xs font-normal text-[#8a7f72]">{error}</p>
+                <p className="mt-1 text-xs font-normal text-[#8a7f72]">
+                  {error}
+                </p>
                 <Button
                   className="mt-4"
                   onClick={() => {
@@ -1332,7 +1401,10 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                         onClick={() => setReviewMode("mismatches")}
                         className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition ${reviewMode === "mismatches" ? "bg-white text-[#111827] shadow-sm" : "text-[#6b5d50] hover:text-[#111827]"}`}
                       >
-                        Issues{visibleMismatches.length ? ` · ${pendingMismatchCount}` : ""}
+                        Issues
+                        {visibleMismatches.length
+                          ? ` · ${pendingMismatchCount}`
+                          : ""}
                       </button>
                       <button
                         type="button"
@@ -1350,7 +1422,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                     <SapMatchPanel caseId={caseId} variant="sidebar" />
                   </div>
                 ) : visibleMismatches.length === 0 ? (
-                  <div className="p-5 text-xs font-normal text-[#8a7f72]">All clear — no issues to review.</div>
+                  <div className="p-5 text-xs font-normal text-[#8a7f72]">
+                    All clear — no issues to review.
+                  </div>
                 ) : (
                   <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
                     {mismatchGroups.map((group) => {
@@ -1376,7 +1450,11 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                                 {group.label}
                               </span>
                               <span className="text-[11px] font-normal text-[#8a7f72] leading-none">
-                                · {group.pending > 0 ? `${group.pending} to do` : "Done"} · {group.mismatches.length}
+                                ·{" "}
+                                {group.pending > 0
+                                  ? `${group.pending} to do`
+                                  : "Done"}{" "}
+                                · {group.mismatches.length}
                               </span>
                             </span>
                             <span className="text-[11px] font-medium text-[#8a7f72] tabular-nums leading-none">
@@ -1447,7 +1525,8 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                                           mismatch.resolutionStatus ===
                                           "accepted"
                                             ? "bg-[#2d6a4f]"
-                                            : mismatch.resolutionStatus === "rejected"
+                                            : mismatch.resolutionStatus ===
+                                                "rejected"
                                               ? "bg-[#b91c1c]"
                                               : "bg-[#b45309]"
                                         }`}
@@ -1465,7 +1544,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                                           {itemLabel}
                                         </span>
                                       ) : null}
-                                      <span className={`block text-[12px] leading-4 ${isActive ? "font-semibold text-[#111827]" : "font-normal text-[#3d3530]"}`}>
+                                      <span
+                                        className={`block text-[12px] leading-4 ${isActive ? "font-semibold text-[#111827]" : "font-normal text-[#3d3530]"}`}
+                                      >
                                         {issueLabel}
                                       </span>
                                       <span className="block text-[11px] font-normal text-[#8a7f72] leading-3 mt-0.5 truncate">
@@ -1489,7 +1570,10 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
             <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f7f4ef]">
               <div className="flex-1 overflow-y-auto">
                 {sapOpened ? (
-                  <div className={reviewMode === "sap" ? "contents" : "hidden"} aria-hidden={reviewMode !== "sap"}>
+                  <div
+                    className={reviewMode === "sap" ? "contents" : "hidden"}
+                    aria-hidden={reviewMode !== "sap"}
+                  >
                     <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
                       <SapMatchPanel caseId={caseId} />
                     </div>
@@ -1517,7 +1601,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                             <div className="min-w-0">
                               <div className="mb-1 flex flex-wrap items-center gap-1.5 text-xs font-normal text-[#8a7f72]">
                                 <span>
-                                  {(activeGroup?.label ?? "Review group").replace(" / ", " & ")}
+                                  {(
+                                    activeGroup?.label ?? "Review group"
+                                  ).replace(" / ", " & ")}
                                 </span>
                               </div>
                               <h2 className="text-lg font-bold tracking-tight text-[#111827] sm:text-xl">
@@ -1527,8 +1613,12 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                             <span
                               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium shadow-sm ${getMismatchResolutionClassName(activeMismatch.resolutionStatus)}`}
                             >
-                              <span className={`h-1.5 w-1.5 rounded-full ${activeMismatch.resolutionStatus === "accepted" ? "bg-[#2d6a4f]" : activeMismatch.resolutionStatus === "rejected" ? "bg-[#b91c1c]" : "bg-[#b45309]"}`} />
-                              {getMismatchResolutionLabel(activeMismatch.resolutionStatus)}
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${activeMismatch.resolutionStatus === "accepted" ? "bg-[#2d6a4f]" : activeMismatch.resolutionStatus === "rejected" ? "bg-[#b91c1c]" : "bg-[#b45309]"}`}
+                              />
+                              {getMismatchResolutionLabel(
+                                activeMismatch.resolutionStatus,
+                              )}
                             </span>
                           </div>
 
@@ -1539,7 +1629,83 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                           ) : null}
                         </div>
 
-                        {activeIsSingleDocumentIssue ? (
+                        {activeIsUnrelatedDocument ? (
+                          <div className="overflow-x-auto border-b border-[#ded8d0]">
+                            <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
+                              <thead>
+                                <tr className="border-b border-[#e0d8cc] text-xs font-semibold tracking-wide text-[#3d3530]">
+                                  <th className="w-44 px-3 py-3">
+                                    Supporting difference
+                                  </th>
+                                  {activeUnrelatedDocuments.map((evidence) => (
+                                    <th
+                                      key={`unrelated-heading-${evidence.key}`}
+                                      className="w-40 min-w-[10rem] px-3 py-3 align-bottom"
+                                    >
+                                      <div className="break-words leading-4">
+                                        {getEvidenceDocumentRole(
+                                          evidence.document,
+                                        )}
+                                      </div>
+                                      <div
+                                        className={`mt-1 text-[10px] font-medium ${evidence.isOutlier ? "text-[#8c1d18]" : "text-[#2d6a4f]"}`}
+                                      >
+                                        {evidence.isOutlier
+                                          ? "Unrelated source"
+                                          : "Packet evidence"}
+                                      </div>
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {activeUnrelatedFields.map((fieldName) => (
+                                  <tr
+                                    key={fieldName}
+                                    className="border-b border-[#ece6dc]"
+                                  >
+                                    <td className="border-l-4 border-[#b91c1c] px-3 py-3 font-semibold text-[#3d3530]">
+                                      {getFieldLabel(fieldName)}
+                                    </td>
+                                    {activeUnrelatedDocuments.map(
+                                      (documentEvidence) => {
+                                        const evidence = activeEvidence.find(
+                                          (entry) =>
+                                            entry.evidenceField === fieldName &&
+                                            (entry.docId ||
+                                              entry.document?.id) ===
+                                              (documentEvidence.docId ||
+                                                documentEvidence.document?.id),
+                                        );
+                                        return (
+                                          <td
+                                            key={`${documentEvidence.key}-${fieldName}`}
+                                            className={`max-w-[12rem] break-words px-3 py-3 align-top font-medium ${documentEvidence.isOutlier ? "bg-[#fbf0ef] text-[#8c1d18]" : "text-[#111827]"}`}
+                                          >
+                                            {evidence ? (
+                                              displayValue(evidence.value)
+                                            ) : (
+                                              <span className="text-[#b5aaa0]">
+                                                —
+                                              </span>
+                                            )}
+                                            {evidence ? (
+                                              <div className="mt-1 text-[11px] font-normal text-[#8a7f72]">
+                                                {getDocumentPageLabel(
+                                                  evidence.document,
+                                                )}
+                                              </div>
+                                            ) : null}
+                                          </td>
+                                        );
+                                      },
+                                    )}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : activeIsSingleDocumentIssue ? (
                           <div className="space-y-4 py-4">
                             <div className="border-y border-[#f2c7c4] bg-[#fbf0ef] px-3 py-3">
                               <div className="text-xs font-semibold text-[#8c1d18]">
@@ -1687,7 +1853,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                                       className="w-36 min-w-[9rem] max-w-[10rem] px-3 py-3 align-bottom"
                                     >
                                       <div className="whitespace-normal break-words leading-4">
-                                        {getEvidenceDocumentRole(evidence.document)}
+                                        {getEvidenceDocumentRole(
+                                          evidence.document,
+                                        )}
                                       </div>
                                     </th>
                                   ))}
@@ -1707,11 +1875,15 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                                         {formatMismatchValue(
                                           activeMismatch.fieldName,
                                           evidence.value,
-                                          getEvidenceDocumentRole(evidence.document),
+                                          getEvidenceDocumentRole(
+                                            evidence.document,
+                                          ),
                                         )}
                                       </span>
                                       <div className="mt-1 whitespace-nowrap text-[11px] font-normal text-[#8a7f72]">
-                                        {getDocumentPageLabel(evidence.document)}
+                                        {getDocumentPageLabel(
+                                          evidence.document,
+                                        )}
                                       </div>
                                     </td>
                                   ))}
@@ -1770,188 +1942,196 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                             </table>
                           </div>
                         )}
-
                       </article>
                     ) : (
                       <div className="flex h-[400px] items-center justify-center text-center text-xs font-normal text-[#8a7f72]">
-                        Select an issue from the list to review conflicting values.
+                        Select an issue from the list to review conflicting
+                        values.
                       </div>
                     )}
                   </div>
                 ) : null}
               </div>
 
-              {reviewMode === "mismatches" && visibleMismatches.length > 0 && activeMismatch && (
-                <footer className="z-20 shrink-0 border-t border-[#e0d8cc] bg-[#fbfaf8]/95 px-4 py-3 shadow-[0_-8px_24px_rgba(45,36,28,0.06)] backdrop-blur sm:px-6 lg:px-8">
-                  <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2.5">
-                        <span
-                          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-                            detail.case.status === "accepted"
-                              ? "bg-[#eaf7f0] text-[#1b4332]"
-                              : detail.case.status === "rejected"
-                                ? "bg-[#fbefee] text-[#8c1d18]"
-                                : "bg-[#f1ece4] text-[#5f554b]"
-                          }`}
-                          aria-hidden="true"
-                        >
-                          {detail.case.status === "accepted" ? (
-                            <Check className="h-3.5 w-3.5" />
-                          ) : detail.case.status === "rejected" ? (
-                            <X className="h-3.5 w-3.5" />
-                          ) : (
-                            <span className="text-[11px] font-semibold">{pendingMismatchCount}</span>
-                          )}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold text-[#2d2722]">
-                            {detail.case.status === "accepted"
-                              ? "Review complete"
-                              : detail.case.status === "rejected"
-                                ? "Case rejected"
-                                : selectedPendingMismatchIds.length > 0
-                                  ? `${selectedPendingMismatchIds.length} selected`
-                                  : `${pendingMismatchCount} ${pendingMismatchCount === 1 ? "issue" : "issues"} to review`}
-                          </div>
-                          <div className="mt-0.5 text-[11px] text-[#8a7f72]">
-                            {detail.case.status === "accepted"
-                              ? `${acceptedMismatchCount} ${acceptedMismatchCount === 1 ? "issue" : "issues"} accepted`
-                              : detail.case.status === "rejected"
-                                ? `${rejectedMismatchCount} rejected · ${acceptedMismatchCount} accepted`
-                                : `${acceptedMismatchCount} accepted · ${rejectedMismatchCount} rejected`}
+              {reviewMode === "mismatches" &&
+                visibleMismatches.length > 0 &&
+                activeMismatch && (
+                  <footer className="z-20 shrink-0 border-t border-[#e0d8cc] bg-[#fbfaf8]/95 px-4 py-3 shadow-[0_-8px_24px_rgba(45,36,28,0.06)] backdrop-blur sm:px-6 lg:px-8">
+                    <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                              detail.case.status === "accepted"
+                                ? "bg-[#eaf7f0] text-[#1b4332]"
+                                : detail.case.status === "rejected"
+                                  ? "bg-[#fbefee] text-[#8c1d18]"
+                                  : "bg-[#f1ece4] text-[#5f554b]"
+                            }`}
+                            aria-hidden="true"
+                          >
+                            {detail.case.status === "accepted" ? (
+                              <Check className="h-3.5 w-3.5" />
+                            ) : detail.case.status === "rejected" ? (
+                              <X className="h-3.5 w-3.5" />
+                            ) : (
+                              <span className="text-[11px] font-semibold">
+                                {pendingMismatchCount}
+                              </span>
+                            )}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-[#2d2722]">
+                              {detail.case.status === "accepted"
+                                ? "Review complete"
+                                : detail.case.status === "rejected"
+                                  ? "Case rejected"
+                                  : selectedPendingMismatchIds.length > 0
+                                    ? `${selectedPendingMismatchIds.length} selected`
+                                    : `${pendingMismatchCount} ${pendingMismatchCount === 1 ? "issue" : "issues"} to review`}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-[#8a7f72]">
+                              {detail.case.status === "accepted"
+                                ? `${acceptedMismatchCount} ${acceptedMismatchCount === 1 ? "issue" : "issues"} accepted`
+                                : detail.case.status === "rejected"
+                                  ? `${rejectedMismatchCount} rejected · ${acceptedMismatchCount} accepted`
+                                  : `${acceptedMismatchCount} accepted · ${rejectedMismatchCount} rejected`}
+                            </div>
                           </div>
                         </div>
+                        {decisionStatus === "error" && decisionError && (
+                          <div className="mt-1 text-xs font-medium text-[#8c1d18]">
+                            {decisionError}
+                          </div>
+                        )}
                       </div>
-                      {decisionStatus === "error" && decisionError && (
-                        <div className="mt-1 text-xs font-medium text-[#8c1d18]">{decisionError}</div>
-                      )}
-                    </div>
 
-                    <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                      {activeMismatch.fieldName ===
-                        DOCUMENT_READABILITY_FIELD && !isCaseFinal ? (
-                        <div className="max-w-lg text-xs font-normal text-[#5b4b3d]">
-                          Approval is blocked. Replace this page with a clear,
-                          upright copy and analyze the case again; this warning
-                          cannot be manually accepted.
-                        </div>
-                      ) : selectedPendingMismatchIds.length > 0 &&
-                        !isCaseFinal ? (
-                        <>
-                          <Button
-                            className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-xs font-medium text-[#3d3530] hover:bg-[#ede6d9] shadow-sm"
-                            disabled={decisionStatus === "updating"}
-                            onClick={handleClearSelected}
-                            variant="outline"
+                      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                        {activeMismatch.fieldName ===
+                          DOCUMENT_READABILITY_FIELD && !isCaseFinal ? (
+                          <div className="max-w-lg text-xs font-normal text-[#5b4b3d]">
+                            Approval is blocked. Replace this page with a clear,
+                            upright copy and analyze the case again; this
+                            warning cannot be manually accepted.
+                          </div>
+                        ) : selectedPendingMismatchIds.length > 0 &&
+                          !isCaseFinal ? (
+                          <>
+                            <Button
+                              className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-xs font-medium text-[#3d3530] hover:bg-[#ede6d9] shadow-sm"
+                              disabled={decisionStatus === "updating"}
+                              onClick={handleClearSelected}
+                              variant="outline"
+                            >
+                              Clear
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="rounded-lg border-[#f2c7c4] bg-[#fbf0ef] text-xs font-medium text-[#8c1d18] hover:bg-[#f2c7c4]/50 shadow-sm"
+                              disabled={decisionStatus === "updating"}
+                              onClick={() => {
+                                void handleBulkMismatchDecision("rejected");
+                              }}
+                            >
+                              {decisionStatus === "updating" ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <X className="mr-2 h-4 w-4" />
+                              )}
+                              Reject Selected
+                            </Button>
+                            <Button
+                              className="rounded-lg bg-[#2b1a10] text-xs font-medium text-white hover:bg-[#3b271a] shadow-sm"
+                              disabled={decisionStatus === "updating"}
+                              onClick={() => {
+                                void handleBulkMismatchDecision("accepted");
+                              }}
+                            >
+                              {decisionStatus === "updating" ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Check className="mr-2 h-4 w-4" />
+                              )}
+                              Accept Selected
+                            </Button>
+                          </>
+                        ) : isActiveMismatchPending && !isCaseFinal ? (
+                          <>
+                            <Button
+                              className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-xs font-medium text-[#3d3530] hover:bg-[#ede6d9] shadow-sm"
+                              disabled={
+                                decisionStatus === "updating" ||
+                                pendingVisibleMismatchIds.length === 0
+                              }
+                              onClick={handleSelectAllPending}
+                              variant="outline"
+                            >
+                              Select all
+                            </Button>
+                            <Button
+                              variant="outline"
+                              className="rounded-lg border-[#f2c7c4] bg-[#fbf0ef] text-xs font-medium text-[#8c1d18] hover:bg-[#f2c7c4]/50 shadow-sm"
+                              disabled={decisionStatus === "updating"}
+                              onClick={() => handleMismatchDecision("rejected")}
+                            >
+                              {decisionStatus === "updating" ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <X className="mr-2 h-4 w-4" />
+                              )}
+                              Reject Issue
+                            </Button>
+                            <Button
+                              className="rounded-lg bg-[#2b1a10] text-xs font-medium text-white hover:bg-[#3b271a] shadow-sm"
+                              disabled={decisionStatus === "updating"}
+                              onClick={() => handleMismatchDecision("accepted")}
+                            >
+                              {decisionStatus === "updating" ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                <Check className="mr-2 h-4 w-4" />
+                              )}
+                              Accept Issue
+                            </Button>
+                          </>
+                        ) : !isActiveMismatchPending && !isCaseFinal ? (
+                          <>
+                            <Button
+                              className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-xs font-medium text-[#3d3530] hover:bg-[#ede6d9] shadow-sm"
+                              disabled={decisionStatus === "updating"}
+                              onClick={() =>
+                                handleMismatchDecision(
+                                  activeMismatch.resolutionStatus === "accepted"
+                                    ? "rejected"
+                                    : "accepted",
+                                )
+                              }
+                              variant="outline"
+                            >
+                              {decisionStatus === "updating" && (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              )}
+                              {activeMismatch.resolutionStatus === "accepted"
+                                ? "Change to rejected"
+                                : "Change to accepted"}
+                            </Button>
+                          </>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${getMismatchResolutionClassName(activeMismatch.resolutionStatus)}`}
                           >
-                            Clear
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="rounded-lg border-[#f2c7c4] bg-[#fbf0ef] text-xs font-medium text-[#8c1d18] hover:bg-[#f2c7c4]/50 shadow-sm"
-                            disabled={decisionStatus === "updating"}
-                            onClick={() => {
-                              void handleBulkMismatchDecision("rejected");
-                            }}
-                          >
-                            {decisionStatus === "updating" ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <X className="mr-2 h-4 w-4" />
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${activeMismatch.resolutionStatus === "accepted" ? "bg-[#2d6a4f]" : "bg-[#b91c1c]"}`}
+                            />
+                            {getMismatchResolutionLabel(
+                              activeMismatch.resolutionStatus,
                             )}
-                            Reject Selected
-                          </Button>
-                          <Button
-                            className="rounded-lg bg-[#2b1a10] text-xs font-medium text-white hover:bg-[#3b271a] shadow-sm"
-                            disabled={decisionStatus === "updating"}
-                            onClick={() => {
-                              void handleBulkMismatchDecision("accepted");
-                            }}
-                          >
-                            {decisionStatus === "updating" ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <Check className="mr-2 h-4 w-4" />
-                            )}
-                            Accept Selected
-                          </Button>
-                        </>
-                      ) : isActiveMismatchPending && !isCaseFinal ? (
-                        <>
-                          <Button
-                            className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-xs font-medium text-[#3d3530] hover:bg-[#ede6d9] shadow-sm"
-                            disabled={
-                              decisionStatus === "updating" ||
-                              pendingVisibleMismatchIds.length === 0
-                            }
-                            onClick={handleSelectAllPending}
-                            variant="outline"
-                          >
-                            Select all
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="rounded-lg border-[#f2c7c4] bg-[#fbf0ef] text-xs font-medium text-[#8c1d18] hover:bg-[#f2c7c4]/50 shadow-sm"
-                            disabled={decisionStatus === "updating"}
-                            onClick={() => handleMismatchDecision("rejected")}
-                          >
-                            {decisionStatus === "updating" ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <X className="mr-2 h-4 w-4" />
-                            )}
-                            Reject Issue
-                          </Button>
-                          <Button
-                            className="rounded-lg bg-[#2b1a10] text-xs font-medium text-white hover:bg-[#3b271a] shadow-sm"
-                            disabled={decisionStatus === "updating"}
-                            onClick={() => handleMismatchDecision("accepted")}
-                          >
-                            {decisionStatus === "updating" ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                              <Check className="mr-2 h-4 w-4" />
-                            )}
-                            Accept Issue
-                          </Button>
-                        </>
-                      ) : !isActiveMismatchPending && !isCaseFinal ? (
-                        <>
-                          <Button
-                            className="rounded-lg border-[#ded8d0] bg-[#fbfaf8] text-xs font-medium text-[#3d3530] hover:bg-[#ede6d9] shadow-sm"
-                            disabled={decisionStatus === "updating"}
-                            onClick={() =>
-                              handleMismatchDecision(
-                                activeMismatch.resolutionStatus === "accepted"
-                                  ? "rejected"
-                                  : "accepted",
-                              )
-                            }
-                            variant="outline"
-                          >
-                            {decisionStatus === "updating" && (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            )}
-                            {activeMismatch.resolutionStatus === "accepted"
-                              ? "Change to rejected"
-                              : "Change to accepted"}
-                          </Button>
-                        </>
-                      ) : (
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${getMismatchResolutionClassName(activeMismatch.resolutionStatus)}`}
-                        >
-                          <span className={`h-1.5 w-1.5 rounded-full ${activeMismatch.resolutionStatus === "accepted" ? "bg-[#2d6a4f]" : "bg-[#b91c1c]"}`} />
-                          {getMismatchResolutionLabel(
-                            activeMismatch.resolutionStatus,
-                          )}
-                        </span>
-                      )}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </footer>
-              )}
+                  </footer>
+                )}
             </main>
           </div>
         )}

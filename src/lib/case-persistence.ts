@@ -82,6 +82,7 @@ export type SavedCaseMismatch = {
     docId?: string;
     value?: string | number | null;
     isOutlier?: boolean;
+    evidenceField?: string;
   }>;
   analysis: string | null;
   fixPlan: string | null;

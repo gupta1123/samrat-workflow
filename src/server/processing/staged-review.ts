@@ -35,6 +35,12 @@ import {
   reviewInputDigest,
   type ReviewCheckpointStore,
 } from "./review-checkpoints";
+import {
+  buildRootCauseCandidates,
+  materializeRootCauseMismatches,
+  ROOT_CAUSE_REVIEW_SCHEMA,
+  validateRootCauseReview,
+} from "./mismatch-root-causes";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -747,6 +753,7 @@ export async function reviewExtractedDocumentsInStages(
   const batches = buildMismatchReviewBatches(candidates, batchSize);
   let decisionCompleted = 0;
   let decisionAttempts = 0;
+  let rootCauseAttempts = 0;
   const decisions = await mapReviewTasks(
     batches,
     concurrency,
@@ -864,6 +871,97 @@ export async function reviewExtractedDocumentsInStages(
     documentAudits: sourceReviews.map((result) => result.audit),
     sourcePages: options.sourcePages,
   });
+  const rootCauseCandidates = buildRootCauseCandidates(
+    result.authoritativeReview.mismatches,
+  );
+  if (rootCauseCandidates.length) {
+    await report(96, "Validating the root cause of every packet issue");
+    const rootContext = object(
+      aliases.encode({
+        contractVersion: STAGED_REVIEW_CONTRACT_VERSION,
+        documents: currentDocuments.map((document) => ({
+          docId: document.id,
+          documentType: document.type,
+          title: document.title,
+          fields: document.fields,
+          lineItems: document.lineItems ?? [],
+        })),
+        packetReconciliation: packetRaw,
+        confirmedCandidates: rootCauseCandidates.map((candidate) => ({
+          mismatchId: candidate.reviewId,
+          field: candidate.mismatch.field,
+          values: candidate.mismatch.values,
+          analysis: candidate.mismatch.analysis,
+        })),
+      }),
+    );
+    const validateRoot = (raw: string) =>
+      validateRootCauseReview(
+        aliases.decode(JSON.parse(raw)),
+        rootCauseCandidates,
+      );
+    const rootResult = await cachedReviewStage({
+      key: reviewCheckpointKey("root-causes", {
+        context: rootContext,
+        sources: sourceFingerprint(options.sourcePages),
+        settings: modelSettings(),
+      }),
+      store: options.checkpoints,
+      validate: validateRoot,
+      run: async () => {
+        const reviewed = await completeReviewRequest({
+          operation: "packet-mismatch-root-causes",
+          validate: validateRoot,
+          schema: ROOT_CAUSE_REVIEW_SCHEMA,
+          maxTokens: configuredPositive(
+            "PACKET_ROOT_CAUSE_MAX_OUTPUT_TOKENS",
+            6144,
+            32768,
+          ),
+          messages: [
+            {
+              role: "system",
+              content:
+                "You are the final Pro root-cause reviewer. Review every confirmed candidate together against the original pages and return only the required JSON. " +
+                "Account for every candidate exactly once: retain it as an independent field_discrepancy, combine symptoms caused by the same unrelated document into one unrelated_document issue, or dismiss it with a source-based reason. " +
+                "Group candidates only when the same identified outlier document conflicts with corroborating packet documents. Choose the business cause as primary; do not present its field symptoms as separate issues. " +
+                "Document roles are semantic: a manufacturer, processor, transporter, seller and buyer can legitimately have different names. Dismiss party-name candidates that compare different roles or harmless legal-name variants. " +
+                "Dismiss OCR uncertainty, formatting differences and derivative symptoms. Never infer identity from filename, identifier format, spelling similarity, regex patterns or a customer-specific name. " +
+                "For unrelated_document, cite the exact outlier document IDs and include only candidates that contain both that outlier and corroborating evidence. Keep titles and reasons brief and client-readable.",
+            },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: JSON.stringify(rootContext) },
+                ...options.sourcePages.flatMap((page) => [
+                  {
+                    type: "text" as const,
+                    text: `Original file ${aliases.fileToAlias.get(page.sourceFileName)}, page ${page.pageNumber}`,
+                  },
+                  {
+                    type: "image_url" as const,
+                    image_url: { url: page.image },
+                  },
+                ]),
+              ],
+            },
+          ],
+        });
+        rootCauseAttempts += reviewed.attempts;
+        return reviewed;
+      },
+    });
+    if (rootResult.reused) reused++;
+    const originalConfirmed = rootCauseCandidates.length;
+    result.authoritativeReview.mismatches = materializeRootCauseMismatches(
+      rootResult.result,
+      rootCauseCandidates,
+    );
+    result.confirmedMismatchCount =
+      result.authoritativeReview.mismatches.length;
+    result.dismissedMismatchCount +=
+      originalConfirmed - result.authoritativeReview.mismatches.length;
+  }
   const pageQuality = sourceReviews.flatMap((result) => result.pageQuality);
   const reviewIssues = [
     ...sourceReviews.flatMap((result) => result.reviewIssues),
@@ -925,7 +1023,8 @@ export async function reviewExtractedDocumentsInStages(
     correctionCount: corrections.length,
     reviewIssueCount: reviewIssues.length,
     corrections,
-    attemptCount: sourceAttempts + packetAttempts + decisionAttempts,
+    attemptCount:
+      sourceAttempts + packetAttempts + decisionAttempts + rootCauseAttempts,
     candidateMismatchCount: candidates.length,
     confirmedMismatchCount: result.confirmedMismatchCount,
     dismissedMismatchCount: result.dismissedMismatchCount,

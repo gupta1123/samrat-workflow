@@ -9,7 +9,7 @@ import {
 import { REFERENCE_FIELD_DEFINITIONS } from "./semantic-grounding";
 
 export const STAGED_REVIEW_CONTRACT_VERSION =
-  "vision-oriented-source-decisions-and-typed-evidence-v8";
+  "vision-oriented-root-cause-evidence-v9";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
