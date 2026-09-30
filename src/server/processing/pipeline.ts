@@ -3125,15 +3125,18 @@ function parseAuthoritativePacketGroups(
           );
         }
       }
+      // primaryReference only feeds the case title. The reviewer sometimes
+      // returns a title fragment or another document's number (e.g. a challan
+      // or LR number) here; rather than failing the whole analysis, bind it to
+      // the verified invoice/PO reference, or leave it empty when neither exists.
       if (
         caseSummary.primaryReference &&
         ![caseSummary.invoiceNumber, caseSummary.poNumber].includes(
           caseSummary.primaryReference,
         )
       ) {
-        throw new Error(
-          "The case primaryReference is not its reviewed invoice or purchase-order reference.",
-        );
+        caseSummary.primaryReference =
+          caseSummary.invoiceNumber || caseSummary.poNumber || "";
       }
       const label = compactPromptText(String(record.label ?? "").trim(), 160);
       if (!label) {
