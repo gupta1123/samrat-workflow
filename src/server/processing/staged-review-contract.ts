@@ -576,24 +576,6 @@ export function parseCompactSourceAudit(
       error instanceof Error ? error.message : String(error),
     );
   }
-  const unsupportedFields = Object.keys(fieldSupport).filter(
-    (field) => fieldSupport[field] === "unsupported",
-  );
-  const unsupportedProperties = Object.keys(itemSupport).filter(
-    (key) => itemSupport[key] === "unsupported",
-  );
-  const removalEvidence =
-    payload.removalEvidence === null
-      ? null
-      : bindEvidence(payload.removalEvidence, "Unsupported-value removal");
-  if (
-    (unsupportedFields.length || unsupportedProperties.length) &&
-    !removalEvidence
-  )
-    throw new Error(
-      "Unsupported source votes require removalEvidence; the app derives removals from those votes.",
-    );
-  for (const field of unsupportedFields) changes[field] = null;
   const structure =
     payload.structureChange === null ? null : object(payload.structureChange);
   if (
@@ -614,6 +596,42 @@ export function parseCompactSourceAudit(
     throw new Error(
       "A table correction must supply a complete lineItems array.",
     );
+
+  // Support votes audit the first-pass table. A source-proved structure change
+  // is the authoritative replacement, just as a paired fieldChange is the
+  // authority for a corrected top-level field. Derive the final support ledger
+  // from that replacement instead of asking the model to make the same decision
+  // twice. This is schema-driven for every line-item property and contains no
+  // document-, supplier- or value-specific rule.
+  if (Array.isArray(structure?.lineItems)) {
+    for (const property of checklist.lineItemPropertySupport) {
+      if (
+        structure.lineItems.some((rawItem) =>
+          Boolean(String(object(rawItem)[property] ?? "").trim()),
+        )
+      )
+        itemSupport[property] = "supported";
+    }
+  }
+
+  const unsupportedFields = Object.keys(fieldSupport).filter(
+    (field) => fieldSupport[field] === "unsupported",
+  );
+  const unsupportedProperties = Object.keys(itemSupport).filter(
+    (key) => itemSupport[key] === "unsupported",
+  );
+  const removalEvidence =
+    payload.removalEvidence === null
+      ? null
+      : bindEvidence(payload.removalEvidence, "Unsupported-value removal");
+  if (
+    (unsupportedFields.length || unsupportedProperties.length) &&
+    !removalEvidence
+  )
+    throw new Error(
+      "Unsupported source votes require removalEvidence; the app derives removals from those votes.",
+    );
+  for (const field of unsupportedFields) changes[field] = null;
   const correctedItems =
     structure?.lineItems ??
     (unsupportedProperties.length ? (document.lineItems ?? []) : undefined);
@@ -621,13 +639,6 @@ export function parseCompactSourceAudit(
     ? correctedItems.map((rawItem) => {
         const item = { ...object(rawItem) };
         for (const property of unsupportedProperties) {
-          if (
-            structure?.lineItems !== undefined &&
-            String(item[property] ?? "").trim()
-          )
-            throw new Error(
-              `Table correction contradicts the unsupported ${property} verdict.`,
-            );
           delete item[property];
         }
         return item;

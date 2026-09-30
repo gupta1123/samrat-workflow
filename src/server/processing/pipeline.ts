@@ -5167,11 +5167,16 @@ export function parseValidatedPacketReconciliation(params: {
     const document = params.documents.find((entry) => entry.id === audit.docId);
     if (!document)
       throw new Error("A source audit refers to an unknown document.");
-    assertReferenceGrounding({
-      document,
-      evidence: audit.referenceEvidence,
-      sourcePages: params.sourcePages,
-    });
+    // A deferred source audit deliberately preserves the original extraction
+    // and carries no invented reference proof. It is already approval-blocking,
+    // so packet-level review may use the values for organization while never
+    // treating them as verified evidence.
+    if (audit.status !== "needs_review")
+      assertReferenceGrounding({
+        document,
+        evidence: audit.referenceEvidence,
+        sourcePages: params.sourcePages,
+      });
   }
   assertAuthoritativeDocumentAuditApplied(
     params.documents,

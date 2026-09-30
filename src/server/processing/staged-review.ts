@@ -307,6 +307,90 @@ function parseObjectOrNull(raw: string) {
   }
 }
 
+function unverifiedSourceReview(document: CaseDoc, pages: ReviewSourcePage[]) {
+  const reason =
+    "Automated source verification returned an internally inconsistent result. The original extraction was preserved without applying any unverified correction.";
+  return {
+    document,
+    audit: {
+      docId: document.id,
+      status: "needs_review" as const,
+      supportedFields: [],
+      unsupportedFields: [],
+      visibleOmittedFields: [],
+      supportedLineItemProperties: [],
+      unsupportedLineItemProperties: [],
+      reason,
+      referenceEvidence: [],
+    },
+    pageQuality: pages.map((page) => ({
+      sourceFileName: page.sourceFileName,
+      pageNumber: page.pageNumber,
+      documentId: document.id,
+      issues: [],
+      approvalSafe: false,
+      confidence: "low" as const,
+      reason,
+    })),
+    summary: {
+      enabled: true,
+      required: true,
+      authoritative: true,
+      semanticPostProcessing: false,
+      model: getExtractionReviewModel(),
+      provider: getExtractionReviewProvider(),
+      reasoningEffort: getExtractionReviewReasoningEffort(),
+      reviewedAt: new Date().toISOString(),
+      verdict: "needs_review" as const,
+      correctionCount: 0,
+      reviewIssueCount: 1,
+      corrections: [],
+      warnings: [reason],
+      error: reason,
+    },
+    reviewIssues: [
+      {
+        id: `evidence-review-source-contract-${document.id}`,
+        field: EXTRACTION_VERIFICATION_FIELD,
+        values: [
+          {
+            docId: document.id,
+            value: "Source verification needs review",
+            sourceFileName: document.sourceFileName,
+          },
+        ],
+        analysis: reason,
+        fixPlan:
+          "Open the original source pages and verify the extracted values before approval. Re-run analysis to obtain a fresh automated review.",
+      },
+    ] satisfies Mismatch[],
+  };
+}
+
+function deferredWorkflowReviewIssue(
+  stage: "packet" | "decisions" | "root-causes",
+  documents: CaseDoc[],
+): Mismatch {
+  const labels = {
+    packet: "Packet reconciliation",
+    decisions: "Mismatch verification",
+    "root-causes": "Mismatch consolidation",
+  } as const;
+  const label = labels[stage];
+  return {
+    id: `evidence-review-workflow-${stage}`,
+    field: EXTRACTION_VERIFICATION_FIELD,
+    values: documents.map((document) => ({
+      docId: document.id,
+      value: `${label} needs review`,
+      sourceFileName: document.sourceFileName,
+    })),
+    analysis: `${label} returned an internally inconsistent result. Verified source data was preserved and no rejected decision was applied.`,
+    fixPlan:
+      "Review the original packet evidence before approval, then re-run analysis to obtain a fresh automated decision.",
+  };
+}
+
 async function reviewOneSource(options: {
   document: CaseDoc;
   pages: ReviewSourcePage[];
@@ -328,7 +412,7 @@ async function reviewOneSource(options: {
   });
   const validate = (raw: string) =>
     parseCompactSourceAudit(raw, options.document, options.pages);
-  const cached = await cachedReviewStage({
+  const pending = cachedReviewStage({
     key,
     store: options.store,
     validate,
@@ -580,7 +664,27 @@ async function reviewOneSource(options: {
       }
     },
   });
-  return { ...cached, key };
+  try {
+    const cached = await pending;
+    return { ...cached, key };
+  } catch (error) {
+    if (!(error instanceof ReviewContractError)) throw error;
+    // A model-contract failure is not evidence that the user's document is
+    // wrong. Preserve the original extraction, block approval with an explicit
+    // review item, and allow the remaining packet analysis to finish. Never
+    // salvage or apply the rejected response.
+    console.warn("[staged-review] source verification deferred", {
+      documentId: options.document.id,
+      operation: error.operation,
+      defect: error.defect,
+    });
+    return {
+      result: unverifiedSourceReview(options.document, options.pages),
+      reused: false,
+      attempts: 2,
+      key,
+    };
+  }
 }
 
 // Compact request-local pointers are lossless aliases. Only pointer properties
@@ -801,6 +905,7 @@ export async function reviewExtractedDocumentsInStages(
       return result.result;
     },
   );
+  const workflowReviewIssues: Mismatch[] = [];
   const correctionHistory = sourceReviews.flatMap(
     (result) => result.summary.corrections,
   );
@@ -827,18 +932,27 @@ export async function reviewExtractedDocumentsInStages(
       throw new Error(
         "Packet task returned fields outside its reconciliation contract.",
       );
-    const requests = payload.sourceRecheckRequests.map((value) => {
-      const request = object(value);
-      if (
-        !currentDocuments.some((document) => document.id === request.docId) ||
-        typeof request.reason !== "string" ||
-        !request.reason.trim()
-      )
-        throw new Error(
-          "Packet task returned an invalid source recheck request.",
-        );
-      return { docId: request.docId as string, reason: request.reason };
-    });
+    const requests = payload.sourceRecheckRequests
+      .map((value) => {
+        const request = object(value);
+        if (
+          !currentDocuments.some((document) => document.id === request.docId) ||
+          typeof request.reason !== "string" ||
+          !request.reason.trim()
+        )
+          throw new Error(
+            "Packet task returned an invalid source recheck request.",
+          );
+        return { docId: request.docId as string, reason: request.reason };
+      })
+      // A source already marked needs_review has no verified finding to
+      // contradict. Re-running the same pages cannot make an invalid model
+      // contract safer; its existing review item keeps approval blocked.
+      .filter(
+        (request) =>
+          sourceReviews.find((result) => result.document.id === request.docId)
+            ?.audit.status !== "needs_review",
+      );
     if (
       new Set(requests.map((request) => request.docId)).size !== requests.length
     )
@@ -921,7 +1035,12 @@ export async function reviewExtractedDocumentsInStages(
       sources: sourceFingerprint(options.sourcePages),
       settings: modelSettings(),
     });
-    const result = await cachedReviewStage({
+    let packetResult: {
+      result: ReturnType<typeof parsePacket>;
+      reused: boolean;
+      attempts: number;
+    };
+    const packetReview = cachedReviewStage({
       key,
       store: options.checkpoints,
       validate: parsePacket,
@@ -943,13 +1062,54 @@ export async function reviewExtractedDocumentsInStages(
         return result;
       },
     });
+    try {
+      packetResult = await packetReview;
+    } catch (error) {
+      if (!(error instanceof ReviewContractError)) throw error;
+      console.warn("[staged-review] packet reconciliation deferred", {
+        operation: error.operation,
+        defect: error.defect,
+      });
+      workflowReviewIssues.push(
+        deferredWorkflowReviewIssue("packet", currentDocuments),
+      );
+      packetRaw = {
+        packetGroups: [
+          {
+            label: "Packet requires review",
+            documentIds: currentDocuments.map((document) => document.id),
+            relationship: "standard",
+            primaryDocumentIds: [],
+            contextDocumentIds: [],
+            rationale:
+              "Automated packet reconciliation was deferred without applying an unverified grouping decision.",
+            caseSummary: {
+              counterpartySource: null,
+              poNumber: "",
+              invoiceNumber: "",
+              primaryReference: "",
+              packetCategory: "Packet under review",
+            },
+          },
+        ],
+        termsChecklist: [],
+        sourceRecheckRequests: [],
+        packetIssues: [],
+        notes: [],
+      };
+      break;
+    }
+    const result = packetResult;
     if (result.reused) reused++;
     packetRaw = result.result.payload;
     if (!result.result.requests.length) break;
-    if (pass === 1)
-      throw new ReviewContractError(
-        "Packet source contradictions remain after targeted source rechecks; approval is blocked.",
+    if (pass === 1) {
+      workflowReviewIssues.push(
+        deferredWorkflowReviewIssue("packet", currentDocuments),
       );
+      packetRaw = { ...packetRaw, sourceRecheckRequests: [] };
+      break;
+    }
     await mapReviewTasks(
       result.result.requests,
       concurrency,
@@ -1039,7 +1199,12 @@ export async function reviewExtractedDocumentsInStages(
         sources: sourceFingerprint(options.sourcePages),
         settings: modelSettings(),
       });
-      const result = await cachedReviewStage({
+      let result: {
+        result: ReturnType<typeof validate>;
+        reused: boolean;
+        attempts: number;
+      };
+      const decisionReview = cachedReviewStage({
         key,
         store: options.checkpoints,
         validate,
@@ -1088,6 +1253,31 @@ export async function reviewExtractedDocumentsInStages(
           return result;
         },
       });
+      try {
+        result = await decisionReview;
+      } catch (error) {
+        if (!(error instanceof ReviewContractError)) throw error;
+        console.warn("[staged-review] mismatch decisions deferred", {
+          operation: error.operation,
+          defect: error.defect,
+        });
+        if (
+          !workflowReviewIssues.some(
+            (issue) => issue.id === "evidence-review-workflow-decisions",
+          )
+        )
+          workflowReviewIssues.push(
+            deferredWorkflowReviewIssue("decisions", currentDocuments),
+          );
+        return batch.candidates.map((_, index) => ({
+          mismatchId: `mismatch-${batch.offset + index + 1}`,
+          status: "dismissed",
+          primary: false,
+          outlierDocumentIds: [],
+          reason:
+            "Automated mismatch verification was deferred; no unverified discrepancy was applied.",
+        }));
+      }
       if (result.reused) reused++;
       decisionCompleted++;
       await report(
@@ -1144,7 +1334,7 @@ export async function reviewExtractedDocumentsInStages(
         aliases.decode(JSON.parse(raw)),
         rootCauseCandidates,
       );
-    const rootResult = await cachedReviewStage({
+    const rootReview = cachedReviewStage({
       key: reviewCheckpointKey("root-causes", {
         context: rootContext,
         sources: sourceFingerprint(options.sourcePages),
@@ -1196,19 +1386,44 @@ export async function reviewExtractedDocumentsInStages(
         return reviewed;
       },
     });
-    if (rootResult.reused) reused++;
-    result.authoritativeReview.mismatches = materializeRootCauseMismatches(
-      rootResult.result,
-      rootCauseCandidates,
-    );
-    result.confirmedMismatchCount =
-      result.authoritativeReview.mismatches.length;
-    result.dismissedMismatchCount +=
-      rootResult.result.dismissedMismatchIds.length;
+    try {
+      const rootResult = await rootReview;
+      if (rootResult.reused) reused++;
+      result.authoritativeReview.mismatches = materializeRootCauseMismatches(
+        rootResult.result,
+        rootCauseCandidates,
+      );
+      result.confirmedMismatchCount =
+        result.authoritativeReview.mismatches.length;
+      result.dismissedMismatchCount +=
+        rootResult.result.dismissedMismatchIds.length;
+    } catch (error) {
+      if (!(error instanceof ReviewContractError)) throw error;
+      console.warn("[staged-review] root-cause consolidation deferred", {
+        operation: error.operation,
+        defect: error.defect,
+      });
+      workflowReviewIssues.push(
+        deferredWorkflowReviewIssue("root-causes", currentDocuments),
+      );
+      // Keep every already verified mismatch instead of replacing it with an
+      // unverified consolidation response.
+      result.authoritativeReview.mismatches = rootCauseCandidates.map(
+        (candidate) => ({
+          ...candidate.mismatch,
+          analysis:
+            candidate.mismatch.analysis ??
+            "The verified mismatch was retained for review without unverified consolidation.",
+        }),
+      );
+      result.confirmedMismatchCount =
+        result.authoritativeReview.mismatches.length;
+    }
   }
   const pageQuality = sourceReviews.flatMap((result) => result.pageQuality);
   const reviewIssues = [
     ...sourceReviews.flatMap((result) => result.reviewIssues),
+    ...workflowReviewIssues,
     ...buildDocumentReadabilityMismatches(pageQuality),
     ...sourceReviews
       .filter(

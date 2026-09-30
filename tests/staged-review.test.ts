@@ -390,7 +390,7 @@ test("paired changes reject blank, normalized, duplicate, foreign-page and confl
   assert.equal(contradicted.document.fields.buyerName, change.value);
 });
 
-test("unsupported votes derive removals without a duplicate correction table", async () => {
+test("support votes audit the original table while a proved replacement is authoritative", async () => {
   const { parseCompactSourceAudit } =
     await import("../src/server/processing/staged-review-contract");
   const document: CaseDoc = {
@@ -417,31 +417,30 @@ test("unsupported votes derive removals without a duplicate correction table", a
         JSON.stringify({ ...payload, removalEvidence: null }),
         document,
         [pages[0]],
-    ),
+      ),
     /require removalEvidence/,
   );
-  assert.throws(
-    () =>
-      parseCompactSourceAudit(
-        JSON.stringify({
-          ...payload,
-          lineItemChecks: {
-            description: "unsupported",
-            itemCode: "supported",
-          },
-          structureChange: {
-            lineItems: [{ description: "Steel", itemCode: "Steel" }],
-            evidence: {
-              pageNumber: "p1",
-              quote: "Steel Steel",
-            },
-          },
-        }),
-        document,
-        [pages[0]],
-      ),
-    /Table correction contradicts the unsupported description verdict/,
+  const replaced = parseCompactSourceAudit(
+    JSON.stringify({
+      ...payload,
+      lineItemChecks: {
+        description: "unsupported",
+        itemCode: "supported",
+      },
+      structureChange: {
+        lineItems: [{ description: "Steel", itemCode: "Steel" }],
+        evidence: {
+          pageNumber: "p1",
+          quote: "Steel Steel",
+        },
+      },
+    }),
+    document,
+    [pages[0]],
   );
+  assert.equal(replaced.document.lineItems?.[0].description, "Steel");
+  assert.equal(replaced.document.lineItems?.[0].itemCode, "Steel");
+  assert.deepEqual(replaced.audit.unsupportedLineItemProperties, []);
 });
 
 test("a proved no-op is verified, not an unsupported missing-field finding", async () => {
@@ -751,7 +750,7 @@ test("checkpoint digests bind original content, fields, settings and contract, i
   );
 });
 
-test("full staged review resumes verified sources after a truncated packet response and still blocks blank-invoice approval", async (t) => {
+test("a truncated packet response completes in review and a rerun resumes verified sources", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");
   const { buildInvoiceNumberRequiredIssues } =
@@ -804,9 +803,20 @@ test("full staged review resumes verified sources after a truncated packet respo
         stages.push(stage);
       },
     });
-  await assert.rejects(run, /could not be verified after two attempts/);
+  const deferred = await run();
   assert.equal(sourceCalls, 2);
   assert.equal(packetCalls, 2);
+  assert.equal(deferred.review.verdict, "needs_review");
+  assert.equal(
+    deferred.reviewIssues.some(
+      (issue) => issue.id === "evidence-review-workflow-packet",
+    ),
+    true,
+  );
+  assert.equal(
+    deferred.authoritativeReview.verificationGroups[0].label,
+    "Packet requires review",
+  );
   assert.equal(
     [...store.values.keys()].filter((key) => key.startsWith("source/")).length,
     2,
@@ -1409,6 +1419,171 @@ test("an inconsistent source audit is repaired from its own page without fabrica
     result.documents[0].fields[unsupportedField as keyof CaseDoc["fields"]],
     documents[0].fields[unsupportedField as keyof CaseDoc["fields"]],
   );
+});
+
+test("an unrepairable source contract preserves extraction and completes with review blocked", async (t) => {
+  const previousConcurrency = process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+  process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = "1";
+  t.after(() => {
+    if (previousConcurrency === undefined) {
+      delete process.env.PACKET_SOURCE_REVIEW_CONCURRENCY;
+    } else {
+      process.env.PACKET_SOURCE_REVIEW_CONCURRENCY = previousConcurrency;
+    }
+  });
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const payloads = await Promise.all(documents.map(compact));
+  const invalid = structuredClone(payloads[0]);
+  const unsupportedField = Object.keys(invalid.fieldChecks)[0];
+  assert.ok(unsupportedField);
+  invalid.fieldChecks[unsupportedField] = "unsupported";
+  invalid.removalEvidence = null;
+  const invalidAudit = Object.fromEntries(
+    [
+      "sourceVerdict",
+      "fieldChecks",
+      "lineItemChecks",
+      "removalEvidence",
+      "structureChange",
+      "pageQuality",
+      "reviewIssues",
+      "reason",
+    ].map((key) => [key, (invalid as unknown as Record<string, unknown>)[key]]),
+  );
+  let auditRepairCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        const index = context.sourcePageNumbers[0] - 1;
+        return response(index === 0 ? invalid : payloads[index]);
+      }
+      if (name === "source_audit_repair") {
+        auditRepairCalls++;
+        return response(invalidAudit);
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.equal(auditRepairCalls, 2);
+  assert.equal(result.review.verdict, "needs_review");
+  assert.equal(result.review.documentAudits?.[0].status, "needs_review");
+  assert.equal(
+    result.documents[0].fields[unsupportedField as keyof CaseDoc["fields"]],
+    documents[0].fields[unsupportedField as keyof CaseDoc["fields"]],
+  );
+  assert.equal(
+    result.reviewIssues.some(
+      (issue) => issue.field === "extractionVerification",
+    ),
+    true,
+  );
+});
+
+test("unrepairable mismatch decisions complete with an approval-blocking workflow issue", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const payloads = await Promise.all(documents.map(compact));
+  let decisionCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        return response(payloads[context.sourcePageNumbers[0] - 1]);
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      if (name === "packet_mismatch_decisions") {
+        decisionCalls++;
+        return response({ mismatchDecisions: [] });
+      }
+      throw new Error(`Unexpected review operation ${name}`);
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.equal(decisionCalls, 2);
+  assert.equal(result.review.verdict, "needs_review");
+  assert.equal(
+    result.reviewIssues.some(
+      (issue) => issue.id === "evidence-review-workflow-decisions",
+    ),
+    true,
+  );
+  assert.equal(result.authoritativeReview.mismatches.length, 0);
+});
+
+test("unrepairable root-cause consolidation retains verified mismatches for review", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const payloads = await Promise.all(documents.map(compact));
+  let rootCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        return response(payloads[context.sourcePageNumbers[0] - 1]);
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      if (name === "packet_mismatch_decisions") {
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (candidate: { mismatchId: string }) => ({
+              mismatchId: candidate.mismatchId,
+              status: "confirmed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "The printed source values differ.",
+            }),
+          ),
+        });
+      }
+      if (name === "packet_mismatch_root_causes") {
+        rootCalls++;
+        return response({});
+      }
+      throw new Error(`Unexpected review operation ${name}`);
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.equal(rootCalls, 2);
+  assert.equal(result.review.verdict, "needs_review");
+  assert.equal(
+    result.reviewIssues.some(
+      (issue) => issue.id === "evidence-review-workflow-root-causes",
+    ),
+    true,
+  );
+  assert.equal(result.authoritativeReview.mismatches.length > 0, true);
 });
 
 test("targeted packet contradiction rechecks only the affected source", async (t) => {
