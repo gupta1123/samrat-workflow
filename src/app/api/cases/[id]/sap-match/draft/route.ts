@@ -8,7 +8,7 @@ import {
   withUser,
 } from "@/server/api/helpers";
 import { readSapEnvironment } from "@/server/sap/config";
-import { computeCaseMatch } from "@/server/sap/match-data";
+import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
 import {
   buildMatchedDraftPayload,
   createMatchedDraft,
@@ -61,15 +61,44 @@ export async function POST(request: Request, context: Context) {
       };
     }
 
+    let matchJob = await readSapMatchJob(db, user, id);
+    if (!matchJob || matchJob.status === "failed" || matchJob.status === "cancelled") {
+      matchJob = await enqueueSapMatch(db, user, id, true);
+    }
+    if (matchJob.status !== "succeeded" || !matchJob.result) {
+      throw new ApiError(
+        "The latest SAP re-check is still running. Wait for the SAP tab to finish, then create the draft.",
+        409,
+      );
+    }
+    const cachedMatch = matchJob.result;
+
     let outcome;
     try {
       outcome = await withTestServiceLayer(async (client) => {
-        const match = await computeCaseMatch({ db, client, caseRow: row });
+        const match = cachedMatch;
         if (!match.available) throw new ApiError(match.reason, 409);
         const plan = match.result.payload;
         if (match.result.status !== "ready" || !plan) {
           throw new ApiError(
             "This invoice is not ready. Resolve every open item in the match before creating the draft.",
+            409,
+          );
+        }
+
+        // The background result may be a few seconds old. Duplicate status and
+        // every selected base document are re-read immediately before the write.
+        const posted = await client.findInvoiceByReference(plan.cardCode, plan.numAtCard);
+        if (posted) {
+          throw new ApiError(
+            `This vendor invoice is already in SAP as A/P invoice ${posted.DocNum ?? posted.DocEntry ?? "?"}.`,
+            409,
+          );
+        }
+        const otherDraft = await client.findDraftByVendorReference(plan.cardCode, plan.numAtCard);
+        if (otherDraft && !String(otherDraft.Comments ?? "").startsWith(`Samrat case ${id}`)) {
+          throw new ApiError(
+            `This vendor invoice is already in SAP as draft ${otherDraft.DocNum ?? otherDraft.DocEntry ?? "?"}.`,
             409,
           );
         }

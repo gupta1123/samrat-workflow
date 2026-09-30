@@ -1,4 +1,5 @@
 import { processCaseJob } from "../src/server/process-job";
+import { processSapMatchJob } from "../src/server/sap/match-job";
 import { createSupabaseAdminClient } from "../src/server/supabase/admin";
 
 const IDLE_POLL_MS = 400;
@@ -28,10 +29,30 @@ async function nextQueuedJobId() {
   return typeof data?.id === "string" ? data.id : null;
 }
 
+async function nextQueuedSapMatchCaseId() {
+  const db = createSupabaseAdminClient();
+  const { data, error } = await db
+    .from("sap_match_jobs")
+    .select("case_id")
+    .eq("status", "queued")
+    .lte("next_run_at", new Date().toISOString())
+    .order("next_run_at", { ascending: true })
+    .order("requested_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return typeof data?.case_id === "string" ? data.case_id : null;
+}
+
 async function recoverStaleJobs() {
   const db = createSupabaseAdminClient();
-  const { error } = await db.rpc("recover_stale_case_jobs");
-  if (error) throw error;
+  const [cases, sap] = await Promise.all([
+    db.rpc("recover_stale_case_jobs"),
+    db.rpc("recover_stale_sap_match_jobs"),
+  ]);
+  if (cases.error) throw cases.error;
+  if (sap.error) throw sap.error;
   lastRecoveryAt = Date.now();
 }
 
@@ -77,22 +98,36 @@ async function run() {
     try {
       await runMaintenanceIfDue();
       const jobId = await nextQueuedJobId();
-      if (!jobId) {
-        await wait(IDLE_POLL_MS);
+      if (jobId) {
+        const startedAt = Date.now();
+        console.log(`[case-worker] processing ${jobId}`);
+        const result = await processCaseJob(jobId);
+        if (result?.skipped) {
+          // Another worker may have claimed it, or the database's queue clock
+          // may not yet consider it due. A skipped claim is not a completion.
+          await wait(IDLE_POLL_MS);
+          continue;
+        }
+        console.log(
+          `[case-worker] completed ${jobId} in ${Date.now() - startedAt}ms`,
+        );
         continue;
       }
 
+      const sapCaseId = await nextQueuedSapMatchCaseId();
+      if (!sapCaseId) {
+        await wait(IDLE_POLL_MS);
+        continue;
+      }
       const startedAt = Date.now();
-      console.log(`[case-worker] processing ${jobId}`);
-      const result = await processCaseJob(jobId);
-      if (result?.skipped) {
-        // Another worker may have claimed it, or the database's queue clock
-        // may not yet consider it due. A skipped claim is not a completion.
+      console.log(`[sap-match-worker] processing ${sapCaseId}`);
+      const result = await processSapMatchJob(sapCaseId);
+      if (result.skipped) {
         await wait(IDLE_POLL_MS);
         continue;
       }
       console.log(
-        `[case-worker] completed ${jobId} in ${Date.now() - startedAt}ms`,
+        `[sap-match-worker] completed ${sapCaseId} in ${Date.now() - startedAt}ms`,
       );
     } catch (error) {
       console.error(

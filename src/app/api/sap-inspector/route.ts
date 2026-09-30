@@ -6,7 +6,6 @@ import {
 import { ApiError, withUser } from "@/server/api/helpers";
 import {
   clearSapCache,
-  fetchSapOpenGRPOs,
   fetchSapOpenPOs,
 } from "@/server/sap/client";
 import { readSapEnvironment } from "@/server/sap/config";
@@ -48,16 +47,13 @@ export async function GET(request: Request) {
     const dataset = datasetFrom(search.get("dataset"));
     const limit = readLimit(search.get("limit"));
     const poReferenceFields = configuredPoReferenceFields();
-    const vehicleField = (process.env.SAP_GRPO_VEHICLE_FIELD ?? "").trim();
+    const vehicleField = (process.env.SAP_GRPO_VEHICLE_FIELD ?? "U_VEHNO").trim();
 
     try {
-      if (dataset === "open-po" || dataset === "grpo") {
+      if (dataset === "open-po") {
         if (search.get("refresh") === "1") clearSapCache();
         const environment = readSapEnvironment();
-        const rows =
-          dataset === "open-po"
-            ? await fetchSapOpenPOs(environment)
-            : await fetchSapOpenGRPOs(environment);
+        const rows = await fetchSapOpenPOs(environment);
         const selected = rows.slice(0, limit);
         const response: SapInspectorResponse = {
           dataset,
@@ -75,7 +71,18 @@ export async function GET(request: Request) {
         return response;
       }
 
-      const additionalFields = dataset === "po" ? poReferenceFields : [];
+      const additionalFields =
+        dataset === "po"
+          ? poReferenceFields
+          : dataset === "grpo"
+            ? [
+                vehicleField,
+                process.env.SAP_GRPO_INVOICE_FIELD ?? "U_TATAINV",
+                process.env.SAP_GRPO_EWAY_FIELD ?? "U_WAYBNO",
+                process.env.SAP_GRPO_LR_FIELD ?? "U_LRNO",
+                "U_PONO",
+              ].filter(Boolean)
+            : [];
       const rows = await withTestServiceLayer((client) =>
         client.listInspectorDocuments(dataset, limit, additionalFields),
       );

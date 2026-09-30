@@ -137,6 +137,11 @@ function scoreReceipt(
   const bad: string[] = [];
   let score = 0;
   let truck = false;
+  const exact = (left: unknown, right: unknown) => {
+    const a = normalizeRef(left);
+    const b = normalizeRef(right);
+    return Boolean(a && b && a === b);
+  };
   const invoicePos = invoice.poReferences.map(normalizeRef).filter(Boolean);
   const receiptPos = receipt.poRefs.map(normalizeRef).filter(Boolean);
   if (invoicePos.length && receiptPos.some((ref) => invoicePos.includes(ref))) {
@@ -154,6 +159,26 @@ function scoreReceipt(
     } else {
       score -= 30;
       bad.push(`stores linked it to another invoice (${receipt.vendorRef})`);
+    }
+  }
+  if (receipt.eWayBill) {
+    if (exact(receipt.eWayBill, invoice.eWayBill)) {
+      score += 40;
+      truck = true;
+      good.push("same e-way bill");
+    } else if (invoice.eWayBill) {
+      score -= 30;
+      bad.push(`different e-way bill (${receipt.eWayBill})`);
+    }
+  }
+  if (receipt.lorryReceipt) {
+    if (exact(receipt.lorryReceipt, invoice.lorryReceipt)) {
+      score += 35;
+      truck = true;
+      good.push("same lorry receipt");
+    } else if (invoice.lorryReceipt) {
+      score -= 25;
+      bad.push(`different lorry receipt (${receipt.lorryReceipt})`);
     }
   }
   const vehicle = normalizeRef(receipt.vehicle);
@@ -218,7 +243,33 @@ function candidateView(
 function suggestItems(
   line: MatchInvoiceLine,
   context: MatchContext,
+  invoice: MatchInvoice,
 ): Array<{ itemCode: string; name: string; why: string }> {
+  const exact = (left: unknown, right: unknown) => {
+    const a = normalizeRef(left);
+    const b = normalizeRef(right);
+    return Boolean(a && b && a === b);
+  };
+  const fromReceipt = context.receipts
+    .flatMap((receipt) => {
+      const reasons: string[] = [];
+      if (exact(receipt.vendorRef, invoice.invoiceNumber)) reasons.push(`receipt ${receipt.docNum} has the same invoice number`);
+      if (exact(receipt.eWayBill, invoice.eWayBill)) reasons.push(`receipt ${receipt.docNum} has the same e-way bill`);
+      if (exact(receipt.lorryReceipt, invoice.lorryReceipt)) reasons.push(`receipt ${receipt.docNum} has the same lorry receipt`);
+      if (!reasons.length) return [];
+      if (line.quantity !== null && Math.abs(receipt.openQty - line.quantity) < EPS) {
+        reasons.push("quantity also matches");
+      }
+      const info = context.items[receipt.itemCode];
+      return [{
+        itemCode: receipt.itemCode,
+        name: info?.name ?? receipt.itemCode,
+        why: reasons.join("; "),
+      }];
+    });
+  const anchored = [...new Map(fromReceipt.map((entry) => [entry.itemCode, entry])).values()];
+  if (anchored.length) return anchored.slice(0, 3);
+
   const wanted = tokens(`${line.description ?? ""} ${line.vendorItemCode ?? ""}`);
   if (!wanted.size) return [];
   return Object.entries(context.items)
@@ -412,7 +463,7 @@ export function evaluateMatch(input: EvaluateInput): MatchResult {
         sev: "block",
         title: `Item not linked: ${ln.description ?? ln.vendorItemCode ?? `line ${ln.index + 1}`}`,
         help: `${invoice.vendorName ?? "This vendor"}'s material ${ln.vendorItemCode ?? ""} is not linked to one of your SAP items yet. Link it once and future invoices use it automatically.`,
-        itemSuggestions: suggestItems(ln, context),
+        itemSuggestions: suggestItems(ln, context, invoice),
       });
       continue;
     }
@@ -872,31 +923,32 @@ function evaluateMaterialLine(args: {
   const rate = effectiveRate(ln);
   if (rate !== null && poRate !== null && poRate > 0) {
     const pct = ((rate - poRate) / poRate) * 100;
-    const extra = (rate - poRate) * result.allocatedQty;
+    const absolutePct = Math.abs(pct);
+    const difference = Math.abs(rate - poRate);
+    const valueDifference = difference * result.allocatedQty;
+    const direction = pct < 0 ? "below" : "above";
     if (Math.abs(pct) < 0.005) {
       checks.push({ id: `rate-${i}`, lineIndex: i, sev: "pass", title: "Rate matches the PO" });
-    } else if (pct < 0) {
-      checks.push({ id: `rate-${i}`, lineIndex: i, sev: "pass", title: `Rate is ${Math.abs(pct).toFixed(2)}% below the PO` });
-    } else if (pct <= rules.rateTolerancePct) {
+    } else if (absolutePct <= rules.rateTolerancePct) {
       checks.push({
         id: `rate-${i}`,
         lineIndex: i,
         sev: "ack",
-        ask: "Accept the higher rate?",
-        title: `Rate is ${inr(rate - poRate)} above the PO`,
-        help: `${pct.toFixed(2)}% higher, inside your ${rules.rateTolerancePct}% limit. Extra cost ${inr(extra)} plus tax.`,
-        options: [{ choice: "ok", title: "Accept the vendor's rate", lines: [`Book ${inr(rate)}`, `Extra ${inr(extra)} plus tax`], effect: "resolve", recommended: true }],
+        ask: "Accept the different rate?",
+        title: `Rate is ${inr(difference)} ${direction} the PO`,
+        help: `${absolutePct.toFixed(2)}% ${direction}, inside your ${rules.rateTolerancePct}% limit. Invoice value differs by ${inr(valueDifference)} before tax.`,
+        options: [{ choice: "ok", title: "Accept the vendor's rate", lines: [`Book ${inr(rate)}`, `Difference ${inr(valueDifference)} before tax`], effect: "resolve", recommended: true }],
       });
     } else {
       checks.push({
         id: `rate-${i}`,
         lineIndex: i,
         sev: "confirm",
-        ask: "Pay the higher rate?",
-        title: `Rate is ${inr(rate - poRate)} above the PO`,
-        help: `${vendorName} charged ${inr(rate)}; the PO says ${inr(poRate)} (${pct.toFixed(2)}% more), above your ${rules.rateTolerancePct}% limit. Confirm with a reason, or return the invoice.`,
+        ask: "Use the invoice rate?",
+        title: `Rate is ${inr(difference)} ${direction} the PO`,
+        help: `${vendorName} charged ${inr(rate)}; the PO says ${inr(poRate)} (${absolutePct.toFixed(2)}% ${direction}), outside your ${rules.rateTolerancePct}% limit. Confirm with a reason, or return the invoice.`,
         options: [
-          { choice: "confirm", title: "Pay the higher rate", lines: [`Book ${inr(rate)}`, `Extra ${inr(extra)} plus tax`, "The reason is saved in the audit trail"], effect: "resolve", needsReason: true },
+          { choice: "confirm", title: "Use the invoice rate", lines: [`Book ${inr(rate)}`, `Difference ${inr(valueDifference)} before tax`, "The reason is saved in the audit trail"], effect: "resolve", needsReason: true },
           { ...RETURN_OPTION, recommended: true, lines: ["Ask for a corrected invoice at the PO rate"] },
         ],
       });

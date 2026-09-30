@@ -1,5 +1,3 @@
-import "server-only";
-
 import { sapFetch } from "./http";
 import type { SapGrpo } from "./ap-draft";
 import {
@@ -134,6 +132,17 @@ export async function withTestServiceLayer<T>(
     listOpenReceiptDocumentsForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
+    findOpenReceiptDocumentsForInvoice: (input: {
+      cardCode: string;
+      invoiceNumber: string;
+      eWayBill: string | null;
+      lorryReceipt: string | null;
+      vehicles: string[];
+      invoiceRefField?: string;
+      eWayBillField?: string;
+      lorryReceiptField?: string;
+      vehicleField?: string;
+    }) => Promise<SapMatchDocument[]>;
     listOpenPurchaseOrdersForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
@@ -245,12 +254,25 @@ export async function withTestServiceLayer<T>(
   }
 
   async function pageAll<T>(path: string, max: number): Promise<T[]> {
-    return readODataCollection<T>({
-      initialPath: path,
-      baseUrl: config.baseUrl,
-      max,
-      read: async (nextPath) => (await request(nextPath)).body,
-    });
+    try {
+      return await readODataCollection<T>({
+        initialPath: path,
+        baseUrl: config.baseUrl,
+        max,
+        read: async (nextPath) => (await request(nextPath)).body,
+      });
+    } catch (error) {
+      const entity = path.split("?", 1)[0];
+      throw new Error(
+        `${entity} paging failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  async function collectionOnce<T>(path: string, max: number): Promise<T[]> {
+    const separator = path.includes("?") ? "&" : "?";
+    const { body } = await request(`${path}${separator}$top=${max}`);
+    return Array.isArray(body.value) ? (body.value as T[]).slice(0, max) : [];
   }
 
   async function listOpenGrposByFilter(filter: string): Promise<SapGrpo[]> {
@@ -515,13 +537,13 @@ export async function withTestServiceLayer<T>(
             `contains(CardCode,'${variant}')`,
           ])
           .join(" or ");
-        return pageAll<SapSupplierRow>(
+        return collectionOnce<SapSupplierRow>(
           `/BusinessPartners?$select=CardCode,CardName,BPAddresses&$filter=${encodeURIComponent(`CardType eq 'cSupplier' and (${filter})`)}&$orderby=CardCode%20asc`,
           25,
         );
       },
       async getSupplier(cardCode) {
-        const rows = await pageAll<SapSupplierRow>(
+        const rows = await collectionOnce<SapSupplierRow>(
           `/BusinessPartners?$select=CardCode,CardName,BPAddresses&$filter=${encodeURIComponent(`CardCode eq '${cardCode.replaceAll("'", "''")}' and CardType eq 'cSupplier'`)}`,
           1,
         );
@@ -536,6 +558,54 @@ export async function withTestServiceLayer<T>(
             "&$orderby=DocEntry%20asc",
           1000,
         );
+      },
+      async findOpenReceiptDocumentsForInvoice(input) {
+        const safeField = (value: string | undefined) =>
+          value && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : null;
+        const literal = (value: string) => value.replaceAll("'", "''");
+        const identifiers: Array<{ label: string; filter: string }> = [];
+        if (input.invoiceNumber.trim()) {
+          const value = literal(input.invoiceNumber.trim());
+          identifiers.push({ label: "NumAtCard", filter: `NumAtCard eq '${value}'` });
+          const field = safeField(input.invoiceRefField);
+          if (field) identifiers.push({ label: field, filter: `${field} eq '${value}'` });
+        }
+        const add = (fieldName: string | undefined, value: string | null) => {
+          const field = safeField(fieldName);
+          const wanted = value?.trim();
+          if (field && wanted) identifiers.push({ label: field, filter: `${field} eq '${literal(wanted)}'` });
+        };
+        add(input.eWayBillField, input.eWayBill);
+        add(input.lorryReceiptField, input.lorryReceipt);
+        const vehicleField = safeField(input.vehicleField);
+        if (vehicleField) {
+          for (const vehicle of input.vehicles.filter(Boolean).slice(0, 4)) {
+            identifiers.push({ label: vehicleField, filter: `${vehicleField} eq '${literal(vehicle)}'` });
+          }
+        }
+        if (!identifiers.length) return [];
+        // Query identifiers independently in strength order. Besides returning
+        // as soon as an exact key succeeds, this makes optional SAP UDFs safe:
+        // one missing field cannot break NumAtCard or the other configured keys.
+        for (const identifier of identifiers) {
+          try {
+            const rows = await collectionOnce<SapMatchDocument>(
+              "/PurchaseDeliveryNotes?$filter=" +
+                encodeURIComponent(
+                  `CardCode eq '${literal(input.cardCode)}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO' and ${identifier.filter}`,
+                ) +
+                "&$orderby=DocEntry%20desc",
+              100,
+            );
+            if (rows.length) return rows;
+          } catch (error) {
+            console.warn(
+              `Could not query SAP receipts by ${identifier.label}; trying the next exact identifier.`,
+              error instanceof Error ? error.message : String(error),
+            );
+          }
+        }
+        return [];
       },
       async listOpenPurchaseOrdersForVendor(cardCode) {
         return pageAll<SapMatchDocument>(
@@ -556,9 +626,9 @@ export async function withTestServiceLayer<T>(
             .map((entry) => `DocEntry eq ${entry}`)
             .join(" or ");
           documents.push(
-            ...(await pageAll<SapMatchDocument>(
+            ...(await collectionOnce<SapMatchDocument>(
               `/PurchaseOrders?$filter=${encodeURIComponent(filter)}`,
-              100,
+              15,
             )),
           );
         }
@@ -573,9 +643,9 @@ export async function withTestServiceLayer<T>(
             .map((code) => `ItemCode eq '${code.replaceAll("'", "''")}'`)
             .join(" or ");
           rows.push(
-            ...(await pageAll<SapItemRow>(
+            ...(await collectionOnce<SapItemRow>(
               `/Items?$select=ItemCode,ItemName,InventoryItem&$filter=${encodeURIComponent(filter)}`,
-              100,
+              15,
             )),
           );
         }
@@ -591,7 +661,7 @@ export async function withTestServiceLayer<T>(
             `contains(ItemCode,'${variant}')`,
           ])
           .join(" or ");
-        return pageAll<SapItemRow>(
+        return collectionOnce<SapItemRow>(
           `/Items?$select=ItemCode,ItemName,InventoryItem&$filter=${encodeURIComponent(`Valid eq 'tYES' and (${filter})`)}&$orderby=ItemCode%20asc`,
           25,
         );

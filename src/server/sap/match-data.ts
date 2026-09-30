@@ -39,8 +39,15 @@ export type CaseMatch =
     };
 
 export function sapFieldConfig(): SapFieldConfig {
+  const field = (name: string, fallback: string) => {
+    const value = (process.env[name] ?? fallback).trim();
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : undefined;
+  };
   return {
-    vehicleField: (process.env.SAP_GRPO_VEHICLE_FIELD ?? "").trim() || undefined,
+    vehicleField: field("SAP_GRPO_VEHICLE_FIELD", "U_VEHNO"),
+    invoiceRefField: field("SAP_GRPO_INVOICE_FIELD", "U_TATAINV"),
+    eWayBillField: field("SAP_GRPO_EWAY_FIELD", "U_WAYBNO"),
+    lorryReceiptField: field("SAP_GRPO_LR_FIELD", "U_LRNO"),
     poRefFields: (process.env.SAP_PO_REF_FIELDS ?? "")
       .split(",")
       .map((field) => field.trim())
@@ -238,9 +245,18 @@ export async function computeCaseMatch(params: {
     if (supplier) vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
   }
   if (!vendor) {
-    const suppliers = await client.listSuppliers();
-    suppliersRead = suppliers.length;
-    ({ vendor, ambiguous } = resolveVendor(invoice, suppliers));
+    const targeted = invoice.vendorName
+      ? await client.searchSuppliers(invoice.vendorName)
+      : [];
+    if (targeted.length) {
+      suppliersRead = targeted.length;
+      ({ vendor, ambiguous } = resolveVendor(invoice, targeted));
+    }
+    if (!vendor && !ambiguous.length) {
+      const suppliers = await client.listSuppliers();
+      suppliersRead = suppliers.length;
+      ({ vendor, ambiguous } = resolveVendor(invoice, suppliers));
+    }
   }
 
   let receiptDocuments: Awaited<ReturnType<Client["listOpenReceiptDocumentsForVendor"]>> = [];
@@ -248,11 +264,29 @@ export async function computeCaseMatch(params: {
   let itemMap: Record<string, string> = {};
   let existingInvoice: MatchContext["existingInvoice"] = null;
   if (vendor) {
-    [receiptDocuments, purchaseOrders, itemMap] = await Promise.all([
-      client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
-      client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
+    const [targetedReceipts, loadedItemMap] = await Promise.all([
+      client.findOpenReceiptDocumentsForInvoice({
+        cardCode: vendor.cardCode,
+        invoiceNumber: invoice.invoiceNumber,
+        eWayBill: invoice.eWayBill,
+        lorryReceipt: invoice.lorryReceipt,
+        vehicles: invoice.vehicles,
+        invoiceRefField: config.invoiceRefField,
+        eWayBillField: config.eWayBillField,
+        lorryReceiptField: config.lorryReceiptField,
+        vehicleField: config.vehicleField,
+      }),
       loadItemMappings(db, vendor.cardCode),
     ]);
+    itemMap = loadedItemMap;
+    if (targetedReceipts.length) {
+      receiptDocuments = targetedReceipts;
+    } else {
+      [receiptDocuments, purchaseOrders] = await Promise.all([
+        client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
+        client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
+      ]);
+    }
     // A receipt can stay open after its PO is closed, so fetch any PO a receipt points to.
     const known = new Set(purchaseOrders.map((po) => po.DocEntry));
     const referenced = receiptDocuments

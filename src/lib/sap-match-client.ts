@@ -23,6 +23,14 @@ type Shared = {
   caseStatus: string;
   postable: boolean;
   postings: SapMatchPosting[];
+  matchJob?: {
+    status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+    stage: string;
+    error: string | null;
+    attempt: number;
+    requestedAt: string;
+    finishedAt: string | null;
+  };
 };
 
 export type SapMatchUnavailable = Shared & {
@@ -51,8 +59,8 @@ function errorText(body: Record<string, unknown>, fallback: string) {
   return typeof body.error === "string" && body.error ? body.error : fallback;
 }
 
-export async function fetchSapMatch(caseId: string): Promise<SapMatchResponse> {
-  const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/sap-match`, {
+export async function fetchSapMatch(caseId: string, refresh = false): Promise<SapMatchResponse> {
+  const response = await apiFetch(`/api/cases/${encodeURIComponent(caseId)}/sap-match${refresh ? "?refresh=1" : ""}`, {
     cache: "no-store",
   });
   const body = await readJson(response);

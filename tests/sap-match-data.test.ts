@@ -57,6 +57,19 @@ const invoiceFields = serializeFieldsWithLineItems({
 const CASE = { id: "case-1", invoice_number: "1444099137", po_number: "TGPO26-0412" };
 
 function sapClient(overrides: Record<string, unknown> = {}) {
+  const receipts = [
+    {
+      DocEntry: 8412,
+      DocNum: 4412,
+      DocDate: "2026-06-13",
+      CardCode: "V-TATA01",
+      NumAtCard: "1444099137",
+      BPL_IDAssignedToInvoice: 1,
+      DocumentLines: [
+        { LineNum: 0, ItemCode: "BW-TW20-091", Quantity: 34.98, RemainingOpenQuantity: 34.98, Price: 68000, LineStatus: "bost_Open", BaseType: 22, BaseEntry: 77, BaseLine: 0, WarehouseCode: "HYD-01" },
+      ],
+    },
+  ];
   return {
     listSuppliers: async () => [
       { CardCode: "V-TATA01", CardName: "Tata Steel Limited" },
@@ -66,19 +79,11 @@ function sapClient(overrides: Record<string, unknown> = {}) {
       cardCode === "V-TATA01"
         ? { CardCode: "V-TATA01", CardName: "Tata Steel Limited" }
         : null,
-    listOpenReceiptDocumentsForVendor: async () => [
-      {
-        DocEntry: 8412,
-        DocNum: 4412,
-        DocDate: "2026-06-13",
-        CardCode: "V-TATA01",
-        NumAtCard: "1444099137",
-        BPL_IDAssignedToInvoice: 1,
-        DocumentLines: [
-          { LineNum: 0, ItemCode: "BW-TW20-091", Quantity: 34.98, RemainingOpenQuantity: 34.98, Price: 68000, LineStatus: "bost_Open", BaseType: 22, BaseEntry: 77, BaseLine: 0, WarehouseCode: "HYD-01" },
-        ],
-      },
+    searchSuppliers: async () => [
+      { CardCode: "V-TATA01", CardName: "Tata Steel Limited" },
     ],
+    findOpenReceiptDocumentsForInvoice: async () => receipts,
+    listOpenReceiptDocumentsForVendor: async () => receipts,
     listOpenPurchaseOrdersForVendor: async () => [],
     listPurchaseOrdersByEntries: async () => [
       { DocEntry: 77, DocNum: 412, NumAtCard: "TGPO26-0412", CardCode: "V-TATA01", DocumentLines: [{ LineNum: 0, ItemCode: "BW-TW20-091", Quantity: 100, RemainingOpenQuantity: 65, Price: 68000, LineStatus: "bost_Open" }] },
@@ -126,6 +131,10 @@ test("an unlinked item blocks until it is linked", async () => {
   });
   assert.equal(match.available && match.result.status, "blocked");
   assert.ok(match.available && match.result.checks.some((c) => c.id === "map-0" && c.sev === "block"));
+  assert.equal(
+    match.available && match.result.checks.find((c) => c.id === "map-0")?.itemSuggestions?.[0]?.itemCode,
+    "BW-TW20-091",
+  );
 });
 
 test("an invoice already posted in SAP is a duplicate", async () => {
@@ -170,7 +179,7 @@ test("a case without a numbered invoice reports why nothing can be matched", asy
 test("an unknown vendor blocks with a clear reason instead of guessing", async () => {
   const match = await computeCaseMatch({
     db: fakeDb(tables()) as never,
-    client: sapClient({ listSuppliers: async () => [{ CardCode: "V-OTHER", CardName: "Other Traders" }] }) as never,
+    client: sapClient({ searchSuppliers: async () => [], listSuppliers: async () => [{ CardCode: "V-OTHER", CardName: "Other Traders" }] }) as never,
     caseRow: CASE,
   });
   assert.ok(match.available);
@@ -196,6 +205,7 @@ test("multiple exact SAP GSTIN matches require an explicit vendor choice", async
           BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
         },
       ],
+      searchSuppliers: async () => [],
     }) as never,
     caseRow: CASE,
   });
@@ -282,7 +292,7 @@ test("a linked vendor missing from the supplier list is looked up directly", asy
 test("no suppliers at all points to a permission problem", async () => {
   const match = await computeCaseMatch({
     db: fakeDb(tables()) as never,
-    client: sapClient({ listSuppliers: async () => [] }) as never,
+    client: sapClient({ searchSuppliers: async () => [], listSuppliers: async () => [] }) as never,
     caseRow: CASE,
   });
   assert.ok(match.available);
