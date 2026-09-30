@@ -222,10 +222,26 @@ export const FIELD_DEFINITIONS: FieldDefinition[] = [
     label: "Authorized Signature Present",
     evidenceKind: "visual_observation",
   },
-  { key: "hasVendorStamp", label: "Vendor Stamp Present" },
-  { key: "hasStoreStamp", label: "Store Stamp Present" },
-  { key: "hasStoreSignature", label: "Store Signature Present" },
-  { key: "hasGateStamp", label: "Gate Stamp Present" },
+  {
+    key: "hasVendorStamp",
+    label: "Vendor Stamp Present",
+    evidenceKind: "visual_observation",
+  },
+  {
+    key: "hasStoreStamp",
+    label: "Store Stamp Present",
+    evidenceKind: "visual_observation",
+  },
+  {
+    key: "hasStoreSignature",
+    label: "Store Signature Present",
+    evidenceKind: "visual_observation",
+  },
+  {
+    key: "hasGateStamp",
+    label: "Gate Stamp Present",
+    evidenceKind: "visual_observation",
+  },
 ];
 
 export const IGNORED_PACKET_FIELD_KEYS: readonly FieldKey[] = [

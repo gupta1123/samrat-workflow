@@ -501,6 +501,47 @@ test("visual evidence may correct declared visual observations but never printed
   );
 });
 
+test("every visual presence field accepts source-image evidence", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const visualFields = [
+    "hasAuthorizedSignature",
+    "hasVendorStamp",
+    "hasStoreStamp",
+    "hasStoreSignature",
+    "hasGateStamp",
+  ] as const;
+
+  for (const field of visualFields) {
+    const document: CaseDoc = {
+      ...documents[0],
+      fields: { ...documents[0].fields, [field]: "No" },
+    };
+    const raw = await compact(document);
+    const result = parseCompactSourceAudit(
+      JSON.stringify({
+        ...raw,
+        fieldChanges: [
+          {
+            field,
+            value: "Yes",
+            evidenceKind: "visual_observation",
+            pageNumber: "p1",
+            quote: `${field} is visibly present on the source page`,
+          },
+        ],
+      }),
+      document,
+      [pages[0]],
+    );
+    assert.equal(result.document.fields[field], "Yes");
+    assert.equal(
+      result.audit.fieldEvidence?.[0].evidenceKind,
+      "visual_observation",
+    );
+  }
+});
+
 test("named source decisions are order-independent and accepted row pages are request-owned", async () => {
   const { parseCompactSourceAudit } =
     await import("../src/server/processing/staged-review-contract");
