@@ -902,6 +902,133 @@ test("full staged review verifies all confirmed candidates through the root-caus
   );
 });
 
+test("packet-discovered symptoms join confirmed candidates in one final root cause", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const conflictingDocuments = documents.map((document, index) => ({
+    ...structuredClone(document),
+    fields: { ...document.fields },
+    md: `${document.md} Vehicle: ${index === 0 ? "TRUCK-A" : "TRUCK-B"}. Buyer: ${index === 0 ? "Buyer Alpha" : "Buyer Beta"}.`,
+  }));
+  const sourcePayloads = await Promise.all(conflictingDocuments.map(compact));
+  let rootCandidateFields: string[] = [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        return response(sourcePayloads[context.sourcePageNumbers[0] - 1]);
+      }
+      if (name === "packet_reconciliation") {
+        return response({
+          ...packet(),
+          packetIssues: [
+            {
+              field: "vehicleNumber",
+              reason:
+                "The printed vehicle identities describe different shipments.",
+              evidence: [
+                {
+                  docId: "d1",
+                  value: "TRUCK-A",
+                  sourceFileName: "f1",
+                  pageNumber: 1,
+                  quote: "Vehicle: TRUCK-A",
+                },
+                {
+                  docId: "d2",
+                  value: "TRUCK-B",
+                  sourceFileName: "f1",
+                  pageNumber: 2,
+                  quote: "Vehicle: TRUCK-B",
+                },
+              ],
+            },
+            {
+              field: "buyerName",
+              reason:
+                "The printed buyer identities describe different shipments.",
+              evidence: [
+                {
+                  docId: "d1",
+                  value: "Buyer Alpha",
+                  sourceFileName: "f1",
+                  pageNumber: 1,
+                  quote: "Buyer: Buyer Alpha",
+                },
+                {
+                  docId: "d2",
+                  value: "Buyer Beta",
+                  sourceFileName: "f1",
+                  pageNumber: 2,
+                  quote: "Buyer: Buyer Beta",
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (name === "packet_mismatch_decisions") {
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (candidate: { mismatchId: string }) => ({
+              mismatchId: candidate.mismatchId,
+              status: "dismissed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "No additional independent discrepancy is established.",
+            }),
+          ),
+        });
+      }
+      assert.equal(name, "packet_mismatch_root_causes");
+      rootCandidateFields = context.confirmedCandidates.map(
+        (candidate: { field: string }) => candidate.field,
+      );
+      return response({
+        rootIssues: [
+          {
+            issueId: "root-unrelated-source",
+            kind: "unrelated_document",
+            primaryMismatchId: context.confirmedCandidates[0].mismatchId,
+            memberMismatchIds: context.confirmedCandidates.map(
+              (candidate: { mismatchId: string }) => candidate.mismatchId,
+            ),
+            outlierDocumentIds: ["d2"],
+            title: "Unrelated source document",
+            reason:
+              "The second document carries a different vehicle and buyer.",
+          },
+        ],
+        dismissedMismatchIds: [],
+      });
+    },
+  );
+
+  const result = await reviewExtractedDocumentsInStages(conflictingDocuments, {
+    sourcePages: pages,
+  });
+  assert.ok(rootCandidateFields.includes("vehicleNumber"));
+  assert.ok(rootCandidateFields.includes("buyerName"));
+  assert.equal(result.authoritativeReview.mismatches.length, 1);
+  assert.equal(result.reviewIssues.length, 0);
+  assert.equal(
+    result.authoritativeReview.mismatches[0].field,
+    "unrelatedDocument",
+  );
+  assert.deepEqual(
+    new Set(
+      result.authoritativeReview.mismatches[0].values.map(
+        (entry) => entry.evidenceField,
+      ),
+    ),
+    new Set(["vehicleNumber", "buyerName"]),
+  );
+});
+
 test("an invalid reference proof is repaired from the original source page without rerunning extraction", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");

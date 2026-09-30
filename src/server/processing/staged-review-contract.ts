@@ -9,7 +9,7 @@ import {
 import { REFERENCE_FIELD_DEFINITIONS } from "./semantic-grounding";
 
 export const STAGED_REVIEW_CONTRACT_VERSION =
-  "visual-presence-evidence-model-failover-v11";
+  "all-packet-issues-root-cause-reviewed-v12";
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))

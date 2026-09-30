@@ -891,8 +891,18 @@ export async function reviewExtractedDocumentsInStages(
     documentAudits: sourceReviews.map((result) => result.audit),
     sourcePages: options.sourcePages,
   });
+  // Packet reconciliation can discover source-proved conflicts that were not
+  // present in the deterministic candidate set. They must enter the same final
+  // root-cause review as confirmed candidates; otherwise symptoms discovered
+  // here would bypass consolidation and be saved beside their root cause.
+  const packetReviewIssues = parseGroundedReviewIssues(
+    packetRaw.packetIssues,
+    currentDocuments,
+    options.sourcePages,
+    "packet",
+  );
   const rootCauseCandidates = buildRootCauseCandidates(
-    result.authoritativeReview.mismatches,
+    [...result.authoritativeReview.mismatches, ...packetReviewIssues],
   );
   if (rootCauseCandidates.length) {
     await report(96, "Validating the root cause of every packet issue");
@@ -972,7 +982,6 @@ export async function reviewExtractedDocumentsInStages(
       },
     });
     if (rootResult.reused) reused++;
-    const originalConfirmed = rootCauseCandidates.length;
     result.authoritativeReview.mismatches = materializeRootCauseMismatches(
       rootResult.result,
       rootCauseCandidates,
@@ -980,17 +989,11 @@ export async function reviewExtractedDocumentsInStages(
     result.confirmedMismatchCount =
       result.authoritativeReview.mismatches.length;
     result.dismissedMismatchCount +=
-      originalConfirmed - result.authoritativeReview.mismatches.length;
+      rootResult.result.dismissedMismatchIds.length;
   }
   const pageQuality = sourceReviews.flatMap((result) => result.pageQuality);
   const reviewIssues = [
     ...sourceReviews.flatMap((result) => result.reviewIssues),
-    ...parseGroundedReviewIssues(
-      packetRaw.packetIssues,
-      currentDocuments,
-      options.sourcePages,
-      "packet",
-    ),
     ...buildDocumentReadabilityMismatches(pageQuality),
     ...sourceReviews
       .filter(
