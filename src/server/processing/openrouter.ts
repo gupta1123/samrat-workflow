@@ -12,7 +12,7 @@ const OPENROUTER_QUALITY_MODEL =
 const OPENROUTER_REVIEW_MODEL =
   process.env.OPENROUTER_REVIEW_MODEL ||
   process.env.OPENROUTER_EXTRACTION_REVIEW_MODEL ||
-  "~google/gemini-pro-latest";
+  "google/gemini-3.8-flash";
 const OPENROUTER_REVIEW_FALLBACK_MODEL =
   process.env.OPENROUTER_REVIEW_FALLBACK_MODEL || OPENROUTER_QUALITY_MODEL;
 const OPENROUTER_REVIEW_REASONING_EFFORT =
@@ -20,7 +20,7 @@ const OPENROUTER_REVIEW_REASONING_EFFORT =
   process.env.EXTRACTION_REVIEW_REASONING_EFFORT ||
   "medium";
 const OPENROUTER_REVIEW_REASONING_TOKENS = Number(
-  process.env.OPENROUTER_REVIEW_REASONING_TOKENS ?? 2048,
+  process.env.OPENROUTER_REVIEW_REASONING_TOKENS ?? 1024,
 );
 const OPENROUTER_QUALITY_REASONING_TOKENS = Number(
   process.env.OPENROUTER_QUALITY_REASONING_TOKENS ?? 2000,
@@ -29,7 +29,7 @@ const OPENROUTER_MAX_OUTPUT_TOKENS = Number(
   process.env.OPENROUTER_MAX_OUTPUT_TOKENS ?? 8192,
 );
 const OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS = Number(
-  process.env.OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS ?? 16384,
+  process.env.OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS ?? 8192,
 );
 const OPENROUTER_REVIEW_TIMEOUT_MS = Number(
   process.env.OPENROUTER_REVIEW_TIMEOUT_MS ?? 6 * 60_000,
@@ -460,6 +460,7 @@ export async function callExtractionReviewModel(
     maxTokens?: number;
     model?: string;
     maxRetries?: number;
+    timeoutMs?: number;
   },
 ) {
   return callOpenRouter(messages, {
@@ -470,7 +471,7 @@ export async function callExtractionReviewModel(
     maxTokens: normalizeMaxTokens(
       options?.maxTokens ?? OPENROUTER_REVIEW_MAX_OUTPUT_TOKENS,
     ),
-    timeoutMs: OPENROUTER_REVIEW_TIMEOUT_MS,
+    timeoutMs: options?.timeoutMs ?? OPENROUTER_REVIEW_TIMEOUT_MS,
     operation: options?.operation ?? "extraction-review",
     requireCompleteOutput: true,
     responseSchema: options?.responseSchema,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-test("document extraction uses Flash and the separate final review uses Gemini 3 Pro despite legacy OpenAI settings", async (t) => {
+test("document extraction uses 2.5 Flash and the separate final review uses pinned 3.8 Flash despite legacy OpenAI settings", async (t) => {
   const settings: Record<string, string | undefined> = {
     OPENROUTER_API_KEY: "test-key-no-network",
     OPENROUTER_MODEL: undefined,
@@ -81,7 +81,7 @@ test("document extraction uses Flash and the separate final review uses Gemini 3
     requests[2].url,
     "https://openrouter.ai/api/v1/chat/completions",
   );
-  assert.equal(requests[2].body.model, "~google/gemini-pro-latest");
+  assert.equal(requests[2].body.model, "google/gemini-3.8-flash");
   assert.deepEqual(requests[2].body.messages, messages);
   assert.deepEqual(requests[2].body.response_format, {
     type: "json_schema",
@@ -98,10 +98,10 @@ test("document extraction uses Flash and the separate final review uses Gemini 3
   });
   assert.deepEqual(requests[2].body.provider, { require_parameters: true });
   assert.deepEqual(requests[2].body.reasoning, {
-    max_tokens: 2048,
+    max_tokens: 1024,
     exclude: true,
   });
-  assert.equal(requests[2].body.max_tokens, 16384);
+  assert.equal(requests[2].body.max_tokens, 8192);
   for (const result of results) {
     assert.deepEqual(JSON.parse(result), { verified: true });
   }
@@ -127,7 +127,7 @@ test("final review rejects a response truncated at the output limit without repl
           },
         },
       ],
-      usage: { completion_tokens: 16384 },
+      usage: { completion_tokens: 8192 },
     });
   });
 
@@ -136,7 +136,7 @@ test("final review rejects a response truncated at the output limit without repl
     provider.callExtractionReviewModel([
       { role: "user", content: "Return the final review JSON." },
     ]),
-    /reached the configured output limit \(16384 tokens\)/,
+    /reached the configured output limit \(8192 tokens\)/,
   );
   assert.equal(calls, 1);
 });

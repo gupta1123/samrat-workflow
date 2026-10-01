@@ -139,6 +139,11 @@ async function completeReviewRequest<T>(options: {
   const canFailOver = Boolean(
     fallbackModel && fallbackModel !== getExtractionReviewModel(),
   );
+  const timeoutMs = configuredPositive(
+    "PACKET_REVIEW_TASK_TIMEOUT_MS",
+    45_000,
+    120_000,
+  );
   for (let attempt = 1; attempt <= 2; attempt++) {
     attemptsUsed = attempt;
     const messages: OpenRouterMessage[] =
@@ -163,10 +168,12 @@ async function completeReviewRequest<T>(options: {
         operation: options.operation,
         maxTokens,
         model: fallbackActivated ? fallbackModel : undefined,
-        // A configured independent model is the retry for a transient primary
-        // provider response. Do not spend three attempts on the same provider
-        // before trying the already configured failover.
-        maxRetries: canFailOver && !fallbackActivated ? 0 : undefined,
+        // This staged task owns its two bounded attempts. Do not let the lower
+        // level HTTP helper replay either provider invisibly; a transient or
+        // incomplete primary response must switch straight to the independent
+        // fallback, and a bad fallback must return control to the workflow.
+        maxRetries: 0,
+        timeoutMs,
         responseSchema: {
           name: options.operation.replaceAll("-", "_"),
           strict: true,

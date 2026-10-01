@@ -898,7 +898,7 @@ test("an incomplete source response fails over to the configured review model wi
     sourcePages: pages,
   });
   assert.deepEqual(firstSourceModels, [
-    "~google/gemini-pro-latest",
+    "google/gemini-3.8-flash",
     "google/gemini-2.5-flash",
   ]);
   assert.equal(result.review.sourceReviewCount, 2);
@@ -954,7 +954,7 @@ test("a transient primary review response fails over without replaying the same 
   );
   await reviewExtractedDocumentsInStages(documents, { sourcePages: pages });
   assert.deepEqual(firstSourceModels, [
-    "~google/gemini-pro-latest",
+    "google/gemini-3.8-flash",
     "google/gemini-2.5-flash",
   ]);
 });
@@ -1005,7 +1005,7 @@ test("a primary review network failure uses the independent fallback immediately
   );
   await reviewExtractedDocumentsInStages(documents, { sourcePages: pages });
   assert.deepEqual(firstSourceModels, [
-    "~google/gemini-pro-latest",
+    "google/gemini-3.8-flash",
     "google/gemini-2.5-flash",
   ]);
 });
@@ -1335,8 +1335,8 @@ test("a non-reference correction with normalized evidence is repaired without en
   const result = await reviewExtractedDocumentsInStages(documents, {
     sourcePages: pages,
   });
-  assert.equal(models[0], "~google/gemini-pro-latest");
-  assert.deepEqual(models, ["~google/gemini-pro-latest"]);
+  assert.equal(models[0], "google/gemini-3.8-flash");
+  assert.deepEqual(models, ["google/gemini-3.8-flash"]);
   assert.equal(referenceRepairCalls, 0);
   assert.equal(fieldRepairCalls, 1);
   assert.equal(result.documents[0].fields.igstRate, "18%");
