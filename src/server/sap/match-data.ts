@@ -1,5 +1,10 @@
 import { dbCheck } from "@/server/api/helpers";
-import { evaluateMatch, itemMappingKey, normalizeRef } from "@/lib/sap-match/engine";
+import {
+  evaluateMatch,
+  itemMappingKey,
+  normalizeRef,
+} from "@/lib/sap-match/engine";
+import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import {
   EMPTY_MATCH_STATE,
   type MatchContext,
@@ -25,6 +30,44 @@ import type { withTestServiceLayer } from "./service-layer";
 
 type Db = ReturnType<typeof createSupabaseAdminClient>;
 type Client = Parameters<Parameters<typeof withTestServiceLayer>[0]>[0];
+
+type StoredMismatchAttribution = {
+  field_name: unknown;
+  values_json: unknown;
+  resolution_status: unknown;
+};
+
+/**
+ * Returns document IDs that the authoritative packet review identified as
+ * unrelated to the transaction. Rejected review findings are deliberately
+ * ignored because the reviewer has said that attribution is wrong.
+ */
+export function authoritativeOutlierDocumentIds(
+  mismatches: StoredMismatchAttribution[],
+): Set<string> {
+  const outlierIds = new Set<string>();
+  for (const mismatch of mismatches) {
+    if (
+      mismatch.field_name !== UNRELATED_DOCUMENT_FIELD ||
+      mismatch.resolution_status === "rejected" ||
+      !Array.isArray(mismatch.values_json)
+    ) {
+      continue;
+    }
+    for (const value of mismatch.values_json) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const attribution = value as Record<string, unknown>;
+      if (
+        attribution.isOutlier !== true ||
+        typeof attribution.docId !== "string"
+      )
+        continue;
+      const documentId = attribution.docId.trim();
+      if (documentId) outlierIds.add(documentId);
+    }
+  }
+  return outlierIds;
+}
 
 export type CaseMatch =
   | { available: false; reason: string }
@@ -81,7 +124,10 @@ export async function saveMatchRules(db: Db, rules: MatchRules) {
   dbCheck(error);
 }
 
-export async function loadMatchState(db: Db, caseId: string): Promise<MatchState> {
+export async function loadMatchState(
+  db: Db,
+  caseId: string,
+): Promise<MatchState> {
   const { data, error } = await db
     .from("sap_match_state")
     .select("decisions, allocations")
@@ -91,11 +137,15 @@ export async function loadMatchState(db: Db, caseId: string): Promise<MatchState
   if (!data) return { ...EMPTY_MATCH_STATE, decisions: {}, allocations: {} };
   return {
     decisions:
-      data.decisions && typeof data.decisions === "object" && !Array.isArray(data.decisions)
+      data.decisions &&
+      typeof data.decisions === "object" &&
+      !Array.isArray(data.decisions)
         ? (data.decisions as MatchState["decisions"])
         : {},
     allocations:
-      data.allocations && typeof data.allocations === "object" && !Array.isArray(data.allocations)
+      data.allocations &&
+      typeof data.allocations === "object" &&
+      !Array.isArray(data.allocations)
         ? (data.allocations as MatchState["allocations"])
         : {},
   };
@@ -139,7 +189,12 @@ async function loadVendorMapping(db: Db, keys: string[]) {
 
 export async function saveVendorMapping(
   db: Db,
-  input: { vendorKeys: string[]; cardCode: string; cardName: string | null; userId: string },
+  input: {
+    vendorKeys: string[];
+    cardCode: string;
+    cardName: string | null;
+    userId: string;
+  },
 ) {
   const { error } = await db.from("sap_vendor_mappings").upsert(
     input.vendorKeys.map((vendorKey) => ({
@@ -160,7 +215,8 @@ async function loadItemMappings(db: Db, vendorCardCode: string) {
     .in("vendor_card_code", [vendorCardCode, "*"]);
   dbCheck(error);
   const map: Record<string, string> = {};
-  for (const row of data ?? []) map[String(row.vendor_item_key)] = String(row.sap_item_code);
+  for (const row of data ?? [])
+    map[String(row.vendor_item_key)] = String(row.sap_item_code);
   return map;
 }
 
@@ -197,16 +253,31 @@ export async function computeCaseMatch(params: {
   caseRow: { id: string; invoice_number: unknown; po_number: unknown };
 }): Promise<CaseMatch> {
   const { db, client, caseRow } = params;
-  const documents = await db
-    .from("packet_documents")
-    .select("document_type, extracted_fields")
-    .eq("case_id", caseRow.id)
-    .order("created_at");
+  const [documents, mismatchAttributions] = await Promise.all([
+    db
+      .from("packet_documents")
+      .select("client_document_id, document_type, extracted_fields")
+      .eq("case_id", caseRow.id)
+      .order("created_at"),
+    db
+      .from("packet_mismatches")
+      .select("field_name, values_json, resolution_status")
+      .eq("case_id", caseRow.id)
+      .eq("field_name", UNRELATED_DOCUMENT_FIELD),
+  ]);
   dbCheck(documents.error);
+  dbCheck(mismatchAttributions.error);
+  const outlierIds = authoritativeOutlierDocumentIds(
+    (mismatchAttributions.data ?? []) as StoredMismatchAttribution[],
+  );
   const invoice = buildMatchInvoice({
     caseInvoiceNumber: caseRow.invoice_number,
     casePoNumber: caseRow.po_number,
-    documents: documents.data ?? [],
+    documents: (documents.data ?? []).filter(
+      (document) =>
+        typeof document.client_document_id !== "string" ||
+        !outlierIds.has(document.client_document_id),
+    ),
   });
   if (!invoice) {
     return {
@@ -217,7 +288,8 @@ export async function computeCaseMatch(params: {
   if (!invoice.lines.length) {
     return {
       available: false,
-      reason: "No invoice line items were extracted, so there is nothing to match. Analyze the case again.",
+      reason:
+        "No invoice line items were extracted, so there is nothing to match. Analyze the case again.",
     };
   }
 
@@ -229,20 +301,23 @@ export async function computeCaseMatch(params: {
   const branch = branchForShipTo(invoice.shipToGstin, rules);
   const keys = vendorKeys(invoice);
   let vendor: { cardCode: string; cardName: string } | null = null;
-  let ambiguous: Array<{ cardCode: string; cardName: string; why: string }> = [];
+  let ambiguous: Array<{ cardCode: string; cardName: string; why: string }> =
+    [];
   let suppliersRead: number | undefined;
   // A reviewer-confirmed choice is scoped to this case and never inferred.
   const selectedCardCode = state.decisions["vendor-link"]?.choice;
   if (selectedCardCode) {
     const supplier = await client.getSupplier(selectedCardCode);
-    if (supplier) vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
+    if (supplier)
+      vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
   }
   // A prior explicit link may be reused only for the same exact GSTIN and
   // vendor material code (or the same exact name when no GSTIN was available).
   const linked = vendor ? null : await loadVendorMapping(db, keys);
   if (linked) {
     const supplier = await client.getSupplier(linked.cardCode);
-    if (supplier) vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
+    if (supplier)
+      vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
   }
   if (!vendor) {
     const targeted = invoice.vendorName
@@ -259,8 +334,12 @@ export async function computeCaseMatch(params: {
     }
   }
 
-  let receiptDocuments: Awaited<ReturnType<Client["listOpenReceiptDocumentsForVendor"]>> = [];
-  let purchaseOrders: Awaited<ReturnType<Client["listOpenPurchaseOrdersForVendor"]>> = [];
+  let receiptDocuments: Awaited<
+    ReturnType<Client["listOpenReceiptDocumentsForVendor"]>
+  > = [];
+  let purchaseOrders: Awaited<
+    ReturnType<Client["listOpenPurchaseOrdersForVendor"]>
+  > = [];
   let itemMap: Record<string, string> = {};
   let existingInvoice: MatchContext["existingInvoice"] = null;
   if (vendor) {
@@ -292,21 +371,41 @@ export async function computeCaseMatch(params: {
     const referenced = receiptDocuments
       .flatMap((document) => document.DocumentLines ?? [])
       .flatMap((line) =>
-        line.BaseType === 22 && typeof line.BaseEntry === "number" && !known.has(line.BaseEntry)
+        line.BaseType === 22 &&
+        typeof line.BaseEntry === "number" &&
+        !known.has(line.BaseEntry)
           ? [line.BaseEntry]
           : [],
       );
     if (referenced.length) {
-      purchaseOrders = [...purchaseOrders, ...(await client.listPurchaseOrdersByEntries(referenced))];
+      purchaseOrders = [
+        ...purchaseOrders,
+        ...(await client.listPurchaseOrdersByEntries(referenced)),
+      ];
     }
-    const posted = await client.findInvoiceByReference(vendor.cardCode, invoice.invoiceNumber);
+    const posted = await client.findInvoiceByReference(
+      vendor.cardCode,
+      invoice.invoiceNumber,
+    );
     if (posted) {
-      existingInvoice = { docNum: posted.DocNum ?? posted.DocEntry ?? "?", kind: "invoice" };
+      existingInvoice = {
+        docNum: posted.DocNum ?? posted.DocEntry ?? "?",
+        kind: "invoice",
+      };
     } else {
-      const draft = await client.findDraftByVendorReference(vendor.cardCode, invoice.invoiceNumber);
+      const draft = await client.findDraftByVendorReference(
+        vendor.cardCode,
+        invoice.invoiceNumber,
+      );
       // A draft this app created for this very case is expected, not a duplicate.
-      if (draft && !String(draft.Comments ?? "").startsWith(`Samrat case ${caseRow.id}`)) {
-        existingInvoice = { docNum: draft.DocNum ?? draft.DocEntry ?? "?", kind: "draft" };
+      if (
+        draft &&
+        !String(draft.Comments ?? "").startsWith(`Samrat case ${caseRow.id}`)
+      ) {
+        existingInvoice = {
+          docNum: draft.DocNum ?? draft.DocEntry ?? "?",
+          kind: "draft",
+        };
       }
     }
   }
@@ -318,12 +417,19 @@ export async function computeCaseMatch(params: {
     ...poLines.map((line) => line.itemCode),
     ...Object.values(itemMap),
   ];
-  const itemRows = itemCodes.length ? await client.listItemsByCodes(itemCodes) : [];
+  const itemRows = itemCodes.length
+    ? await client.listItemsByCodes(itemCodes)
+    : [];
   const items: Record<string, SapItemInfo> = {};
   for (const row of itemRows) {
     items[row.ItemCode] = {
       name: row.ItemName || row.ItemCode,
-      inventory: row.InventoryItem === "tYES" ? true : row.InventoryItem === "tNO" ? false : null,
+      inventory:
+        row.InventoryItem === "tYES"
+          ? true
+          : row.InventoryItem === "tNO"
+            ? false
+            : null,
     };
   }
 

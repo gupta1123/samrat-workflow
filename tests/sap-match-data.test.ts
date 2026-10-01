@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { computeCaseMatch } from "../src/server/sap/match-data";
+import {
+  authoritativeOutlierDocumentIds,
+  computeCaseMatch,
+} from "../src/server/sap/match-data";
 import { serializeFieldsWithLineItems } from "../src/server/line-items";
 
 // A tiny stand-in for the Supabase query builder: enough for the reads that
@@ -54,7 +57,11 @@ const invoiceFields = serializeFieldsWithLineItems({
   ] as never,
 });
 
-const CASE = { id: "case-1", invoice_number: "1444099137", po_number: "TGPO26-0412" };
+const CASE = {
+  id: "case-1",
+  invoice_number: "1444099137",
+  po_number: "TGPO26-0412",
+};
 
 function sapClient(overrides: Record<string, unknown> = {}) {
   const receipts = [
@@ -66,7 +73,18 @@ function sapClient(overrides: Record<string, unknown> = {}) {
       NumAtCard: "1444099137",
       BPL_IDAssignedToInvoice: 1,
       DocumentLines: [
-        { LineNum: 0, ItemCode: "BW-TW20-091", Quantity: 34.98, RemainingOpenQuantity: 34.98, Price: 68000, LineStatus: "bost_Open", BaseType: 22, BaseEntry: 77, BaseLine: 0, WarehouseCode: "HYD-01" },
+        {
+          LineNum: 0,
+          ItemCode: "BW-TW20-091",
+          Quantity: 34.98,
+          RemainingOpenQuantity: 34.98,
+          Price: 68000,
+          LineStatus: "bost_Open",
+          BaseType: 22,
+          BaseEntry: 77,
+          BaseLine: 0,
+          WarehouseCode: "HYD-01",
+        },
       ],
     },
   ];
@@ -86,9 +104,30 @@ function sapClient(overrides: Record<string, unknown> = {}) {
     listOpenReceiptDocumentsForVendor: async () => receipts,
     listOpenPurchaseOrdersForVendor: async () => [],
     listPurchaseOrdersByEntries: async () => [
-      { DocEntry: 77, DocNum: 412, NumAtCard: "TGPO26-0412", CardCode: "V-TATA01", DocumentLines: [{ LineNum: 0, ItemCode: "BW-TW20-091", Quantity: 100, RemainingOpenQuantity: 65, Price: 68000, LineStatus: "bost_Open" }] },
+      {
+        DocEntry: 77,
+        DocNum: 412,
+        NumAtCard: "TGPO26-0412",
+        CardCode: "V-TATA01",
+        DocumentLines: [
+          {
+            LineNum: 0,
+            ItemCode: "BW-TW20-091",
+            Quantity: 100,
+            RemainingOpenQuantity: 65,
+            Price: 68000,
+            LineStatus: "bost_Open",
+          },
+        ],
+      },
     ],
-    listItemsByCodes: async () => [{ ItemCode: "BW-TW20-091", ItemName: "Binding Wire TW20 0.91mm", InventoryItem: "tYES" }],
+    listItemsByCodes: async () => [
+      {
+        ItemCode: "BW-TW20-091",
+        ItemName: "Binding Wire TW20 0.91mm",
+        InventoryItem: "tYES",
+      },
+    ],
     findInvoiceByReference: async () => null,
     findDraftByVendorReference: async () => null,
     ...overrides,
@@ -97,13 +136,109 @@ function sapClient(overrides: Record<string, unknown> = {}) {
 
 const tables = (): Record<string, Array<Record<string, unknown>>> => ({
   packet_documents: [
-    { case_id: "case-1", document_type: "Tax Invoice", extracted_fields: invoiceFields },
-    { case_id: "case-1", document_type: "E-Way Bill", extracted_fields: { vehicleNumber: "JH 02 BR 9642" } },
+    {
+      case_id: "case-1",
+      client_document_id: "invoice-page",
+      document_type: "Tax Invoice",
+      extracted_fields: invoiceFields,
+    },
+    {
+      case_id: "case-1",
+      client_document_id: "eway-page",
+      document_type: "E-Way Bill",
+      extracted_fields: { vehicleNumber: "JH 02 BR 9642" },
+    },
   ],
-  sap_match_rules: [{ organization_id: "default", qty_tolerance_pct: 1, rate_tolerance_pct: 0.5, freight_policy: "expense", posting_date: "invoice", receipt_window_days: 30, branches: [{ stateCode: "36", name: "Hyderabad", bplId: 1, warehouse: "HYD-01" }] }],
+  packet_mismatches: [],
+  sap_match_rules: [
+    {
+      organization_id: "default",
+      qty_tolerance_pct: 1,
+      rate_tolerance_pct: 0.5,
+      freight_policy: "expense",
+      posting_date: "invoice",
+      receipt_window_days: 30,
+      branches: [
+        { stateCode: "36", name: "Hyderabad", bplId: 1, warehouse: "HYD-01" },
+      ],
+    },
+  ],
   sap_match_state: [],
   sap_vendor_mappings: [],
-  sap_item_mappings: [{ vendor_card_code: "V-TATA01", vendor_item_key: "3434405", sap_item_code: "BW-TW20-091" }],
+  sap_item_mappings: [
+    {
+      vendor_card_code: "V-TATA01",
+      vendor_item_key: "3434405",
+      sap_item_code: "BW-TW20-091",
+    },
+  ],
+});
+
+test("authoritative unrelated-document evidence is the only source of SAP exclusions", () => {
+  const excluded = authoritativeOutlierDocumentIds([
+    {
+      field_name: "unrelatedDocument",
+      resolution_status: "pending",
+      values_json: [
+        { docId: "invoice-page", isOutlier: false },
+        { docId: "wrong-lr-page", isOutlier: true },
+      ],
+    },
+    {
+      field_name: "unrelatedDocument",
+      resolution_status: "rejected",
+      values_json: [{ docId: "reviewer-restored-page", isOutlier: true }],
+    },
+    {
+      field_name: "vehicleNumber",
+      resolution_status: "pending",
+      values_json: [{ docId: "different-kind-of-mismatch", isOutlier: true }],
+    },
+  ]);
+
+  assert.deepEqual([...excluded], ["wrong-lr-page"]);
+});
+
+test("an unrelated document cannot contaminate the SAP vehicle and LR inputs", async () => {
+  const data = tables();
+  data.packet_documents.push({
+    case_id: "case-1",
+    client_document_id: "wrong-lr-page",
+    document_type: "Lorry Receipt",
+    extracted_fields: {
+      vehicleNumber: "KA01AM5199",
+      lorryReceiptNumber: "812",
+    },
+  });
+  data.packet_mismatches = [
+    {
+      case_id: "case-1",
+      field_name: "unrelatedDocument",
+      resolution_status: "pending",
+      values_json: [
+        { docId: "invoice-page", isOutlier: false },
+        { docId: "wrong-lr-page", isOutlier: true },
+      ],
+    },
+  ];
+  const receivedLookups: Array<Record<string, unknown>> = [];
+
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    client: sapClient({
+      findOpenReceiptDocumentsForInvoice: async (
+        input: Record<string, unknown>,
+      ) => {
+        receivedLookups.push(input);
+        return sapClient().findOpenReceiptDocumentsForInvoice();
+      },
+    }) as never,
+    caseRow: CASE,
+  });
+
+  assert.ok(match.available);
+  assert.deepEqual(receivedLookups[0]?.vehicles, ["JH02BR9642"]);
+  assert.equal(receivedLookups[0]?.lorryReceipt, null);
 });
 
 test("the saved packet and SAP data flow through to a ready match", async () => {
@@ -130,9 +265,14 @@ test("an unlinked item blocks until it is linked", async () => {
     caseRow: CASE,
   });
   assert.equal(match.available && match.result.status, "blocked");
-  assert.ok(match.available && match.result.checks.some((c) => c.id === "map-0" && c.sev === "block"));
+  assert.ok(
+    match.available &&
+      match.result.checks.some((c) => c.id === "map-0" && c.sev === "block"),
+  );
   assert.equal(
-    match.available && match.result.checks.find((c) => c.id === "map-0")?.itemSuggestions?.[0]?.itemCode,
+    match.available &&
+      match.result.checks.find((c) => c.id === "map-0")?.itemSuggestions?.[0]
+        ?.itemCode,
     "BW-TW20-091",
   );
 });
@@ -140,26 +280,41 @@ test("an unlinked item blocks until it is linked", async () => {
 test("an invoice already posted in SAP is a duplicate", async () => {
   const match = await computeCaseMatch({
     db: fakeDb(tables()) as never,
-    client: sapClient({ findInvoiceByReference: async () => ({ DocNum: 23755 }) }) as never,
+    client: sapClient({
+      findInvoiceByReference: async () => ({ DocNum: 23755 }),
+    }) as never,
     caseRow: CASE,
   });
   assert.ok(match.available);
   if (match.available) {
     assert.equal(match.result.status, "blocked");
-    assert.match(match.result.checks.find((c) => c.id === "dup")!.title, /23755/);
+    assert.match(
+      match.result.checks.find((c) => c.id === "dup")!.title,
+      /23755/,
+    );
   }
 });
 
 test("the draft this app made for the same case is not a duplicate, another draft is", async () => {
   const ours = await computeCaseMatch({
     db: fakeDb(tables()) as never,
-    client: sapClient({ findDraftByVendorReference: async () => ({ DocNum: 5, Comments: "Samrat case case-1 AP invoice draft" }) }) as never,
+    client: sapClient({
+      findDraftByVendorReference: async () => ({
+        DocNum: 5,
+        Comments: "Samrat case case-1 AP invoice draft",
+      }),
+    }) as never,
     caseRow: CASE,
   });
   assert.ok(ours.available && ours.result.status === "ready");
   const theirs = await computeCaseMatch({
     db: fakeDb(tables()) as never,
-    client: sapClient({ findDraftByVendorReference: async () => ({ DocNum: 9, Comments: "manual" }) }) as never,
+    client: sapClient({
+      findDraftByVendorReference: async () => ({
+        DocNum: 9,
+        Comments: "manual",
+      }),
+    }) as never,
     caseRow: CASE,
   });
   assert.ok(theirs.available && theirs.result.status === "blocked");
@@ -167,7 +322,13 @@ test("the draft this app made for the same case is not a duplicate, another draf
 
 test("a case without a numbered invoice reports why nothing can be matched", async () => {
   const data = tables();
-  data.packet_documents = [{ case_id: "case-1", document_type: "Purchase Order", extracted_fields: {} }];
+  data.packet_documents = [
+    {
+      case_id: "case-1",
+      document_type: "Purchase Order",
+      extracted_fields: {},
+    },
+  ];
   const match = await computeCaseMatch({
     db: fakeDb(data) as never,
     client: sapClient() as never,
@@ -179,13 +340,21 @@ test("a case without a numbered invoice reports why nothing can be matched", asy
 test("an unknown vendor blocks with a clear reason instead of guessing", async () => {
   const match = await computeCaseMatch({
     db: fakeDb(tables()) as never,
-    client: sapClient({ searchSuppliers: async () => [], listSuppliers: async () => [{ CardCode: "V-OTHER", CardName: "Other Traders" }] }) as never,
+    client: sapClient({
+      searchSuppliers: async () => [],
+      listSuppliers: async () => [
+        { CardCode: "V-OTHER", CardName: "Other Traders" },
+      ],
+    }) as never,
     caseRow: CASE,
   });
   assert.ok(match.available);
   if (match.available) {
     assert.equal(match.result.status, "blocked");
-    assert.match(match.result.checks.find((c) => c.id === "vendor")!.title, /No SAP vendor found/);
+    assert.match(
+      match.result.checks.find((c) => c.id === "vendor")!.title,
+      /No SAP vendor found/,
+    );
   }
 });
 
@@ -223,22 +392,26 @@ test("multiple exact SAP GSTIN matches require an explicit vendor choice", async
 
 test("an explicit vendor choice applies to this case when GSTIN is shared", async () => {
   const data = tables();
-  data.sap_match_state = [{
-    case_id: "case-1",
-    decisions: {
-      "vendor-link": {
-        choice: "V-TATA01",
-        reason: "Reviewer selected Tata Steel Limited",
-        at: "2026-09-29T10:00:00.000Z",
+  data.sap_match_state = [
+    {
+      case_id: "case-1",
+      decisions: {
+        "vendor-link": {
+          choice: "V-TATA01",
+          reason: "Reviewer selected Tata Steel Limited",
+          at: "2026-09-29T10:00:00.000Z",
+        },
       },
+      allocations: {},
     },
-    allocations: {},
-  }];
+  ];
   const match = await computeCaseMatch({
     db: fakeDb(data) as never,
     client: sapClient({
       listSuppliers: async () => {
-        throw new Error("A confirmed vendor must not trigger a full supplier scan.");
+        throw new Error(
+          "A confirmed vendor must not trigger a full supplier scan.",
+        );
       },
       getSupplier: async () => ({
         CardCode: "V-TATA01",
@@ -254,12 +427,20 @@ test("an explicit vendor choice applies to this case when GSTIN is shared", asyn
 
 test("a vendor linked earlier is used even when the names differ", async () => {
   const data = tables();
-  data.sap_vendor_mappings = [{ vendor_key: "G:20AAACT2803M2ZO|I:3434405", sap_card_code: "V-TATA01", sap_card_name: "Tata Steel Limited" }];
+  data.sap_vendor_mappings = [
+    {
+      vendor_key: "G:20AAACT2803M2ZO|I:3434405",
+      sap_card_code: "V-TATA01",
+      sap_card_name: "Tata Steel Limited",
+    },
+  ];
   const match = await computeCaseMatch({
     db: fakeDb(data) as never,
     client: sapClient({
       listSuppliers: async () => {
-        throw new Error("An exact saved link must not trigger a full supplier scan.");
+        throw new Error(
+          "An exact saved link must not trigger a full supplier scan.",
+        );
       },
       getSupplier: async () => ({
         CardCode: "V-TATA01",
@@ -277,12 +458,21 @@ test("a vendor linked earlier is used even when the names differ", async () => {
 
 test("a linked vendor missing from the supplier list is looked up directly", async () => {
   const data = tables();
-  data.sap_vendor_mappings = [{ vendor_key: "G:20AAACT2803M2ZO|I:3434405", sap_card_code: "V-TATA01", sap_card_name: "Tata" }];
+  data.sap_vendor_mappings = [
+    {
+      vendor_key: "G:20AAACT2803M2ZO|I:3434405",
+      sap_card_code: "V-TATA01",
+      sap_card_name: "Tata",
+    },
+  ];
   const match = await computeCaseMatch({
     db: fakeDb(data) as never,
     client: sapClient({
       listSuppliers: async () => [],
-      getSupplier: async () => ({ CardCode: "V-TATA01", CardName: "Tata Steel Limited" }),
+      getSupplier: async () => ({
+        CardCode: "V-TATA01",
+        CardName: "Tata Steel Limited",
+      }),
     }) as never,
     caseRow: CASE,
   });
@@ -292,11 +482,17 @@ test("a linked vendor missing from the supplier list is looked up directly", asy
 test("no suppliers at all points to a permission problem", async () => {
   const match = await computeCaseMatch({
     db: fakeDb(tables()) as never,
-    client: sapClient({ searchSuppliers: async () => [], listSuppliers: async () => [] }) as never,
+    client: sapClient({
+      searchSuppliers: async () => [],
+      listSuppliers: async () => [],
+    }) as never,
     caseRow: CASE,
   });
   assert.ok(match.available);
   if (match.available) {
-    assert.match(match.result.checks.find((c) => c.id === "vendor")!.help ?? "", /no suppliers at all/);
+    assert.match(
+      match.result.checks.find((c) => c.id === "vendor")!.help ?? "",
+      /no suppliers at all/,
+    );
   }
 });
