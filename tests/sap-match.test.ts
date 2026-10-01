@@ -26,7 +26,11 @@ const ITEM_MAP: Record<string, string> = {
 
 function receipt(
   docNum: number,
-  overrides: Partial<SapReceiptLine> & { poRef?: string; poQty?: number; poRate?: number } = {},
+  overrides: Partial<SapReceiptLine> & {
+    poRef?: string;
+    poQty?: number;
+    poRate?: number;
+  } = {},
 ): { receipt: SapReceiptLine; po: SapPoLine } {
   const poRef = overrides.poRef ?? "TGPO26-0412";
   const poQty = overrides.poQty ?? 100;
@@ -89,7 +93,12 @@ function context(
   return {
     vendor: TATA,
     ambiguousVendors: [],
-    branch: { bplId: 1, name: "Hyderabad", stateCode: "36", warehouse: "HYD-01" },
+    branch: {
+      bplId: 1,
+      name: "Hyderabad",
+      stateCode: "36",
+      warehouse: "HYD-01",
+    },
     itemMap: ITEM_MAP,
     items: ITEMS,
     receipts: receipts.map((entry) => entry.receipt),
@@ -137,10 +146,18 @@ function invoice(overrides: Partial<MatchInvoice> = {}): MatchInvoice {
 
 const truck = { vehicle: "JH02BR9642", vendorRef: "1444099137" };
 
-function decide(state: MatchState, id: string, choice: string, reason?: string): MatchState {
+function decide(
+  state: MatchState,
+  id: string,
+  choice: string,
+  reason?: string,
+): MatchState {
   return {
     ...state,
-    decisions: { ...state.decisions, [id]: { choice, reason, at: "2026-09-28T10:00:00Z" } },
+    decisions: {
+      ...state.decisions,
+      [id]: { choice, reason, at: "2026-09-28T10:00:00Z" },
+    },
   };
 }
 
@@ -168,15 +185,46 @@ test("a small short receipt needs a decision and can only be settled by stores o
     vendorGstin: "37AAACT2803M1ZA",
     shipToGstin: "37AAQCS9189P1ZW",
     taxCharged: "split",
-    lines: [{ index: 0, vendorItemCode: "1428337", description: "TMT 10mm", hsnSac: null, quantity: 41.8, unit: "MT", rate: 58308, amount: 41.8 * 58308 }],
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "1428337",
+        description: "TMT 10mm",
+        hsnSac: null,
+        quantity: 41.8,
+        unit: "MT",
+        rate: 58308,
+        amount: 41.8 * 58308,
+      },
+    ],
     freightAmount: 0,
     taxableTotal: 41.8 * 58308,
     poReferences: ["APPO26-0233"],
     vehicles: ["TN18CA0465"],
   });
   const ctx = context(
-    [receipt(1182, { itemCode: "TMT-550SD-10", branchId: 2, quantity: 41.52, openQty: 41.52, price: 58308, poRef: "APPO26-0233", poRate: 58308, poQty: 150, vehicle: "TN18CA0465", vendorRef: "4725013687" })],
-    { branch: { bplId: 2, name: "Kadapa", stateCode: "37", warehouse: "KDP-01" } },
+    [
+      receipt(1182, {
+        itemCode: "TMT-550SD-10",
+        branchId: 2,
+        quantity: 41.52,
+        openQty: 41.52,
+        price: 58308,
+        poRef: "APPO26-0233",
+        poRate: 58308,
+        poQty: 150,
+        vehicle: "TN18CA0465",
+        vendorRef: "4725013687",
+      }),
+    ],
+    {
+      branch: {
+        bplId: 2,
+        name: "Kadapa",
+        stateCode: "37",
+        warehouse: "KDP-01",
+      },
+    },
   );
   const result = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(result.status, "review");
@@ -190,12 +238,24 @@ test("a small short receipt needs a decision and can only be settled by stores o
   // The shortfall must not also appear as a total difference.
   assert.ok(!result.checks.some((c) => c.id === "total" && c.open));
 
-  const stores = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, "qty-0", "stores") });
+  const stores = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(EMPTY_MATCH_STATE, "qty-0", "stores"),
+  });
   assert.equal(stores.status, "waiting");
-  const returned = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, "qty-0", "return") });
+  const returned = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(EMPTY_MATCH_STATE, "qty-0", "return"),
+  });
   assert.equal(returned.status, "returned");
 
-  const strict = evaluateMatch({ invoice: inv, context: ctx, rules: { qtyTolerancePct: 0.5 } });
+  const strict = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    rules: { qtyTolerancePct: 0.5 },
+  });
   assert.equal(strict.status, "blocked");
 });
 
@@ -206,10 +266,30 @@ test("a rate above the limit needs a written reason", () => {
     vehicles: ["AP02TH2989"],
     freightAmount: 0,
     taxableTotal: 30 * 63887,
-    lines: [{ index: 0, vendorItemCode: "3434405", description: "Binding Wire", hsnSac: null, quantity: 30, unit: "MT", rate: 63887, amount: 30 * 63887 }],
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "3434405",
+        description: "Binding Wire",
+        hsnSac: null,
+        quantity: 30,
+        unit: "MT",
+        rate: 63887,
+        amount: 30 * 63887,
+      },
+    ],
   });
   const ctx = context([
-    receipt(1190, { quantity: 30, openQty: 30, price: 62500, poRate: 62500, poRef: "APPO26-0229", poQty: 80, vehicle: "AP02TH2989", vendorRef: "3432010883" }),
+    receipt(1190, {
+      quantity: 30,
+      openQty: 30,
+      price: 62500,
+      poRate: 62500,
+      poRef: "APPO26-0229",
+      poQty: 80,
+      vehicle: "AP02TH2989",
+      vendorRef: "3432010883",
+    }),
   ]);
   const first = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(first.status, "review");
@@ -217,10 +297,27 @@ test("a rate above the limit needs a written reason", () => {
   assert.equal(rate.sev, "confirm");
   assert.equal(rate.options![0].needsReason, true);
 
-  const noReason = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, "rate-0", "confirm") });
-  assert.equal(noReason.status, "review", "a decision without a reason is not accepted");
+  const noReason = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(EMPTY_MATCH_STATE, "rate-0", "confirm"),
+  });
+  assert.equal(
+    noReason.status,
+    "review",
+    "a decision without a reason is not accepted",
+  );
 
-  const done = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, "rate-0", "confirm", "Market rise agreed by phone") });
+  const done = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(
+      EMPTY_MATCH_STATE,
+      "rate-0",
+      "confirm",
+      "Market rise agreed by phone",
+    ),
+  });
   assert.equal(done.status, "ready");
   assert.equal(done.payload!.lines[0].unitPrice, 63887);
 });
@@ -230,7 +327,7 @@ test("a printed invoice rate is not replaced by an inferred amount-per-quantity 
     invoiceNumber: "4725013687",
     poReferences: ["100237"],
     vehicles: ["TN18CA0465"],
-    freightAmount: 0,
+    freightAmount: 94217.2,
     taxableTotal: 2531491.61,
     lines: [
       {
@@ -243,7 +340,7 @@ test("a printed invoice rate is not replaced by an inferred amount-per-quantity 
         rate: 58308,
         // This is the invoice subtotal (including another charge), not proof
         // that the printed unit rate should be replaced.
-        amount: 2531491.61,
+        amount: 2437274.41,
       },
     ],
   });
@@ -266,6 +363,8 @@ test("a printed invoice rate is not replaced by an inferred amount-per-quantity 
   assert.match(rate.help ?? "", /charged ₹58,308/);
   assert.equal(result.status, "review");
   assert.equal(result.payload?.lines[0].unitPrice, 58308);
+  assert.equal(result.payload?.freightExpense, 94217.2);
+  assert.equal(result.payload?.lines.length, 1);
 });
 
 test("the Tata Wiron invoice rate below PO 275 still needs a written approval", () => {
@@ -294,7 +393,10 @@ test("the Tata Wiron invoice rate below PO 275 still needs a written approval", 
 });
 
 test("an invoice that arrives before the truck waits", () => {
-  const inv = invoice({ poReferences: ["APPO26-0241"], vehicles: ["AP39TB7781"] });
+  const inv = invoice({
+    poReferences: ["APPO26-0241"],
+    vehicles: ["AP39TB7781"],
+  });
   const only = receipt(1, { poRef: "APPO26-0241" });
   const ctx = context([], { poLines: [only.po] });
   const result = evaluateMatch({ invoice: inv, context: ctx });
@@ -308,18 +410,57 @@ test("one invoice, two trucks: quantity is split across two receipts", () => {
     poReferences: ["TGPO26-0418"],
     freightAmount: 0,
     taxableTotal: 52.4 * 58900,
-    lines: [{ index: 0, vendorItemCode: "3434405", description: "Binding wire", hsnSac: null, quantity: 52.4, unit: "MT", rate: 58900, amount: 52.4 * 58900 }],
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "3434405",
+        description: "Binding wire",
+        hsnSac: null,
+        quantity: 52.4,
+        unit: "MT",
+        rate: 58900,
+        amount: 52.4 * 58900,
+      },
+    ],
   });
-  const common = { poRef: "TGPO26-0418", poRate: 58900, price: 58900, vendorRef: "1444099137" };
+  const common = {
+    poRef: "TGPO26-0418",
+    poRate: 58900,
+    price: 58900,
+    vendorRef: "1444099137",
+  };
   const ctx = context([
-    receipt(4431, { ...common, quantity: 30.1, openQty: 30.1, vehicle: "TS07UH4410" }),
-    receipt(4433, { ...common, quantity: 22.3, openQty: 22.3, vehicle: "TS08JK2231", date: "2026-06-14" }),
-    receipt(4402, { ...common, quantity: 18, openQty: 18, vehicle: "TS09AB7712", vendorRef: "1444099001", date: "2026-06-08" }),
+    receipt(4431, {
+      ...common,
+      quantity: 30.1,
+      openQty: 30.1,
+      vehicle: "TS07UH4410",
+    }),
+    receipt(4433, {
+      ...common,
+      quantity: 22.3,
+      openQty: 22.3,
+      vehicle: "TS08JK2231",
+      date: "2026-06-14",
+    }),
+    receipt(4402, {
+      ...common,
+      quantity: 18,
+      openQty: 18,
+      vehicle: "TS09AB7712",
+      vendorRef: "1444099001",
+      date: "2026-06-08",
+    }),
   ]);
   const result = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(result.status, "ready");
   assert.equal(result.payload!.lines.length, 2);
-  assert.equal(Math.round(result.payload!.lines.reduce((s, l) => s + l.quantity, 0) * 1000) / 1000, 52.4);
+  assert.equal(
+    Math.round(
+      result.payload!.lines.reduce((s, l) => s + l.quantity, 0) * 1000,
+    ) / 1000,
+    52.4,
+  );
   assert.deepEqual(
     result.payload!.lines.map((l) => l.baseEntry).sort(),
     [8000 + 4431, 8000 + 4433].sort(),
@@ -332,16 +473,39 @@ test("a part bill asks for confirmation, then is ready", () => {
     vehicles: ["AP21TC5510"],
     freightAmount: 0,
     taxableTotal: 20 * 62500,
-    lines: [{ index: 0, vendorItemCode: "3434405", description: "Binding wire", hsnSac: null, quantity: 20, unit: "MT", rate: 62500, amount: 20 * 62500 }],
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "3434405",
+        description: "Binding wire",
+        hsnSac: null,
+        quantity: 20,
+        unit: "MT",
+        rate: 62500,
+        amount: 20 * 62500,
+      },
+    ],
   });
   const ctx = context([
-    receipt(1205, { quantity: 50, openQty: 50, price: 62500, poRef: "APPO26-0247", poRate: 62500, vehicle: "AP21TC5510", note: "Two trucks were unloaded on one receipt" }),
+    receipt(1205, {
+      quantity: 50,
+      openQty: 50,
+      price: 62500,
+      poRef: "APPO26-0247",
+      poRate: 62500,
+      vehicle: "AP21TC5510",
+      note: "Two trucks were unloaded on one receipt",
+    }),
   ]);
   const first = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(first.status, "review");
   const part = first.checks.find((c) => c.id.startsWith("part-0-"))!;
   assert.equal(part.sev, "ack");
-  const done = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, part.id, "ok") });
+  const done = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(EMPTY_MATCH_STATE, part.id, "ok"),
+  });
   assert.equal(done.status, "ready");
   assert.equal(done.payload!.lines[0].quantity, 20);
 });
@@ -352,42 +516,90 @@ test("billing more than was received is blocked and never invents stock", () => 
     vehicles: ["AP04TT9021"],
     freightAmount: 0,
     taxableTotal: 70 * 58308,
-    lines: [{ index: 0, vendorItemCode: "1428337", description: "TMT 10", hsnSac: null, quantity: 70, unit: "MT", rate: 58308, amount: 70 * 58308 }],
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "1428337",
+        description: "TMT 10",
+        hsnSac: null,
+        quantity: 70,
+        unit: "MT",
+        rate: 58308,
+        amount: 70 * 58308,
+      },
+    ],
   });
   const ctx = context([
-    receipt(1210, { itemCode: "TMT-550SD-10", quantity: 50, openQty: 50, price: 58308, poRef: "APPO26-0250", poRate: 58308, poQty: 50, vehicle: "AP04TT9021", vendorRef: "1444099137" }),
+    receipt(1210, {
+      itemCode: "TMT-550SD-10",
+      quantity: 50,
+      openQty: 50,
+      price: 58308,
+      poRef: "APPO26-0250",
+      poRate: 58308,
+      poQty: 50,
+      vehicle: "AP04TT9021",
+      vendorRef: "1444099137",
+    }),
   ]);
   const result = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(result.status, "blocked");
   const qty = result.checks.find((c) => c.id === "qty-0")!;
   assert.equal(qty.sev, "block");
-  assert.deepEqual(qty.options!.map((o) => o.choice), ["return", "hold"]);
+  assert.deepEqual(
+    qty.options!.map((o) => o.choice),
+    ["return", "hold"],
+  );
   assert.equal(result.lines[0].allocatedQty, 50);
 });
 
 test("an item that is not linked blocks and suggests SAP items", () => {
   const inv = invoice({
-    lines: [{ index: 0, vendorItemCode: "1502211", description: "TISCON-TMT IS1786 FE550SD 16 mm", hsnSac: null, quantity: 24.3, unit: "MT", rate: 57600, amount: 24.3 * 57600 }],
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "1502211",
+        description: "TISCON-TMT IS1786 FE550SD 16 mm",
+        hsnSac: null,
+        quantity: 24.3,
+        unit: "MT",
+        rate: 57600,
+        amount: 24.3 * 57600,
+      },
+    ],
   });
   const result = evaluateMatch({ invoice: inv, context: context([]) });
   assert.equal(result.status, "blocked");
   const check = result.checks.find((c) => c.id === "map-0")!;
   assert.ok(check.itemSuggestions!.some((s) => s.itemCode === "TMT-550SD-16"));
   assert.equal(itemMappingKey({ vendorItemCode: "15-02211" }), "1502211");
-  assert.equal(itemMappingKey({ vendorItemCode: null, description: "Wire 2mm" }), "D:WIRE2MM");
+  assert.equal(
+    itemMappingKey({ vendorItemCode: null, description: "Wire 2mm" }),
+    "D:WIRE2MM",
+  );
 });
 
 test("an invoice already in SAP is a duplicate and can be closed", () => {
-  const ctx = context([receipt(4390, truck)], { existingInvoice: { docNum: 23755 } });
+  const ctx = context([receipt(4390, truck)], {
+    existingInvoice: { docNum: 23755 },
+  });
   const first = evaluateMatch({ invoice: invoice(), context: ctx });
   assert.equal(first.status, "blocked");
-  const closed = evaluateMatch({ invoice: invoice(), context: ctx, state: decide(EMPTY_MATCH_STATE, "dup", "close") });
+  const closed = evaluateMatch({
+    invoice: invoice(),
+    context: ctx,
+    state: decide(EMPTY_MATCH_STATE, "dup", "close"),
+  });
   assert.equal(closed.status, "closed");
 });
 
 test("IGST on a same-state supply is blocked", () => {
   const result = evaluateMatch({
-    invoice: invoice({ vendorGstin: "37AAACT2803M1ZA", shipToGstin: "37AAQCS9189P1ZW", taxCharged: "igst" }),
+    invoice: invoice({
+      vendorGstin: "37AAACT2803M1ZA",
+      shipToGstin: "37AAQCS9189P1ZW",
+      taxCharged: "igst",
+    }),
     context: context([receipt(4412, truck)]),
   });
   assert.equal(result.status, "blocked");
@@ -396,15 +608,48 @@ test("IGST on a same-state supply is blocked", () => {
 
 test("a service bill within the PO is a 2-way match", () => {
   const po: SapPoLine = {
-    kind: "PO", docEntry: 71091, docNum: 91, lineNum: 0, date: "2026-04-01", cardCode: "V-SSLT01", itemCode: "SRV-FRT",
-    branchId: 1, warehouse: null, poRefs: ["KDP-SPO-0091"], quantity: 1, openQty: 1, price: 200000, lineTotal: 200000, openAmount: 121500,
+    kind: "PO",
+    docEntry: 71091,
+    docNum: 91,
+    lineNum: 0,
+    date: "2026-04-01",
+    cardCode: "V-SSLT01",
+    itemCode: "SRV-FRT",
+    branchId: 1,
+    warehouse: null,
+    poRefs: ["KDP-SPO-0091"],
+    quantity: 1,
+    openQty: 1,
+    price: 200000,
+    lineTotal: 200000,
+    openAmount: 121500,
   };
   const inv = invoice({
-    vendorName: "SRI SRINIVASA LORRY TRANSPORT", vendorGstin: "37ABCFS4410K1Z2", shipToGstin: "37AAQCS9189P1ZW", taxCharged: "split",
-    poReferences: ["KDP-SPO-0091"], vehicles: [], freightAmount: 0, taxableTotal: 38500,
-    lines: [{ index: 0, vendorItemCode: "SRV-FRT", description: "Freight inward", hsnSac: "996511", quantity: null, unit: null, rate: null, amount: 38500 }],
+    vendorName: "SRI SRINIVASA LORRY TRANSPORT",
+    vendorGstin: "37ABCFS4410K1Z2",
+    shipToGstin: "37AAQCS9189P1ZW",
+    taxCharged: "split",
+    poReferences: ["KDP-SPO-0091"],
+    vehicles: [],
+    freightAmount: 0,
+    taxableTotal: 38500,
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "SRV-FRT",
+        description: "Freight inward",
+        hsnSac: "996511",
+        quantity: null,
+        unit: null,
+        rate: null,
+        amount: 38500,
+      },
+    ],
   });
-  const ctx = context([], { vendor: { cardCode: "V-SSLT01", cardName: "SRI SRINIVASA LORRY TRANSPORT" }, poLines: [po] });
+  const ctx = context([], {
+    vendor: { cardCode: "V-SSLT01", cardName: "SRI SRINIVASA LORRY TRANSPORT" },
+    poLines: [po],
+  });
   const result = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(result.method, "2-way");
   assert.equal(result.status, "ready");
@@ -414,19 +659,61 @@ test("a service bill within the PO is a 2-way match", () => {
 
 test("a service bill above the PO needs a reason", () => {
   const po: SapPoLine = {
-    kind: "PO", docEntry: 71102, docNum: 102, lineNum: 0, date: "2026-06-18", cardCode: "V-SEW01", itemCode: "SRV-FRT",
-    branchId: 1, warehouse: null, poRefs: ["KDP-SPO-0102"], quantity: 1, openQty: 1, price: 50000, lineTotal: 50000, openAmount: 50000,
+    kind: "PO",
+    docEntry: 71102,
+    docNum: 102,
+    lineNum: 0,
+    date: "2026-06-18",
+    cardCode: "V-SEW01",
+    itemCode: "SRV-FRT",
+    branchId: 1,
+    warehouse: null,
+    poRefs: ["KDP-SPO-0102"],
+    quantity: 1,
+    openQty: 1,
+    price: 50000,
+    lineTotal: 50000,
+    openAmount: 50000,
   };
   const inv = invoice({
-    vendorName: "SAI ENGINEERING WORKS", vendorGstin: "37AAKFS2210L1Z9", shipToGstin: "37AAQCS9189P1ZW", taxCharged: "split",
-    poReferences: ["KDP-SPO-0102"], vehicles: [], freightAmount: 0, taxableTotal: 70000,
-    lines: [{ index: 0, vendorItemCode: "SRV-FRT", description: "Repair", hsnSac: null, quantity: null, unit: null, rate: null, amount: 70000 }],
+    vendorName: "SAI ENGINEERING WORKS",
+    vendorGstin: "37AAKFS2210L1Z9",
+    shipToGstin: "37AAQCS9189P1ZW",
+    taxCharged: "split",
+    poReferences: ["KDP-SPO-0102"],
+    vehicles: [],
+    freightAmount: 0,
+    taxableTotal: 70000,
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "SRV-FRT",
+        description: "Repair",
+        hsnSac: null,
+        quantity: null,
+        unit: null,
+        rate: null,
+        amount: 70000,
+      },
+    ],
   });
-  const ctx = context([], { vendor: { cardCode: "V-SEW01", cardName: "SAI ENGINEERING WORKS" }, poLines: [po] });
+  const ctx = context([], {
+    vendor: { cardCode: "V-SEW01", cardName: "SAI ENGINEERING WORKS" },
+    poLines: [po],
+  });
   const result = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(result.status, "review");
   assert.equal(result.checks.find((c) => c.id === "amt-0")!.sev, "confirm");
-  const done = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, "amt-0", "confirm", "Extra parts approved on site") });
+  const done = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(
+      EMPTY_MATCH_STATE,
+      "amt-0",
+      "confirm",
+      "Extra parts approved on site",
+    ),
+  });
   assert.equal(done.status, "ready");
 });
 
@@ -435,14 +722,21 @@ test("a closed SAP month can be booked on today's date, keeping the GST date", (
   const inv = invoice({ invoiceDate: "2026-05-29" });
   const first = evaluateMatch({ invoice: inv, context: ctx });
   assert.equal(first.status, "blocked");
-  const done = evaluateMatch({ invoice: inv, context: ctx, state: decide(EMPTY_MATCH_STATE, "period", "use-today") });
+  const done = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(EMPTY_MATCH_STATE, "period", "use-today"),
+  });
   assert.equal(done.status, "ready");
   assert.equal(done.payload!.docDate, "2026-09-28");
   assert.equal(done.payload!.taxDate, "2026-05-29");
 });
 
 test("a receipt matched only on PO and quantity must be confirmed", () => {
-  const result = evaluateMatch({ invoice: invoice(), context: context([receipt(4412)]) });
+  const result = evaluateMatch({
+    invoice: invoice(),
+    context: context([receipt(4412)]),
+  });
   assert.equal(result.status, "review");
   assert.equal(result.checks.find((c) => c.id === "anchor-0")!.sev, "ack");
 });
@@ -479,18 +773,32 @@ test("freight paid separately is left out and confirmed", () => {
 });
 
 test("manual allocation overrides the automatic choice", () => {
-  const ctx = context([receipt(4412, truck), receipt(4398, { vehicle: "JH05AK1120", quantity: 40, openQty: 40, date: "2026-06-06" })]);
+  const ctx = context([
+    receipt(4412, truck),
+    receipt(4398, {
+      vehicle: "JH05AK1120",
+      quantity: 40,
+      openQty: 40,
+      date: "2026-06-06",
+    }),
+  ]);
   const result = evaluateMatch({
     invoice: invoice(),
     context: ctx,
-    state: { decisions: {}, allocations: { "0": { [`${8000 + 4398}:${0}`]: 34.98 } } },
+    state: {
+      decisions: {},
+      allocations: { "0": { [`${8000 + 4398}:${0}`]: 34.98 } },
+    },
   });
   assert.equal(result.lines[0].manual, true);
   assert.equal(result.payload!.lines[0].baseEntry, 8000 + 4398);
 });
 
 test("an unknown vendor blocks matching", () => {
-  const result = evaluateMatch({ invoice: invoice(), context: context([receipt(4412, truck)], { vendor: null }) });
+  const result = evaluateMatch({
+    invoice: invoice(),
+    context: context([receipt(4412, truck)], { vendor: null }),
+  });
   assert.equal(result.status, "blocked");
   assert.ok(result.checks.some((c) => c.id === "vendor" && c.sev === "block"));
 });

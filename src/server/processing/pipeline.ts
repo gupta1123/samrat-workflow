@@ -122,7 +122,7 @@ const PACKET_SPLIT_MAX_OUTPUT_TOKENS = Math.max(
   600,
   Math.min(
     4096,
-    Number(process.env.PACKET_SPLIT_MAX_OUTPUT_TOKENS ?? 1600) || 1600,
+    Number(process.env.PACKET_SPLIT_MAX_OUTPUT_TOKENS ?? 4096) || 4096,
   ),
 );
 const PACKET_TERMS_MAX_OUTPUT_TOKENS = Math.max(
@@ -6049,7 +6049,9 @@ function collapseDuplicateInvoiceCopies(documents: CaseDoc[]) {
       ),
     ];
     result[existingIndex] =
-      sources.length > 1 ? { ...merged, collapsedDuplicateSources: sources } : merged;
+      sources.length > 1
+        ? { ...merged, collapsedDuplicateSources: sources }
+        : merged;
   }
 
   return result;
@@ -10148,37 +10150,6 @@ function normaliseDocType(raw?: string): DocType {
   return "Unknown";
 }
 
-// Obvious, mutually exclusive headings do not need an AI round trip just to
-// decide page boundaries. Ambiguous pages still use the full smart-split model.
-export function inferHighConfidenceDocumentTypeFromText(
-  visibleText: string,
-): DocType {
-  const heading = visibleText.slice(0, 900).toLowerCase();
-  const matches: DocType[] = [];
-  const add = (type: DocType, pattern: RegExp) => {
-    if (pattern.test(heading)) matches.push(type);
-  };
-
-  add("Tax Invoice", /\btax\s+invoice\b/);
-  add("Purchase Order", /\bpurchase\s+order\b/);
-  add("E-Way Bill", /\be[\s-]*way\s+bill\b/);
-  add("Lorry Receipt", /\blorry\s+receipt\b|\bconsignment\s+note\b/);
-  add("Weighment Slip", /\bweighment\s+slip\b|\bweighbridge\s+slip\b/);
-  add("Delivery Challan", /\bdelivery\s+challan\b/);
-  add("Delivery Note", /\bdelivery\s+note\b/);
-  add(
-    "Material Test Certificate",
-    /\bmaterial\s+test\s+certificate\b|\bmill\s+test\s+certificate\b/,
-  );
-  add("Vehicle Registration Certificate", /\bregistration\s+certificate\b/);
-  add("Driving Licence", /\bdriving\s+licen[cs]e\b/);
-  add("PAN Card", /\bpermanent\s+account\s+number\b|\bpan\s+card\b/);
-  add("FASTag Toll Proof", /\bfastag\b.*\b(?:statement|transaction|toll)\b/);
-  add("Bank Statement", /\bbank\s+statement\b/);
-
-  return matches.length === 1 ? matches[0] : "Unknown";
-}
-
 function normalizeVisibleEvidenceText(textPages: string[]) {
   return textPages
     .join("\n")
@@ -10731,7 +10702,11 @@ function hasMeaningfulTextPages(textPages: string[]) {
 
 async function renderPdfToImagePages(
   data: Uint8Array,
-  options?: { maxPages?: number; sourceName?: string },
+  options?: {
+    maxPages?: number;
+    sourceName?: string;
+    normalizeOrientation?: boolean;
+  },
 ) {
   const sourceName = options?.sourceName || "PDF";
   const rendered = await renderPdfPages(
@@ -10744,7 +10719,9 @@ async function renderPdfToImagePages(
         sourceName + " page " + page,
       ),
   );
-  return normalizePageImageOrientations(rendered, sourceName);
+  return options?.normalizeOrientation === false
+    ? rendered
+    : normalizePageImageOrientations(rendered, sourceName);
 }
 
 export async function renderUploadedFileForReview(params: {
@@ -10811,49 +10788,11 @@ async function classifyDocumentFromImage(
   return classified === "Unknown" ? inferred : classified;
 }
 
-async function classifyDocumentFromText(
-  textPages: string[],
-  fileName = "",
-): Promise<DocType> {
-  const inferred = inferDocTypeFromFilename(fileName);
-  const visibleText = textPages
-    .map((page, index) => `Page ${index + 1}: ${page}`)
-    .join("\n")
-    .slice(0, 12000);
-
-  if (!visibleText.trim()) {
-    return inferred;
-  }
-
-  const raw = await callOpenRouter(
-    [
-      {
-        role: "system",
-        content:
-          `Classify procurement packet text. Return only JSON like {"documentType":"Purchase Order"} using one of: ${SUPPORTED_DOC_TYPES.join(", ")}. ` +
-          "The text may omit handwritten entries, so use file name hints and any visible labels when the embedded text is sparse. " +
-          "If the text is headed Delivery Challan or shows Challan No/Challan Date, classify it as Delivery Challan even when it references a PO No; PO No on logistics documents is only a reference.",
-      },
-      {
-        role: "user",
-        content: `File name: ${fileName}\n\nVisible text:\n${visibleText}`,
-      },
-    ],
-    { expectJson: true, operation: "document-text-classification" },
-  );
-
-  const parsed = safeJsonParse<{ documentType?: string }>(raw, {});
-  const classified = normaliseDocType(parsed.documentType);
-  return refineDocTypeFromVisibleText(
-    classified === "Unknown" ? inferred : classified,
-    textPages,
-  );
-}
-
 type PdfDocumentGroup = {
   documentType: DocType;
   pageStart: number;
   pageEnd: number;
+  extractionSource?: "image" | "text";
   confidence?: number;
   documentNumber?: string;
   primaryPartyName?: string;
@@ -10867,246 +10806,304 @@ function pageRangeLabel(group: PdfDocumentGroup) {
     : `pages ${group.pageStart}-${group.pageEnd}`;
 }
 
-function normalizePageNumber(value: unknown) {
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? Math.round(numberValue) : NaN;
+type PdfPageDocument = {
+  documentType: DocType;
+  confidence: number;
+  documentNumber?: string;
+  primaryPartyName?: string;
+  vehicleNumber?: string;
+  splitReason?: string;
+};
+
+type PdfPageSequenceEntry = {
+  pageNumber: number;
+  startsNewDocument: boolean;
+  boundaryEvidence?: string;
+  extractionSource: "image" | "text";
+  documents: PdfPageDocument[];
+};
+
+function readOptionalModelText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function normalizePdfGroupIdentity(value: unknown) {
-  return toText(value)
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, " ")
-    .trim();
+function readExactDocumentType(value: unknown): DocType | undefined {
+  return typeof value === "string" &&
+    SUPPORTED_DOC_TYPES.includes(value as DocType)
+    ? (value as DocType)
+    : undefined;
 }
 
-function readPdfGroupIdentityValue(
-  record: Record<string, unknown>,
-  keys: string[],
-) {
-  for (const key of keys) {
-    const normalized = normalizePdfGroupIdentity(record[key]);
-    if (normalized) return normalized;
-  }
-  return undefined;
-}
-
-function hasConflictingPdfGroupIdentity(left?: string, right?: string) {
-  return Boolean(left && right && left !== right);
-}
-
-function shouldMergeAdjacentPdfGroups(
-  previous: PdfDocumentGroup,
-  current: PdfDocumentGroup,
-) {
-  if (
-    previous.documentType !== current.documentType ||
-    previous.pageEnd + 1 !== current.pageStart
-  ) {
-    return false;
-  }
-
-  return !(
-    hasConflictingPdfGroupIdentity(
-      previous.documentNumber,
-      current.documentNumber,
-    ) ||
-    hasConflictingPdfGroupIdentity(
-      previous.primaryPartyName,
-      current.primaryPartyName,
-    ) ||
-    hasConflictingPdfGroupIdentity(
-      previous.vehicleNumber,
-      current.vehicleNumber,
-    )
-  );
-}
-
-function normalizePdfDocumentGroups(
-  rawGroups: unknown,
-  pageCount: number,
-  fileName: string,
-): PdfDocumentGroup[] {
-  const inferred = inferDocTypeFromFilename(fileName);
-  const groups = Array.isArray(rawGroups) ? rawGroups : [];
-  const parsedGroups = groups
-    .map((entry): PdfDocumentGroup | null => {
-      if (!entry || typeof entry !== "object") return null;
-      const record = entry as Record<string, unknown>;
-      const pageValues = Array.isArray(record.pages) ? record.pages : [];
-      const pageStart = normalizePageNumber(
-        record.pageStart ??
-          record.startPage ??
-          record.fromPage ??
-          pageValues[0],
-      );
-      const pageEnd = normalizePageNumber(
-        record.pageEnd ??
-          record.endPage ??
-          record.toPage ??
-          pageValues[1] ??
-          pageValues[0],
-      );
-      if (!Number.isFinite(pageStart) || !Number.isFinite(pageEnd)) return null;
-
-      const group: PdfDocumentGroup = {
-        documentType: normaliseDocType(
-          String(record.documentType ?? record.type ?? record.docType ?? ""),
-        ),
-        pageStart: Math.max(1, Math.min(pageCount, pageStart)),
-        pageEnd: Math.max(1, Math.min(pageCount, pageEnd)),
-        documentNumber: readPdfGroupIdentityValue(record, [
-          "documentNumber",
-          "invoiceNumber",
-          "poNumber",
-          "ewayBillNumber",
-          "challanNumber",
-          "billNumber",
-          "number",
-        ]),
-        primaryPartyName: readPdfGroupIdentityValue(record, [
-          "primaryPartyName",
-          "partyName",
-          "buyerName",
-          "vendorName",
-          "supplierName",
-          "customerName",
-        ]),
-        vehicleNumber: readPdfGroupIdentityValue(record, [
-          "vehicleNumber",
-          "lorryNumber",
-          "truckNumber",
-        ]),
-        splitReason: toText(record.splitReason ?? record.reason) || undefined,
-      };
-
-      if (typeof record.confidence === "number") {
-        group.confidence = record.confidence;
-      }
-
-      return group;
-    })
-    .filter((entry): entry is PdfDocumentGroup => entry !== null)
-    .map((entry): PdfDocumentGroup => {
-      const pageStart = Math.min(entry.pageStart, entry.pageEnd);
-      const pageEnd = Math.max(entry.pageStart, entry.pageEnd);
-      return { ...entry, pageStart, pageEnd };
-    })
-    .sort(
-      (left, right) =>
-        left.pageStart - right.pageStart || left.pageEnd - right.pageEnd,
+function parsePdfPageDocuments(rawDocuments: unknown): PdfPageDocument[] {
+  if (!Array.isArray(rawDocuments) || rawDocuments.length === 0) {
+    throw new Error(
+      "Every PDF page must contain at least one document record.",
     );
-
-  if (pageCount <= 0) {
-    return [];
   }
 
-  if (!parsedGroups.length) {
-    return [{ documentType: inferred, pageStart: 1, pageEnd: pageCount }];
-  }
-
-  const seen = new Set<string>();
-  const normalized = parsedGroups.filter((group) => {
-    const key = [
-      group.documentType,
-      group.pageStart,
-      group.pageEnd,
-      group.documentNumber ?? "",
-      group.primaryPartyName ?? "",
-      group.vehicleNumber ?? "",
-    ].join(":");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  return rawDocuments.map((entry) => {
+    if (!entry || typeof entry !== "object") {
+      throw new Error("A PDF page document record was not an object.");
+    }
+    const record = entry as Record<string, unknown>;
+    const documentType = readExactDocumentType(record.documentType);
+    const confidence = Number(record.confidence);
+    if (!documentType || !Number.isFinite(confidence)) {
+      throw new Error(
+        "A PDF page document omitted its exact type or confidence.",
+      );
+    }
+    return {
+      documentType,
+      confidence: Math.max(0, Math.min(1, confidence)),
+      documentNumber: readOptionalModelText(record.documentNumber),
+      primaryPartyName: readOptionalModelText(record.primaryPartyName),
+      vehicleNumber: readOptionalModelText(record.vehicleNumber),
+      splitReason: readOptionalModelText(record.splitReason),
+    };
   });
+}
 
-  const isPageCovered = (pageNumber: number) =>
-    normalized.some(
-      (group) => group.pageStart <= pageNumber && group.pageEnd >= pageNumber,
-    );
+function parsePdfPageSequenceEntry(
+  raw: string,
+  expectedPageNumber: number,
+  extractionSource: "image" | "text",
+): PdfPageSequenceEntry {
+  const record = JSON.parse(raw) as Record<string, unknown>;
+  if (typeof record.startsNewDocument !== "boolean") {
+    throw new Error("A PDF page omitted its document-boundary decision.");
+  }
+  return {
+    pageNumber: expectedPageNumber,
+    startsNewDocument: record.startsNewDocument,
+    boundaryEvidence: readOptionalModelText(record.boundaryEvidence),
+    extractionSource,
+    documents: parsePdfPageDocuments(record.documents),
+  };
+}
 
-  let cursor = 1;
-  while (cursor <= pageCount) {
-    if (isPageCovered(cursor)) {
-      cursor += 1;
+function pdfPageSequenceEntrySchema() {
+  return {
+    type: "object",
+    properties: {
+      startsNewDocument: { type: "boolean" },
+      boundaryEvidence: { type: "string", minLength: 1 },
+      documents: {
+        type: "array",
+        minItems: 1,
+        maxItems: 6,
+        items: {
+          type: "object",
+          properties: {
+            documentType: {
+              type: "string",
+              enum: SUPPORTED_DOC_TYPES,
+            },
+            confidence: { type: "number", minimum: 0, maximum: 1 },
+          },
+          required: ["documentType", "confidence"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["startsNewDocument", "boundaryEvidence", "documents"],
+    additionalProperties: false,
+  };
+}
+
+const PDF_PAGE_CLASSIFICATION_SCHEMA = {
+  type: "object",
+  properties: {
+    documents: {
+      type: "array",
+      minItems: 1,
+      maxItems: 6,
+      items: {
+        type: "object",
+        properties: {
+          documentType: { type: "string", enum: SUPPORTED_DOC_TYPES },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: ["documentType", "confidence"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["documents"],
+  additionalProperties: false,
+};
+
+function pageSequenceToDocumentGroups(
+  pages: PdfPageSequenceEntry[],
+): PdfDocumentGroup[] {
+  const groups: PdfDocumentGroup[] = [];
+  let previousPage: PdfPageSequenceEntry | undefined;
+
+  for (const page of pages) {
+    if (page.pageNumber === 1 && !page.startsNewDocument) {
+      throw new Error(
+        "The first PDF page cannot continue an earlier document.",
+      );
+    }
+    if (
+      !page.startsNewDocument &&
+      (!page.boundaryEvidence ||
+        page.documents.length !== 1 ||
+        previousPage?.documents.length !== 1 ||
+        previousPage.pageNumber + 1 !== page.pageNumber ||
+        previousPage.documents[0]?.documentType !==
+          page.documents[0]?.documentType)
+    ) {
+      throw new Error(
+        "A continuation page lacked explicit compatible visual evidence.",
+      );
+    }
+
+    if (!page.startsNewDocument) {
+      const previousGroup = groups[groups.length - 1];
+      if (
+        !previousGroup ||
+        previousGroup.pageEnd + 1 !== page.pageNumber ||
+        previousGroup.documentType !== page.documents[0]?.documentType
+      ) {
+        throw new Error("A continuation page did not follow its document.");
+      }
+      const document = page.documents[0];
+      previousGroup.pageEnd = page.pageNumber;
+      previousGroup.confidence = Math.min(
+        previousGroup.confidence ?? 1,
+        document.confidence,
+      );
+      if (page.extractionSource === "image") {
+        previousGroup.extractionSource = "image";
+      }
+      previousGroup.splitReason = page.boundaryEvidence;
+      previousPage = page;
       continue;
     }
 
-    let gapEnd = cursor;
-    while (gapEnd + 1 <= pageCount && !isPageCovered(gapEnd + 1)) {
-      gapEnd += 1;
+    for (const document of page.documents) {
+      groups.push({
+        documentType: document.documentType,
+        pageStart: page.pageNumber,
+        pageEnd: page.pageNumber,
+        extractionSource: page.extractionSource,
+        confidence: document.confidence,
+        documentNumber: document.documentNumber,
+        primaryPartyName: document.primaryPartyName,
+        vehicleNumber: document.vehicleNumber,
+        splitReason: document.splitReason ?? page.boundaryEvidence,
+      });
     }
-
-    normalized.push({
-      documentType: "Unknown",
-      pageStart: cursor,
-      pageEnd: gapEnd,
-    });
-    cursor = gapEnd + 1;
+    previousPage = page;
   }
-
-  normalized.sort(
-    (left, right) =>
-      left.pageStart - right.pageStart || left.pageEnd - right.pageEnd,
-  );
-
-  return normalized.length
-    ? normalized
-    : [{ documentType: inferred, pageStart: 1, pageEnd: pageCount }];
+  return groups;
 }
 
-function isCollapsedPdfSplit(groups: PdfDocumentGroup[], pageCount: number) {
-  return (
-    pageCount > 1 &&
-    groups.length === 1 &&
-    groups[0]?.pageStart === 1 &&
-    groups[0]?.pageEnd === pageCount
+async function classifyPdfPageSequence(params: {
+  textPages: string[];
+  pageImages: string[];
+  pageCount: number;
+}) {
+  const systemPrompt =
+    `Inspect the current procurement packet page and, when supplied, the immediately previous page. Return the required JSON for the current page only. ` +
+    `Use only these documentType values: ${SUPPORTED_DOC_TYPES.join(", ")}. ` +
+    `The rendered page is the source of truth and OCR is supporting context only. ` +
+    `Set startsNewDocument to false only when visible page numbering, an explicitly continued table, or an unmistakably continued layout proves that the current page continues the previous page. ` +
+    `Shared parties, transaction references, vehicles, filenames, or document types do not prove continuation. ` +
+    `If the current physical page contains multiple independent documents, return each in documents and set startsNewDocument to true. ` +
+    `BoundaryEvidence must briefly state the visible basis for the decision. Never invent a value that is not visible.`;
+  const pages = await mapWithConcurrency(
+    Array.from({ length: params.pageCount }, (_, index) => index),
+    PACKET_AI_CONCURRENCY,
+    async (index) => {
+      const pageNumber = index + 1;
+      const currentText = params.textPages[index] || "[No OCR text extracted]";
+      const previousText = index > 0 ? params.textPages[index - 1] : undefined;
+      const currentImage = params.pageImages[index];
+      const previousImage =
+        index > 0 ? params.pageImages[index - 1] : undefined;
+      const content = [
+        {
+          type: "text" as const,
+          text:
+            `Current global page: ${pageNumber} of ${params.pageCount}. ` +
+            (pageNumber === 1
+              ? `This is the first page, so startsNewDocument must be true and boundaryEvidence must say "First page".`
+              : `Decide whether current page ${pageNumber} continues previous page ${pageNumber - 1}.`) +
+            `\n\nCurrent-page OCR:\n${currentText.slice(0, 6000)}` +
+            (previousText
+              ? `\n\nPrevious-page OCR for boundary context:\n${previousText.slice(0, 3000)}`
+              : ""),
+        },
+        ...(previousImage
+          ? [
+              {
+                type: "text" as const,
+                text: `Previous page ${pageNumber - 1} image for boundary context`,
+              },
+              {
+                type: "image_url" as const,
+                image_url: { url: previousImage },
+              },
+            ]
+          : []),
+        ...(currentImage
+          ? [
+              {
+                type: "text" as const,
+                text: `Current page ${pageNumber} image to classify`,
+              },
+              {
+                type: "image_url" as const,
+                image_url: { url: currentImage },
+              },
+            ]
+          : []),
+      ];
+      const raw = await callOpenRouter(
+        [
+          { role: "system", content: systemPrompt },
+          { role: "user", content },
+        ],
+        {
+          expectJson: true,
+          model: getQualityExtractionModel(),
+          reasoning: getSplitClassificationReasoning(),
+          maxTokens: 900,
+          operation: "pdf-page-sequence",
+          requireCompleteOutput: true,
+          maxRetries: 0,
+          responseSchema: {
+            name: "pdf_page_sequence_entry",
+            strict: true,
+            schema: pdfPageSequenceEntrySchema(),
+          },
+        },
+      );
+      return parsePdfPageSequenceEntry(
+        raw,
+        pageNumber,
+        currentImage ? "image" : "text",
+      );
+    },
   );
-}
-
-function compactConsecutivePdfGroups(groups: PdfDocumentGroup[]) {
-  const sorted = [...groups].sort(
-    (left, right) =>
-      left.pageStart - right.pageStart || left.pageEnd - right.pageEnd,
-  );
-  const compacted: PdfDocumentGroup[] = [];
-
-  for (const group of sorted) {
-    const previous = compacted[compacted.length - 1];
-    if (previous && shouldMergeAdjacentPdfGroups(previous, group)) {
-      previous.pageEnd = group.pageEnd;
-      previous.confidence =
-        typeof previous.confidence === "number" &&
-        typeof group.confidence === "number"
-          ? Math.min(previous.confidence, group.confidence)
-          : (previous.confidence ?? group.confidence);
-      previous.documentNumber = previous.documentNumber ?? group.documentNumber;
-      previous.primaryPartyName =
-        previous.primaryPartyName ?? group.primaryPartyName;
-      previous.vehicleNumber = previous.vehicleNumber ?? group.vehicleNumber;
-      previous.splitReason = previous.splitReason ?? group.splitReason;
-      continue;
-    }
-
-    compacted.push({ ...group });
-  }
-
-  return compacted;
+  return pageSequenceToDocumentGroups(pages);
 }
 
 async function splitPdfPagesIndividually(params: {
-  fileName: string;
   textPages: string[];
   pageImages: string[];
   pageCount: number;
 }) {
   const systemPrompt =
     `Classify one page from a procurement packet PDF. Return only JSON with a top-level "documents" array. ` +
-    `Each item must contain documentType and confidence. Also include documentNumber, primaryPartyName, vehicleNumber, and splitReason when visible. ` +
+    `Each item must contain only documentType and confidence. ` +
     `Use only these documentType values: ${SUPPORTED_DOC_TYPES.join(", ")}. ` +
     `Use the rendered page image as the source of truth when available; use text only as supporting context. ` +
     `If this one page visibly contains multiple separate documents or cards, return multiple records. ` +
     `If a page contains a separate invoice, identify that invoice by visible invoice number and party/customer/supplier name. ` +
-    `Do not infer document type from the file name when the page image/text shows a different document. ` +
+    `Do not use a filename as classification evidence. ` +
     `A page headed Delivery Challan or showing Challan No/Challan Date is Delivery Challan even if it contains PO No as a reference.`;
 
   const pageGroups = await mapWithConcurrency(
@@ -11130,7 +11127,7 @@ async function splitPdfPagesIndividually(params: {
                   {
                     type: "text",
                     text:
-                      `File name: ${params.fileName}. Classify rendered page ${pageNumber} of ${params.pageCount}.\n\n` +
+                      `Classify rendered page ${pageNumber} of ${params.pageCount}.\n\n` +
                       `OCR text for this page:\n${pageText.slice(0, 8000)}`,
                   },
                   { type: "image_url" as const, image_url: { url: pageImage } },
@@ -11143,6 +11140,13 @@ async function splitPdfPagesIndividually(params: {
               reasoning: getSplitClassificationReasoning(),
               maxTokens: PACKET_SPLIT_MAX_OUTPUT_TOKENS,
               operation: "pdf-page-classification",
+              requireCompleteOutput: true,
+              maxRetries: 0,
+              responseSchema: {
+                name: "pdf_page_classification",
+                strict: true,
+                schema: PDF_PAGE_CLASSIFICATION_SCHEMA,
+              },
             },
           )
         : await callOpenRouter(
@@ -11154,7 +11158,7 @@ async function splitPdfPagesIndividually(params: {
               {
                 role: "user",
                 content:
-                  `File name: ${params.fileName}. Classify page ${pageNumber} of ${params.pageCount}.\n\n` +
+                  `Classify page ${pageNumber} of ${params.pageCount}.\n\n` +
                   `Visible text:\n${pageText.slice(0, 12000)}`,
               },
             ],
@@ -11164,6 +11168,13 @@ async function splitPdfPagesIndividually(params: {
               reasoning: getSplitClassificationReasoning(),
               maxTokens: PACKET_SPLIT_MAX_OUTPUT_TOKENS,
               operation: "pdf-page-classification",
+              requireCompleteOutput: true,
+              maxRetries: 0,
+              responseSchema: {
+                name: "pdf_page_classification",
+                strict: true,
+                schema: PDF_PAGE_CLASSIFICATION_SCHEMA,
+              },
             },
           );
 
@@ -11171,29 +11182,14 @@ async function splitPdfPagesIndividually(params: {
       const pageDocuments = Array.isArray(parsed.documents)
         ? parsed.documents
         : [];
-      const normalizedPageGroups = normalizePdfDocumentGroups(
-        pageDocuments.map((entry) =>
-          entry && typeof entry === "object"
-            ? {
-                ...(entry as Record<string, unknown>),
-                pageStart: pageNumber,
-                pageEnd: pageNumber,
-              }
-            : entry,
-        ),
-        params.pageCount,
-        params.fileName,
-      )
-        .map((group) => ({
-          ...group,
-          documentType: refineDocTypeFromVisibleText(group.documentType, [
-            params.textPages[pageNumber - 1] ?? "",
-          ]),
-        }))
-        .filter(
-          (group) =>
-            group.pageStart === pageNumber && group.pageEnd === pageNumber,
-        );
+      const normalizedPageGroups = parsePdfPageDocuments(pageDocuments).map(
+        (document): PdfDocumentGroup => ({
+          ...document,
+          pageStart: pageNumber,
+          pageEnd: pageNumber,
+          extractionSource: pageImage ? "image" : "text",
+        }),
+      );
 
       return normalizedPageGroups.length
         ? normalizedPageGroups
@@ -11207,7 +11203,9 @@ async function splitPdfPagesIndividually(params: {
     },
   );
 
-  return compactConsecutivePdfGroups(pageGroups.flat());
+  // A failed sequence contract must fail safely. Separate pages cannot leak
+  // fields or line items into a neighboring physical document.
+  return pageGroups.flat();
 }
 
 async function splitPdfIntoDocumentGroups(params: {
@@ -11216,193 +11214,28 @@ async function splitPdfIntoDocumentGroups(params: {
   pageImages: string[];
   loadPageImages?: () => Promise<string[]>;
 }) {
-  const pageCount = Math.max(params.textPages.length, params.pageImages.length);
-  if (pageCount <= 1) {
-    return [
-      {
-        documentType: params.textPages.some((page) => page.trim())
-          ? await classifyDocumentFromText(params.textPages, params.fileName)
-          : await classifyDocumentFromImage(
-              params.pageImages[0] ?? "",
-              params.fileName,
-            ),
-        pageStart: 1,
-        pageEnd: 1,
-      },
-    ];
+  const loadedPageImages = params.pageImages.length
+    ? params.pageImages
+    : ((await params.loadPageImages?.()) ?? []);
+  const pageCount = Math.max(params.textPages.length, loadedPageImages.length);
+  if (pageCount <= 0) return [];
+
+  try {
+    return await classifyPdfPageSequence({
+      textPages: params.textPages,
+      pageImages: loadedPageImages,
+      pageCount,
+    });
+  } catch (error) {
+    console.warn(
+      `[packet-processing] visual page-sequence contract failed; classifying pages independently. ${error instanceof Error ? error.message : String(error ?? "")}`,
+    );
+    return splitPdfPagesIndividually({
+      textPages: params.textPages,
+      pageImages: loadedPageImages,
+      pageCount,
+    });
   }
-
-  const obviousPageTypes = params.textPages.map(
-    inferHighConfidenceDocumentTypeFromText,
-  );
-  if (
-    obviousPageTypes.length === pageCount &&
-    obviousPageTypes.every((type) => type !== "Unknown") &&
-    new Set(obviousPageTypes).size === obviousPageTypes.length
-  ) {
-    return obviousPageTypes.map((documentType, index) => ({
-      documentType,
-      pageStart: index + 1,
-      pageEnd: index + 1,
-      confidence: 0.99,
-      splitReason: "Distinct document heading found in embedded PDF text.",
-    }));
-  }
-
-  const hasText = hasMeaningfulTextPages(params.textPages);
-  const systemPrompt =
-    `You split uploaded procurement packet PDFs into separate documents. Return only JSON with a top-level "documents" array. ` +
-    `Each item must contain documentType, pageStart, pageEnd, and confidence. Also include documentNumber, primaryPartyName, vehicleNumber, and splitReason when visible. ` +
-    `Use only these documentType values: ${SUPPORTED_DOC_TYPES.join(", ")}. ` +
-    `Group consecutive pages belonging to the same physical/logical document. Do not merge different document types just because they are in one PDF. ` +
-    `Do not merge separate documents just because they have the same documentType. Split same-type documents when invoice number, bill number, PO number, party/customer/supplier name, GSTIN, vehicle number, page numbering, letterhead, total section, or document heading resets or changes. ` +
-    `A single uploaded PDF can contain two or more invoices for the same vehicle but different parties; emit each invoice as its own Invoice document with its own page range and party identity. ` +
-    `If one scanned page visibly contains multiple separate cards/documents, output multiple records with the same pageStart and pageEnd. ` +
-    `For example, one page may contain Vehicle Registration Certificate, Driving Licence, and PAN Card together; emit three records all pointing to that page. ` +
-    `Do not invent PAN Card or Driving Licence records on later pages just because they appeared on an earlier multi-document scan. ` +
-    `Pages showing camera overlays, vehicle loading/unloading photos, gate photos, or timestamped vehicle photos are Photo Evidence. ` +
-    `Use PAN Card only when the page visibly contains Income Tax/Permanent Account Number/PAN card content. Use Driving Licence only when the page visibly contains a licence card. ` +
-    `A page headed Delivery Challan or showing Challan No/Challan Date is Delivery Challan even if it contains PO No as a reference.`;
-
-  const pageTextSummary = params.textPages
-    .map(
-      (page, index) =>
-        `Page ${index + 1} text:\n${page || "[No text extracted]"}`,
-    )
-    .join("\n\n")
-    .slice(0, 30000);
-
-  if (!params.pageImages.length && !hasText) {
-    return [
-      {
-        documentType: inferDocTypeFromFilename(params.fileName),
-        pageStart: 1,
-        pageEnd: pageCount,
-      },
-    ];
-  }
-
-  const raw = hasText
-    ? await callOpenRouter(
-        [
-          {
-            role: "system",
-            content: systemPrompt,
-          },
-          {
-            role: "user",
-            content:
-              `File name: ${params.fileName}\n` +
-              `There are ${params.textPages.length} pages. Identify which document is on which pages.\n\n` +
-              pageTextSummary,
-          },
-        ],
-        {
-          expectJson: true,
-          model: getQualityExtractionModel(),
-          reasoning: getSplitClassificationReasoning(),
-          maxTokens: PACKET_SPLIT_MAX_OUTPUT_TOKENS,
-          operation: "pdf-smart-split",
-        },
-      )
-    : params.pageImages.length
-      ? await callOpenRouter(
-          [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text:
-                    `File name: ${params.fileName}. There are ${pageCount} pages. Identify which document is on which pages. ` +
-                    `Use the rendered page images as the source of truth; use the OCR text only as supporting context.\n\n${pageTextSummary}`,
-                },
-                ...params.pageImages.flatMap((image, index) => [
-                  { type: "text" as const, text: `Rendered page ${index + 1}` },
-                  { type: "image_url" as const, image_url: { url: image } },
-                ]),
-              ],
-            },
-          ],
-          {
-            expectJson: true,
-            model: getQualityExtractionModel(),
-            reasoning: getSplitClassificationReasoning(),
-            maxTokens: PACKET_SPLIT_MAX_OUTPUT_TOKENS,
-            operation: "pdf-smart-split",
-          },
-        )
-      : await callOpenRouter(
-          [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: `File name: ${params.fileName}. There are ${params.pageImages.length} rendered pages. Identify which document is on which pages.`,
-                },
-                ...params.pageImages.flatMap((image, index) => [
-                  { type: "text" as const, text: `Page ${index + 1}` },
-                  { type: "image_url" as const, image_url: { url: image } },
-                ]),
-              ],
-            },
-          ],
-          {
-            expectJson: true,
-            reasoning: getSplitClassificationReasoning(),
-            maxTokens: PACKET_SPLIT_MAX_OUTPUT_TOKENS,
-            operation: "pdf-smart-split",
-          },
-        );
-
-  const parsed = safeJsonParse<{ documents?: unknown; groups?: unknown }>(
-    raw,
-    {},
-  );
-  const normalized = normalizePdfDocumentGroups(
-    parsed.documents ?? parsed.groups,
-    pageCount,
-    params.fileName,
-  ).map((group) => ({
-    ...group,
-    documentType: refineDocTypeFromVisibleText(
-      group.documentType,
-      params.textPages.slice(group.pageStart - 1, group.pageEnd),
-    ),
-  }));
-
-  if (isCollapsedPdfSplit(normalized, pageCount)) {
-    try {
-      const pageImages = params.pageImages.length
-        ? params.pageImages
-        : ((await params.loadPageImages?.()) ?? []);
-      const pageLevelGroups = await splitPdfPagesIndividually({
-        ...params,
-        pageImages,
-        pageCount,
-      });
-      if (
-        pageLevelGroups.length > 1 ||
-        (pageLevelGroups.length === 1 &&
-          pageLevelGroups[0]?.documentType !== normalized[0]?.documentType)
-      ) {
-        return pageLevelGroups;
-      }
-    } catch (error) {
-      console.warn("Page-level smart split fallback failed", error);
-    }
-  }
-
-  return normalized;
 }
 
 async function extractPdfDocumentGroups(params: {
@@ -11444,9 +11277,16 @@ async function extractPdfDocumentGroups(params: {
       const hasGroupText = groupTextPages.some(
         (page) => page.replace(/\s+/g, "").length > 20,
       );
+      const useImageExtraction =
+        group.extractionSource === "image" && groupPageImages.length > 0;
 
-      let document =
-        hasText && hasGroupText
+      let document = useImageExtraction
+        ? await extractDataFromImagePages({
+            fileName: groupFileName,
+            pageImages: groupPageImages,
+            documentType: group.documentType,
+          })
+        : hasText && hasGroupText
           ? await extractDataFromTextPages({
               fileName: groupFileName,
               textPages: groupTextPages,
@@ -11463,9 +11303,11 @@ async function extractPdfDocumentGroups(params: {
                 visibleTextPages: groupTextPages,
               });
 
-      const needsQualityRetry = hasGroupText
-        ? needsImageFallbackForTextExtraction(document)
-        : isWeakExtraction(document);
+      const needsQualityRetry = useImageExtraction
+        ? isWeakExtraction(document)
+        : hasGroupText
+          ? needsImageFallbackForTextExtraction(document)
+          : isWeakExtraction(document);
       if (needsQualityRetry && group.documentType !== "Unknown") {
         if (!groupPageImages.length && params.loadPageImages) {
           const loadedPageImages = await params.loadPageImages();
@@ -11976,6 +11818,9 @@ export async function extractPdfPacketDocuments(params: {
     pageImageRequest = renderPdfToImagePages(params.bytes, {
       maxPages: PDF_SMART_SPLIT_MAX_PAGES,
       sourceName: params.fileName,
+      // The sequence model sees the complete rendered page and can read its
+      // orientation directly. This avoids one extra AI call per PDF page.
+      normalizeOrientation: false,
     })
       .then((rendered) => {
         pageImages = rendered;
