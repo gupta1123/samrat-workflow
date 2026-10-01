@@ -13,7 +13,15 @@ import {
   listDraftCaseFiles,
 } from "@/server/case-files";
 import { mapProcessingJob } from "@/server/processing/jobs";
+import { getDirectSupabasePublicUrl } from "@/lib/supabase/config";
 import { verifyUploads } from "@/server/uploads";
+
+function canRedirectToStorage() {
+  return (
+    !process.env.SUPABASE_INTERNAL_URL?.trim() &&
+    Boolean(getDirectSupabasePublicUrl())
+  );
+}
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -45,6 +53,24 @@ export async function GET(request: Request, context: Context) {
         throw new ApiError("File content is unavailable.", 404);
       }
       return { fileId: file.id, signedUrl: signed.data.signedUrl };
+    }
+    // On hosted Supabase the browser can reach Storage directly. Redirecting to
+    // a short-lived signed URL avoids buffering the whole file through this
+    // function and lets PDF.js fetch only the byte ranges it needs. Self-hosted
+    // installs use an internal Storage URL, so they keep the streaming proxy.
+    if (canRedirectToStorage()) {
+      const signed = await db.storage
+        .from(bucket)
+        .createSignedUrl(file.storage_path, 3600);
+      if (!signed.error && signed.data?.signedUrl) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: signed.data.signedUrl,
+            "Cache-Control": "private, max-age=600",
+          },
+        });
+      }
     }
     const download = await db.storage.from(bucket).download(file.storage_path);
     if (download.error || !download.data) {

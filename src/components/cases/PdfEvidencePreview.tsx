@@ -8,6 +8,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import type { PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
+
 import styles from "./PdfEvidencePreview.module.css";
 
 type PdfEvidencePreviewProps = {
@@ -203,12 +205,12 @@ export function PdfEvidencePreview({
     scrollLeft: number;
     scrollTop: number;
   } | null>(null);
-  const pdfDocumentRef = useRef<{
-    numPages: number;
-    getPage: (
-      page: number,
-    ) => Promise<{ getTextContent: () => Promise<{ items: unknown[] }> }>;
+  const pdfDocumentRef = useRef<PDFDocumentProxy | null>(null);
+  const onPageCountChangeRef = useRef(onPageCountChange);
+  const pdfUtilRef = useRef<{
+    transform: (a: number[], b: number[]) => number[];
   } | null>(null);
+  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [availableSize, setAvailableSize] = useState({ width: 0, height: 0 });
   const [pageSize, setPageSize] = useState({ width: 0, height: 0 });
   const [positionedTextItems, setPositionedTextItems] = useState<
@@ -218,8 +220,13 @@ export function PdfEvidencePreview({
     "loading" | "ready" | "fallback"
   >("loading");
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [isTextReady, setIsTextReady] = useState(false);
   const [isSearchingPages, setIsSearchingPages] = useState(false);
   const [isPanning, setIsPanning] = useState(false);
+
+  useEffect(() => {
+    onPageCountChangeRef.current = onPageCountChange;
+  }, [onPageCountChange]);
 
   useEffect(() => {
     const element = scrollerRef.current;
@@ -302,14 +309,15 @@ export function PdfEvidencePreview({
     ];
   }, [highlightMode, matchedTextBoxes, pageSize.width]);
 
+  // Load the document once per URL. Page, zoom and resize changes re-render
+  // from this already-downloaded document instead of fetching the file again.
   useEffect(() => {
-    if (!url || availableSize.width <= 0 || availableSize.height <= 0) return;
+    if (!url) return;
 
     let cancelled = false;
     let loadingTask: { destroy?: () => Promise<void> | void } | null = null;
-    let renderTask: { cancel?: () => void; promise: Promise<void> } | null =
-      null;
 
+    setPdfDocument(null);
     setRenderState("loading");
     setRenderError(null);
     setPositionedTextItems([]);
@@ -326,13 +334,51 @@ export function PdfEvidencePreview({
         const pdf = await nextLoadingTask.promise;
         if (cancelled) return;
         pdfDocumentRef.current = pdf;
+        pdfUtilRef.current = pdfjs.Util;
+        onPageCountChangeRef.current?.(pdf.numPages);
+        setPdfDocument(pdf);
+      } catch (error) {
+        if (cancelled) return;
+        setRenderError(
+          error instanceof Error
+            ? error.message
+            : "Interactive PDF preview unavailable.",
+        );
+        setRenderState("fallback");
+      }
+    })();
 
-        onPageCountChange?.(pdf.numPages);
+    return () => {
+      cancelled = true;
+      pdfDocumentRef.current = null;
+      void loadingTask?.destroy?.();
+    };
+  }, [url]);
+
+  const availableWidth = availableSize.width;
+  const availableHeight = availableSize.height;
+
+  useEffect(() => {
+    const pdf = pdfDocument;
+    const pdfUtil = pdfUtilRef.current;
+    if (!pdf || !pdfUtil || availableWidth <= 0 || availableHeight <= 0) return;
+
+    let cancelled = false;
+    let renderTask: { cancel?: () => void; promise: Promise<void> } | null =
+      null;
+
+    setRenderState("loading");
+    setIsTextReady(false);
+    setPositionedTextItems([]);
+
+    void (async () => {
+      try {
         const safePageNumber = Math.min(Math.max(1, pageNumber), pdf.numPages);
         const page = await pdf.getPage(safePageNumber);
+        if (cancelled) return;
         const baseViewport = page.getViewport({ scale: 1 });
-        const widthScale = (availableSize.width - 36) / baseViewport.width;
-        const heightScale = (availableSize.height - 36) / baseViewport.height;
+        const widthScale = (availableWidth - 36) / baseViewport.width;
+        const heightScale = (availableHeight - 36) / baseViewport.height;
         const comfortableHeightScale = heightScale * 1.4;
         const fitScale = Math.max(
           0.25,
@@ -360,16 +406,18 @@ export function PdfEvidencePreview({
               : [outputScale, 0, 0, outputScale, 0, 0],
         });
         renderTask = nextRenderTask;
+        await nextRenderTask.promise;
+        if (cancelled) return;
 
-        const [textContent] = await Promise.all([
-          page.getTextContent(),
-          nextRenderTask.promise,
-        ]);
+        // The page is visible now; text positions only power highlighting.
+        setRenderState("ready");
+
+        const textContent = await page.getTextContent();
         if (cancelled) return;
 
         const textItems = readPdfTextItems(textContent.items);
         const positionedItems = textItems.map((item): PositionedPdfTextItem => {
-          const transform = pdfjs.Util.transform(
+          const transform = pdfUtil.transform(
             viewport.transform,
             item.transform,
           );
@@ -388,7 +436,7 @@ export function PdfEvidencePreview({
         });
 
         setPositionedTextItems(positionedItems);
-        setRenderState("ready");
+        setIsTextReady(true);
       } catch (error) {
         if (
           cancelled ||
@@ -408,14 +456,13 @@ export function PdfEvidencePreview({
     return () => {
       cancelled = true;
       renderTask?.cancel?.();
-      pdfDocumentRef.current = null;
-      void loadingTask?.destroy?.();
     };
-  }, [availableSize, onPageCountChange, pageNumber, url, zoom]);
+  }, [availableHeight, availableWidth, pageNumber, pdfDocument, zoom]);
 
   useEffect(() => {
     if (
       renderState !== "ready" ||
+      !isTextReady ||
       !normalizedHighlight ||
       highlightBoxes.length > 0 ||
       !pdfDocumentRef.current ||
@@ -468,6 +515,7 @@ export function PdfEvidencePreview({
     };
   }, [
     highlightBoxes.length,
+    isTextReady,
     highlightOccurrence,
     effectiveHighlightQueries,
     normalizedHighlight,
@@ -617,6 +665,7 @@ export function PdfEvidencePreview({
         </div>
       ) : null}
       {renderState === "ready" &&
+      isTextReady &&
       normalizedHighlight &&
       highlightBoxes.length === 0 &&
       !isSearchingPages ? (
