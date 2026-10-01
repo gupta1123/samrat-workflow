@@ -1209,6 +1209,80 @@ test("packet-discovered symptoms join confirmed candidates in one final root cau
   );
 });
 
+test("an ungrounded optional packet issue is discarded without erasing the verified packet group", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const sourcePayloads = await Promise.all(documents.map(compact));
+  let packetCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        return response(sourcePayloads[context.sourcePageNumbers[0] - 1]);
+      }
+      if (name === "packet_reconciliation") {
+        packetCalls++;
+        return response({
+          ...packet(),
+          packetIssues: [
+            {
+              field: "notAConfiguredField",
+              reason: "This optional proposal is outside the field contract.",
+              evidence: [
+                {
+                  docId: "d1",
+                  value: "Aster Metals",
+                  sourceFileName: "f1",
+                  pageNumber: 1,
+                  quote: "Supplier Aster Metals",
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (name === "packet_mismatch_decisions") {
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (candidate: { mismatchId: string }) => ({
+              mismatchId: candidate.mismatchId,
+              status: "dismissed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "No source-proved difference.",
+            }),
+          ),
+        });
+      }
+      throw new Error(`Unexpected review task: ${name}`);
+    },
+  );
+
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.equal(packetCalls, 1);
+  assert.equal(
+    result.authoritativeReview.verificationGroups[0].caseSummary.poNumber,
+    "ORDER-27",
+  );
+  assert.equal(
+    result.reviewIssues.some(
+      (issue) => issue.id === "evidence-review-workflow-packet",
+    ),
+    false,
+  );
+  assert.ok(
+    result.review.warnings.some((warning) =>
+      warning.includes("without discarding the verified packet grouping"),
+    ),
+  );
+});
+
 test("an invalid reference proof is repaired from the original source page without rerunning extraction", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");

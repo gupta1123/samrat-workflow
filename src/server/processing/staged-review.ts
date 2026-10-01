@@ -314,6 +314,32 @@ function parseObjectOrNull(raw: string) {
   }
 }
 
+function retainGroundedPacketIssues(
+  raw: unknown,
+  documents: CaseDoc[],
+  pages: ReviewSourcePage[],
+) {
+  if (!Array.isArray(raw))
+    throw new Error("Packet review issues must be an array.");
+  const retained: unknown[] = [];
+  let discarded = 0;
+  for (const issue of raw) {
+    try {
+      // Packet issues are optional discoveries. Validate them independently so
+      // one ungrounded proposal cannot erase an otherwise verified grouping,
+      // source ledger, or primary invoice reference.
+      parseGroundedReviewIssues([issue], documents, pages, "packet-check");
+      retained.push(issue);
+    } catch (error) {
+      discarded++;
+      console.warn("[staged-review] discarded ungrounded packet issue", {
+        defect: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { retained, discarded };
+}
+
 function unverifiedSourceReview(document: CaseDoc, pages: ReviewSourcePage[]) {
   const reason =
     "Automated source verification returned an internally inconsistent result. The original extraction was preserved without applying any unverified correction.";
@@ -922,6 +948,7 @@ export async function reviewExtractedDocumentsInStages(
   let packetContext: Record<string, unknown> = {};
   let aliases = packetPointerAliases(currentDocuments);
   let packetAttempts = 0;
+  let discardedPacketIssueCount = 0;
   const parsePacket = (raw: string) => {
     const payload = object(aliases.decode(JSON.parse(raw)));
     const allowed = new Set([
@@ -974,13 +1001,16 @@ export async function reviewExtractedDocumentsInStages(
       documentAudits: audits,
       sourcePages: options.sourcePages,
     });
-    parseGroundedReviewIssues(
+    const packetIssues = retainGroundedPacketIssues(
       payload.packetIssues,
       currentDocuments,
       options.sourcePages,
-      "packet",
     );
-    return { payload, requests };
+    return {
+      payload: { ...payload, packetIssues: packetIssues.retained },
+      requests,
+      discardedPacketIssueCount: packetIssues.discarded,
+    };
   };
   for (let pass = 0; pass < 2; pass++) {
     await report(94, "Pro reviewer reconciling the whole verified packet");
@@ -1108,6 +1138,10 @@ export async function reviewExtractedDocumentsInStages(
     }
     const result = packetResult;
     if (result.reused) reused++;
+    discardedPacketIssueCount = Math.max(
+      discardedPacketIssueCount,
+      result.result.discardedPacketIssueCount,
+    );
     packetRaw = result.result.payload;
     if (!result.result.requests.length) break;
     if (pass === 1) {
@@ -1491,7 +1525,14 @@ export async function reviewExtractedDocumentsInStages(
     termsChecklistCount: result.authoritativeReview.termsChecklist.length,
     packetGroupCount: result.authoritativeReview.verificationGroups.length,
     documentAudits: sourceReviews.map((result) => result.audit),
-    warnings: sourceReviews.flatMap((result) => result.summary.warnings),
+    warnings: [
+      ...sourceReviews.flatMap((result) => result.summary.warnings),
+      ...(discardedPacketIssueCount
+        ? [
+            `Discarded ${discardedPacketIssueCount} ungrounded optional packet ${discardedPacketIssueCount === 1 ? "issue" : "issues"} without discarding the verified packet grouping.`,
+          ]
+        : []),
+    ],
     executionMode: "staged",
     sourceReviewCount: sourceReviews.length,
     resumedCheckpointCount: reused,

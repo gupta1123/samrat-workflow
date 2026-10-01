@@ -225,6 +225,49 @@ test("a rate above the limit needs a written reason", () => {
   assert.equal(done.payload!.lines[0].unitPrice, 63887);
 });
 
+test("a printed invoice rate is not replaced by an inferred amount-per-quantity rate", () => {
+  const inv = invoice({
+    invoiceNumber: "4725013687",
+    poReferences: ["100237"],
+    vehicles: ["TN18CA0465"],
+    freightAmount: 0,
+    taxableTotal: 2531491.61,
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "1428337",
+        description: "TISCON-TMT IS1786 FE550SD 10 mm",
+        hsnSac: "72142090",
+        quantity: 41.8,
+        unit: "TO",
+        rate: 58308,
+        // This is the invoice subtotal (including another charge), not proof
+        // that the printed unit rate should be replaced.
+        amount: 2531491.61,
+      },
+    ],
+  });
+  const ctx = context([
+    receipt(101005, {
+      itemCode: "TMT-550SD-10",
+      quantity: 41.8,
+      openQty: 41.8,
+      price: 64440,
+      poRef: "100237",
+      poRate: 64440,
+      poQty: 300,
+      vehicle: "TN18CA0465",
+      vendorRef: "4725013687",
+    }),
+  ]);
+  const result = evaluateMatch({ invoice: inv, context: ctx });
+  const rate = result.checks.find((check) => check.id === "rate-0")!;
+  assert.equal(rate.title, "Rate is ₹6,132 below the PO");
+  assert.match(rate.help ?? "", /charged ₹58,308/);
+  assert.equal(result.status, "review");
+  assert.equal(result.payload?.lines[0].unitPrice, 58308);
+});
+
 test("the Tata Wiron invoice rate below PO 275 still needs a written approval", () => {
   const inv = invoice({
     poReferences: ["TGPO26-"],

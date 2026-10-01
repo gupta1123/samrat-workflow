@@ -22,7 +22,6 @@ import {
 const EPS = 0.0005;
 /** SAP and vendors round differently; up to this per document is treated as rounding. */
 export const DOCUMENT_ROUNDING = 10;
-const LINE_ROUNDING = 1.5;
 const MIN_FIRST_SCORE = 35;
 
 export function normalizeRef(value: unknown): string {
@@ -697,12 +696,9 @@ function poForReceipt(receipt: SapReceiptLine, context: MatchContext) {
 }
 
 function effectiveRate(ln: MatchInvoiceLine): number | null {
-  if (ln.quantity && ln.quantity > 0 && ln.amount !== null && ln.rate !== null) {
-    // The vendor gave a discount: the rate to book is the net rate.
-    if (Math.abs(ln.amount - ln.quantity * ln.rate) > LINE_ROUNDING) {
-      return r4(ln.amount / ln.quantity);
-    }
-  }
+  // A printed unit rate is authoritative. A conflicting line amount can be a
+  // subtotal, freight-inclusive value, extraction defect, or genuine business
+  // mismatch; it is never proof of an unprinted discount rate.
   return ln.rate;
 }
 
