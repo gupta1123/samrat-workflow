@@ -11,8 +11,15 @@ import type { SapWithholdingTaxRow } from "./draft-total";
 import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
 import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
 import { readODataCollection } from "./odata-pagination";
-import { businessPartnerReadPath, type BusinessPartnerQuery } from "@/lib/sap-business-partners";
-import { grpoInspectorReadPath, type GrpoInspectorQuery, type GrpoReferenceFields } from "@/lib/sap-grpo-inspector";
+import {
+  businessPartnerReadPath,
+  type BusinessPartnerQuery,
+} from "@/lib/sap-business-partners";
+import {
+  grpoInspectorReadPath,
+  type GrpoInspectorQuery,
+  type GrpoReferenceFields,
+} from "@/lib/sap-grpo-inspector";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -131,8 +138,13 @@ export async function withTestServiceLayer<T>(
     listSuppliers: () => Promise<SapSupplierRow[]>;
     searchSuppliers: (query: string) => Promise<SapSupplierRow[]>;
     getSupplier: (cardCode: string) => Promise<SapSupplierRow | null>;
-    listBusinessPartnersPage: (query: BusinessPartnerQuery) => Promise<Record<string, unknown>[]>;
-    listInspectorGrposPage: (query: GrpoInspectorQuery, fields: GrpoReferenceFields) => Promise<Record<string, unknown>[]>;
+    listBusinessPartnersPage: (
+      query: BusinessPartnerQuery,
+    ) => Promise<Record<string, unknown>[]>;
+    listInspectorGrposPage: (
+      query: GrpoInspectorQuery,
+      fields: GrpoReferenceFields,
+    ) => Promise<Record<string, unknown>[]>;
     listOpenReceiptDocumentsForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
@@ -146,6 +158,12 @@ export async function withTestServiceLayer<T>(
       eWayBillField?: string;
       lorryReceiptField?: string;
       vehicleField?: string;
+      onSearch?: (search: {
+        field: string;
+        value: string;
+        documentsRead: number;
+        limit: number;
+      }) => void;
     }) => Promise<SapMatchDocument[]>;
     listOpenPurchaseOrdersForVendor: (
       cardCode: string,
@@ -532,15 +550,23 @@ export async function withTestServiceLayer<T>(
         );
       },
       async listBusinessPartnersPage(query) {
-        return pageAll<Record<string, unknown>>(businessPartnerReadPath(query), query.limit + 1);
+        return pageAll<Record<string, unknown>>(
+          businessPartnerReadPath(query),
+          query.limit + 1,
+        );
       },
       async listInspectorGrposPage(query, fields) {
-        return pageAll<Record<string, unknown>>(grpoInspectorReadPath(query, fields), query.limit + 1);
+        return pageAll<Record<string, unknown>>(
+          grpoInspectorReadPath(query, fields),
+          query.limit + 1,
+        );
       },
       async searchSuppliers(query) {
         const term = query.trim().replaceAll("'", "''").slice(0, 60);
         if (term.length < 2) return [];
-        const variants = [...new Set([term, term.toUpperCase(), term.toLowerCase()])];
+        const variants = [
+          ...new Set([term, term.toUpperCase(), term.toLowerCase()]),
+        ];
         const filter = variants
           .flatMap((variant) => [
             `contains(CardName,'${variant}')`,
@@ -573,24 +599,55 @@ export async function withTestServiceLayer<T>(
         const safeField = (value: string | undefined) =>
           value && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value) ? value : null;
         const literal = (value: string) => value.replaceAll("'", "''");
-        const identifiers: Array<{ label: string; filter: string }> = [];
+        const identifiers: Array<{
+          label: string;
+          field: string;
+          value: string;
+          filter: string;
+        }> = [];
         if (input.invoiceNumber.trim()) {
           const value = literal(input.invoiceNumber.trim());
-          identifiers.push({ label: "NumAtCard", filter: `NumAtCard eq '${value}'` });
+          identifiers.push({
+            label: "NumAtCard",
+            field: "Invoice No.",
+            value: input.invoiceNumber.trim(),
+            filter: `NumAtCard eq '${value}'`,
+          });
           const field = safeField(input.invoiceRefField);
-          if (field) identifiers.push({ label: field, filter: `${field} eq '${value}'` });
+          if (field)
+            identifiers.push({
+              label: field,
+              field: "Invoice No.",
+              value: input.invoiceNumber.trim(),
+              filter: `${field} eq '${value}'`,
+            });
         }
-        const add = (fieldName: string | undefined, value: string | null) => {
+        const add = (
+          fieldName: string | undefined,
+          value: string | null,
+          label: string,
+        ) => {
           const field = safeField(fieldName);
           const wanted = value?.trim();
-          if (field && wanted) identifiers.push({ label: field, filter: `${field} eq '${literal(wanted)}'` });
+          if (field && wanted && !/^0+$/.test(wanted))
+            identifiers.push({
+              label: field,
+              field: label,
+              value: wanted,
+              filter: `${field} eq '${literal(wanted)}'`,
+            });
         };
-        add(input.eWayBillField, input.eWayBill);
-        add(input.lorryReceiptField, input.lorryReceipt);
+        add(input.eWayBillField, input.eWayBill, "E-Way Bill No.");
+        add(input.lorryReceiptField, input.lorryReceipt, "Lorry Receipt No.");
         const vehicleField = safeField(input.vehicleField);
         if (vehicleField) {
           for (const vehicle of input.vehicles.filter(Boolean).slice(0, 4)) {
-            identifiers.push({ label: vehicleField, filter: `${vehicleField} eq '${literal(vehicle)}'` });
+            identifiers.push({
+              label: vehicleField,
+              field: "Vehicle No.",
+              value: vehicle,
+              filter: `${vehicleField} eq '${literal(vehicle)}'`,
+            });
           }
         }
         if (!identifiers.length) return [];
@@ -607,7 +664,15 @@ export async function withTestServiceLayer<T>(
                 "&$orderby=DocEntry%20desc",
               100,
             );
-            if (rows.length) return rows;
+            if (rows.length) {
+              input.onSearch?.({
+                field: identifier.field,
+                value: identifier.value,
+                documentsRead: rows.length,
+                limit: 100,
+              });
+              return rows;
+            }
           } catch (error) {
             console.warn(
               `Could not query SAP receipts by ${identifier.label}; trying the next exact identifier.`,
@@ -664,7 +729,9 @@ export async function withTestServiceLayer<T>(
       async searchItems(query) {
         const term = query.trim().replaceAll("'", "''").slice(0, 60);
         if (term.length < 2) return [];
-        const variants = [...new Set([term, term.toUpperCase(), term.toLowerCase()])];
+        const variants = [
+          ...new Set([term, term.toUpperCase(), term.toLowerCase()]),
+        ];
         const filter = variants
           .flatMap((variant) => [
             `contains(ItemName,'${variant}')`,
@@ -740,11 +807,7 @@ export async function withTestServiceLayer<T>(
           ? (body.value as Record<string, unknown>[])
           : [];
       },
-      async listInspectorDocuments(
-        dataset,
-        max,
-        additionalHeaderFields = [],
-      ) {
+      async listInspectorDocuments(dataset, max, additionalHeaderFields = []) {
         const entity =
           dataset === "po"
             ? "PurchaseOrders"

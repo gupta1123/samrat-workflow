@@ -9,6 +9,7 @@ import {
   type MatchRules,
   type SapPoLine,
   type SapReceiptLine,
+  type SupplierIdentification,
 } from "@/lib/sap-match/types";
 import { parseSapAmount } from "@/lib/sap-decision";
 import { readStoredLineItems } from "@/server/line-items";
@@ -37,7 +38,10 @@ function text(value: unknown): string {
 }
 
 function amount(value: unknown): number | null {
-  if (typeof value !== "number" && (typeof value !== "string" || !/\d/.test(value))) {
+  if (
+    typeof value !== "number" &&
+    (typeof value !== "string" || !/\d/.test(value))
+  ) {
     return null;
   }
   return parseSapAmount(value);
@@ -60,8 +64,13 @@ export function buildMatchInvoice(input: {
   );
   const wanted = text(input.caseInvoiceNumber);
   const primary =
-    invoices.find((document) => text(record(document.extracted_fields).invoiceNumber) === wanted) ??
-    invoices.find((document) => text(record(document.extracted_fields).invoiceNumber));
+    invoices.find(
+      (document) =>
+        text(record(document.extracted_fields).invoiceNumber) === wanted,
+    ) ??
+    invoices.find((document) =>
+      text(record(document.extracted_fields).invoiceNumber),
+    );
   if (!primary) return null;
   const fields = record(primary.extracted_fields);
   const invoiceNumber = text(fields.invoiceNumber);
@@ -93,27 +102,60 @@ export function buildMatchInvoice(input: {
 
   const vehicles = new Set<string>();
   const poReferences = new Set<string>();
+  const referenceSources: NonNullable<MatchInvoice["referenceSources"]> = {
+    po: [],
+    vehicles: [],
+    eWayBill: null,
+    lorryReceipt: null,
+  };
   let eWayBill: string | null = null;
   let lorryReceipt: string | null = null;
   for (const document of input.documents) {
     const documentFields = record(document.extracted_fields);
-    for (const vehicle of findVehicles(documentFields.vehicleNumber)) vehicles.add(vehicle);
+    const source = [
+      text(document.source_file_name) || text(document.document_type),
+      text(document.source_hint).match(
+        /\bpages?\s+\d+(?:\s*[-–]\s*\d+)?/i,
+      )?.[0],
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    for (const vehicle of findVehicles(documentFields.vehicleNumber)) {
+      vehicles.add(vehicle);
+      referenceSources.vehicles.push({ value: vehicle, source });
+    }
     for (const key of ["poNumber", "referencePoNumber"]) {
       const value = text(documentFields[key]);
-      if (value) poReferences.add(value);
+      if (value) {
+        poReferences.add(value);
+        referenceSources.po.push({ value, source });
+      }
     }
-    if (!eWayBill) eWayBill = text(documentFields.eWayBillNumber) || null;
-    if (!lorryReceipt) lorryReceipt = text(documentFields.lorryReceiptNumber) || null;
+    if (!eWayBill) {
+      eWayBill = text(documentFields.eWayBillNumber) || null;
+      if (eWayBill) referenceSources.eWayBill = source;
+    }
+    if (!lorryReceipt) {
+      lorryReceipt = text(documentFields.lorryReceiptNumber) || null;
+      if (lorryReceipt) referenceSources.lorryReceipt = source;
+    }
   }
   const casePo = text(input.casePoNumber);
-  if (casePo) poReferences.add(casePo);
+  if (casePo) {
+    poReferences.add(casePo);
+    if (!referenceSources.po.some((entry) => entry.value === casePo))
+      referenceSources.po.push({ value: casePo, source: "Packet header" });
+  }
 
   const cgst = amount(fields.cgstRate);
   const sgst = amount(fields.sgstRate);
   const igst = amount(fields.igstRate);
-  const igstOnLines = rawLines.some((item) => (amount(item.igstAmount) ?? 0) > 0);
+  const igstOnLines = rawLines.some(
+    (item) => (amount(item.igstAmount) ?? 0) > 0,
+  );
   const splitOnLines = rawLines.some(
-    (item) => (amount(item.cgstAmount) ?? 0) > 0 || (amount(item.sgstAmount) ?? 0) > 0,
+    (item) =>
+      (amount(item.cgstAmount) ?? 0) > 0 || (amount(item.sgstAmount) ?? 0) > 0,
   );
   const taxCharged: MatchInvoice["taxCharged"] =
     (igst ?? 0) > 0 || igstOnLines
@@ -123,13 +165,18 @@ export function buildMatchInvoice(input: {
         : "unknown";
 
   const freightField = amount(fields.freightAmount);
-  const freightAmount = freightField ?? (freightFromLines > 0 ? freightFromLines : 0);
+  const freightAmount =
+    freightField ?? (freightFromLines > 0 ? freightFromLines : 0);
 
   return {
     invoiceNumber,
+    referenceSources,
     source: {
       fileName: text(primary.source_file_name) || null,
-      pageLabel: text(primary.source_hint).match(/\bpages?\s+\d+(?:\s*[-–]\s*\d+)?/i)?.[0] ?? null,
+      pageLabel:
+        text(primary.source_hint).match(
+          /\bpages?\s+\d+(?:\s*[-–]\s*\d+)?/i,
+        )?.[0] ?? null,
     },
     invoiceDate: sapInvoiceDate(fields.documentDate),
     vendorName: text(fields.vendorName) || text(fields.supplierName) || null,
@@ -140,7 +187,12 @@ export function buildMatchInvoice(input: {
     eWayBill,
     lorryReceipt,
     taxCharged,
-    taxRatePct: (igst ?? 0) > 0 ? igst : cgst !== null && sgst !== null ? cgst + sgst : amount(fields.taxRate),
+    taxRatePct:
+      (igst ?? 0) > 0
+        ? igst
+        : cgst !== null && sgst !== null
+          ? cgst + sgst
+          : amount(fields.taxRate),
     currency: text(fields.currency).toUpperCase() || null,
     freightAmount,
     taxableTotal: amount(fields.totalTaxableAmount) ?? amount(fields.subtotal),
@@ -168,12 +220,15 @@ function exactName(value: unknown): string {
 }
 
 function exactGstin(value: unknown): string {
-  return String(value ?? "").trim().toLocaleUpperCase("en-IN");
+  return String(value ?? "")
+    .trim()
+    .toLocaleUpperCase("en-IN");
 }
 
 export function resolveVendor(
   invoice: { vendorName: string | null; vendorGstin: string | null },
   suppliers: VendorSupplier[],
+  onIdentified?: (evidence: SupplierIdentification) => void,
 ): {
   vendor: { cardCode: string; cardName: string } | null;
   ambiguous: Array<{ cardCode: string; cardName: string; why: string }>;
@@ -191,6 +246,12 @@ export function resolveVendor(
       ),
     );
     if (gstinMatches.length === 1) {
+      onIdentified?.({
+        method: "gstin",
+        sapGstins: (gstinMatches[0].BPAddresses ?? [])
+          .map((address) => exactGstin(address.GSTIN))
+          .filter(Boolean),
+      });
       return { vendor: toVendor(gstinMatches[0]), ambiguous: [] };
     }
     if (gstinMatches.length > 1) {
@@ -210,6 +271,12 @@ export function resolveVendor(
     (supplier) => exactName(supplier.CardName) === name,
   );
   if (nameMatches.length === 1) {
+    onIdentified?.({
+      method: "name",
+      sapGstins: (nameMatches[0].BPAddresses ?? [])
+        .map((address) => exactGstin(address.GSTIN))
+        .filter(Boolean),
+    });
     return { vendor: toVendor(nameMatches[0]), ambiguous: [] };
   }
   if (nameMatches.length > 1) {
@@ -239,9 +306,7 @@ export function vendorKeys(invoice: {
           .filter(Boolean),
       ),
     ].sort();
-    return materialCodes.map((materialCode) =>
-      `G:${gstin}|I:${materialCode}`,
-    );
+    return materialCodes.map((materialCode) => `G:${gstin}|I:${materialCode}`);
   }
   const name = exactName(invoice.vendorName);
   return name ? [`N:${name}`] : [];
@@ -265,10 +330,14 @@ function integer(value: unknown): number | null {
   return Number.isInteger(number) ? number : null;
 }
 
-function poRefsOf(document: SapMatchDocument | undefined, config: SapFieldConfig) {
+function poRefsOf(
+  document: SapMatchDocument | undefined,
+  config: SapFieldConfig,
+) {
   if (!document) return [];
   const refs = [text(document.DocNum), text(document.NumAtCard)];
-  for (const field of config.poRefFields ?? []) refs.push(text(document[field]));
+  for (const field of config.poRefFields ?? [])
+    refs.push(text(document[field]));
   return [...new Set(refs.filter(Boolean))];
 }
 
@@ -292,12 +361,19 @@ export function mapReceiptLines(
       const lineNum = integer(line.LineNum);
       const itemCode = text(line.ItemCode);
       const open = amount(line.RemainingOpenQuantity);
-      if (lineNum === null || !itemCode || line.LineStatus !== "bost_Open" || open === null || open <= 0) {
+      if (
+        lineNum === null ||
+        !itemCode ||
+        line.LineStatus !== "bost_Open" ||
+        open === null ||
+        open <= 0
+      ) {
         continue;
       }
       const baseType = integer(line.BaseType);
       const poDocEntry = baseType === 22 ? integer(line.BaseEntry) : null;
-      const poDocument = poDocEntry !== null ? poByEntry.get(poDocEntry) : undefined;
+      const poDocument =
+        poDocEntry !== null ? poByEntry.get(poDocEntry) : undefined;
       const explicitVehicle = config.vehicleField
         ? text(line[config.vehicleField]) || text(document[config.vehicleField])
         : "";
@@ -326,7 +402,9 @@ export function mapReceiptLines(
         price: amount(line.Price),
         vehicle,
         vendorRef:
-          receiptField(config.invoiceRefField) || text(document.NumAtCard) || null,
+          receiptField(config.invoiceRefField) ||
+          text(document.NumAtCard) ||
+          null,
         eWayBill: receiptField(config.eWayBillField) || null,
         lorryReceipt: receiptField(config.lorryReceiptField) || null,
         note: text(document.Comments) || null,
@@ -412,7 +490,9 @@ export function parseBranches(value: unknown): BranchMapping[] {
   });
 }
 
-export function rulesFromRow(row: MatchRulesRow | null | undefined): MatchRules {
+export function rulesFromRow(
+  row: MatchRulesRow | null | undefined,
+): MatchRules {
   if (!row) return { ...DEFAULT_MATCH_RULES };
   const freight = row.freight_policy;
   return {
@@ -448,7 +528,10 @@ export function parseRulesInput(input: unknown): MatchRules {
   if (parsedBranches.length !== branches.length) {
     throw new Error("Each branch needs a two-digit GST state code and a name.");
   }
-  if (new Set(parsedBranches.map((branch) => branch.stateCode)).size !== parsedBranches.length) {
+  if (
+    new Set(parsedBranches.map((branch) => branch.stateCode)).size !==
+    parsedBranches.length
+  ) {
     throw new Error("Each GST state code can be used for only one branch.");
   }
   return {
@@ -456,7 +539,9 @@ export function parseRulesInput(input: unknown): MatchRules {
     rateTolerancePct: number(body.rateTolerancePct, "Rate limit", 0, 100),
     freightPolicy: freight,
     postingDate: body.postingDate,
-    receiptWindowDays: Math.round(number(body.receiptWindowDays, "Receipt window", 0, 365)),
+    receiptWindowDays: Math.round(
+      number(body.receiptWindowDays, "Receipt window", 0, 365),
+    ),
     branches: parsedBranches,
   };
 }
@@ -464,7 +549,12 @@ export function parseRulesInput(input: unknown): MatchRules {
 export function branchForShipTo(
   shipToGstin: string | null,
   rules: MatchRules,
-): { bplId: number | null; name: string; stateCode: string | null; warehouse: string | null } | null {
+): {
+  bplId: number | null;
+  name: string;
+  stateCode: string | null;
+  warehouse: string | null;
+} | null {
   const code = (shipToGstin ?? "").trim().slice(0, 2);
   const branch = rules.branches.find((entry) => entry.stateCode === code);
   return branch

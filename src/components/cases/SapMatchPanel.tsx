@@ -32,6 +32,9 @@ import type {
   MatchCheck,
   MatchStatus,
 } from "@/lib/sap-match/types";
+import { DEFAULT_MATCH_RULES, EMPTY_MATCH_STATE } from "@/lib/sap-match/types";
+import { matchTimestamp, truthfulChecks } from "@/lib/sap-match/evidence";
+import { SupplierEvidence } from "./sap-match/MatchingEvidence";
 import { CheckBlock } from "./sap-match/CheckBlock";
 import { FinalPostSection } from "./sap-match/FinalPostSection";
 import { PostedInvoice } from "./sap-match/PostedInvoice";
@@ -250,6 +253,79 @@ export function SapMatchPanel({
     );
   }
 
+  const ap = data.postings.find(
+    (posting) =>
+      posting.kind === "AP" &&
+      posting.sap_env === data.sapEnv &&
+      posting.sap_docnum &&
+      (posting.status === "prepared" || posting.status === "posted"),
+  );
+  if (ap && data.draftDetails) {
+    const saved = data.draftDetails.match;
+    if (!saved) {
+      return variant === "sidebar" ? (
+        <div className="px-4 py-3 text-[11px]">
+          Draft Entry No. {ap.sap_docnum} saved, not posted
+        </div>
+      ) : (
+        <div className="space-y-3 px-4 py-3">
+          <p className="text-[12px] font-semibold text-[#111827]">
+            A/P Invoice Draft {ap.sap_docnum} saved in SAP {data.sapEnv}
+          </p>
+          <p className="text-[11px] leading-4 text-[#6b5d50]">
+            The matching evidence was not saved when this draft was created. A
+            current GRPO search cannot explain its historical match. Review the
+            draft in SAP.
+          </p>
+          {data.draftDetails.bases.length ? (
+            <p className="text-[11px] text-[#3d3530]">
+              Saved base documents:{" "}
+              {data.draftDetails.bases
+                .map((base) => `${base.kind} ${base.number}`)
+                .join(", ")}
+            </p>
+          ) : null}
+          <FinalPostSection
+            caseId={caseId}
+            status="prepared"
+            documentNumber={ap.sap_docnum!}
+            onChanged={() => void load(true)}
+          />
+        </div>
+      );
+    }
+    return (
+      <Matched
+        caseId={caseId}
+        variant={variant}
+        data={{
+          ...data,
+          ...saved,
+          available: true,
+          rules: DEFAULT_MATCH_RULES,
+          state: EMPTY_MATCH_STATE,
+        }}
+        ap={ap}
+        busy={busy}
+        actionError={actionError}
+        confirmingDraft={false}
+        creating={false}
+        draftMessage={null}
+        showPassed={showPassed}
+        onTogglePassed={() => setShowPassed((current) => !current)}
+        onConfirmDraft={() => {}}
+        onCreateDraft={() => {}}
+        onRefresh={() => void load(true)}
+        onChoose={() => {}}
+        onUndo={() => {}}
+        onAllocate={() => {}}
+        onResetAllocation={() => {}}
+        onLink={() => {}}
+        onLinkVendor={() => {}}
+      />
+    );
+  }
+
   if (
     data.matchJob?.status === "queued" ||
     data.matchJob?.status === "running"
@@ -277,14 +353,6 @@ export function SapMatchPanel({
       </div>
     );
   }
-
-  const ap = data.postings.find(
-    (posting) =>
-      posting.kind === "AP" &&
-      posting.sap_env === "test" &&
-      posting.sap_docnum &&
-      (posting.status === "prepared" || posting.status === "posted"),
-  );
 
   if (!data.available) {
     const message = data.reason ?? "No SAP match is available for this case.";
@@ -420,12 +488,19 @@ function Matched({
   onLinkVendor: (cardCode: string) => void;
 }) {
   const { invoice } = data;
-  const result = sapMatchPresentation(data.result, [
-    invoice.vendorName ?? "",
-    data.vendor?.cardName ?? "",
-    ...invoice.lines.map((line) => line.description ?? ""),
-  ]);
+  const result = sapMatchPresentation(
+    { ...data.result, checks: truthfulChecks(data.result) },
+    [
+      invoice.vendorName ?? "",
+      data.vendor?.cardName ?? "",
+      ...invoice.lines.map((line) => line.description ?? ""),
+    ],
+  );
   const locked = Boolean(ap);
+  const unchecked = result.checks.filter((check) => check.sev === "unchecked");
+  const accepted = result.checks.filter(
+    (check) => check.decision && !check.open,
+  );
   const meta = STATUS[locked ? "ready" : result.status];
   const openCount = result.open.length;
 
@@ -476,7 +551,7 @@ function Matched({
       (check.open || check.decision),
   );
   const passed = result.checks.filter(
-    (check) => !check.open && !check.decision,
+    (check) => check.sev === "pass" && !check.open && !check.decision,
   );
   const canCreate =
     data.postable &&
@@ -503,7 +578,7 @@ function Matched({
                   ? `Posted as A/P Invoice ${ap.sap_docnum}`
                   : `Draft Entry No. ${ap.sap_docnum} is saved in SAP`
                 : result.status === "ready"
-                  ? "Everything matches"
+                  ? "Ready to create A/P Invoice Draft"
                   : (first?.title ?? result.summary)}
             </div>
             <StatusPill
@@ -517,6 +592,16 @@ function Matched({
               }
             />
           </div>
+          <p className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
+            {locked
+              ? `Comparison saved at draft creation · ${matchTimestamp(data.draftDetails?.recordedAt)}`
+              : `Last SAP check: ${matchTimestamp(result.checkedAt ?? data.matchJob?.finishedAt)}`}{" "}
+            · {passed.length} matched
+            {accepted.length
+              ? ` · ${accepted.length} accepted by reviewer`
+              : ""}
+            {unchecked.length ? ` · ${unchecked.length} not checked` : ""}
+          </p>
           <div className="mt-0.5 text-[11px] leading-4 text-[#6b5d50]">
             {vendorLabel} · Vendor Ref. No. {invoice.invoiceNumber}
             {result.payload
@@ -530,17 +615,67 @@ function Matched({
         <span className="rounded-full bg-[#fff7ed] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#b45309] ring-1 ring-inset ring-[#fcd9b6]">
           SAP {data.sapEnv === "test" ? "Test" : data.sapEnv}
         </span>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 px-2.5 text-[11px]"
-          disabled={busy}
-          onClick={onRefresh}
-        >
-          <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />{" "}
-          Re-check
-        </Button>
+        {!locked ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-[11px]"
+            disabled={busy}
+            onClick={onRefresh}
+          >
+            <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />{" "}
+            Re-check
+          </Button>
+        ) : null}
       </section>
+
+      {locked ? (
+        <p className="text-[11px] leading-4 text-[#6b5d50]">
+          This is the comparison used to create the saved draft. Quantities and
+          open balances are historical; current GRPO balances may have changed.
+          SAP validates the draft again before posting.
+        </p>
+      ) : null}
+
+      <SupplierEvidence
+        invoice={invoice}
+        vendor={data.vendor}
+        result={result}
+      />
+
+      {result.method !== "2-way" && result.receiptSearch ? (
+        <p className="text-[10px] leading-4 text-[#6b5d50]">
+          SAP Service Layer ·{" "}
+          {result.receiptSearch.method === "identifier"
+            ? result.receiptSearch.field
+              ? `GRPO search by ${result.receiptSearch.field} ${result.receiptSearch.value}`
+              : "GRPO search by packet references"
+            : `Open GRPO search for supplier ${data.vendor?.cardCode ?? ""}`}{" "}
+          · {result.receiptSearch.documentsRead} document
+          {result.receiptSearch.documentsRead === 1 ? "" : "s"} returned
+          {result.receiptSearch.documentsRead >= result.receiptSearch.limit
+            ? ` (search limit ${result.receiptSearch.limit} reached)`
+            : ""}
+          .{" "}
+          {result.receiptSearch.method === "identifier"
+            ? "Candidates come from the first successful reference search, not all SAP GRPOs."
+            : "Only this supplier’s open GRPOs were searched."}
+        </p>
+      ) : null}
+
+      {unchecked.length ? (
+        <div className="border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]">
+          <p className="font-medium">Not checked ({unchecked.length})</p>
+          <ul className="mt-1 space-y-0.5">
+            {unchecked.map((check) => (
+              <li key={check.id}>
+                {check.title}
+                {check.help ? ` · ${check.help}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {actionError ? (
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">
@@ -548,26 +683,28 @@ function Matched({
         </div>
       ) : null}
 
-      {generalOpen.map((check) =>
-        check.id === "vendor" && check.sev === "block" ? (
-          <VendorLinker
-            key={check.id}
-            caseId={caseId}
-            check={check}
-            busy={busy || locked}
-            onLink={onLinkVendor}
-          />
-        ) : (
-          <CheckBlock
-            key={check.id}
-            check={check}
-            locked={locked}
-            busy={busy}
-            onChoose={(choice, reason) => onChoose(check, choice, reason)}
-            onUndo={() => onUndo(check)}
-          />
-        ),
-      )}
+      {generalOpen
+        .filter((check) => !locked || check.decision)
+        .map((check) =>
+          check.id === "vendor" && check.sev === "block" ? (
+            <VendorLinker
+              key={check.id}
+              caseId={caseId}
+              check={check}
+              busy={busy || locked}
+              onLink={onLinkVendor}
+            />
+          ) : (
+            <CheckBlock
+              key={check.id}
+              check={check}
+              locked={locked}
+              busy={busy}
+              onChoose={(choice, reason) => onChoose(check, choice, reason)}
+              onUndo={() => onUndo(check)}
+            />
+          ),
+        )}
 
       {result.lines.map((line) => (
         <MatchLineCard
@@ -605,6 +742,7 @@ function Matched({
         result={result}
         lines={result.lines}
         vendorLabel={vendorLabel}
+        saved={locked}
       />
 
       {/* Draft and final posting */}

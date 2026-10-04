@@ -192,7 +192,6 @@ test("posted invoice in the live company also returns without starting test matc
 
 for (const [name, postings] of [
   ["unposted case", []],
-  ["prepared draft", [{ ...posting, status: "prepared" }]],
   ["posted receipt", [{ ...posting, kind: "GRN" }]],
   ["invoice in another SAP company", [{ ...posting, sap_env: "live" }]],
 ] as const) {
@@ -204,6 +203,39 @@ for (const [name, postings] of [
     assert.equal(calls.at(-1), "/rest/v1/sap_match_jobs");
   });
 }
+
+for (const refresh of [false, true]) {
+  test(`prepared draft uses its saved comparison without a new match job (refresh=${refresh})`, async (t) => {
+    const calls = setup(t, {
+      postings: [{ ...postedFixture, status: "prepared" }],
+    });
+    const result = await read(refresh);
+    assert.equal(result.status, 200);
+    const body = await result.json();
+    assert.equal(body.postable, false);
+    assert.equal(body.draftDetails.match.result.status, "ready");
+    assert.equal(
+      body.draftDetails.match.result.lines[0].candidates[0].allocated,
+      2,
+    );
+    assert.equal(body.matchJob, undefined);
+    assert.equal(body.postings[0].payload, undefined);
+    assert.deepEqual(calls, [
+      "/auth/v1/user",
+      "/rest/v1/packet_cases",
+      "/rest/v1/sap_postings",
+    ]);
+  });
+}
+
+test("legacy draft does not substitute a current GRPO search for missing historical evidence", async (t) => {
+  const calls = setup(t, { postings: [{ ...posting, status: "prepared" }] });
+  const result = await read(true);
+  const body = await result.json();
+  assert.equal(body.draftDetails.match, null);
+  assert.equal(body.matchJob, undefined);
+  assert.equal(calls.includes("/rest/v1/sap_match_jobs"), false);
+});
 
 test("the posted shortcut still checks case ownership", async (t) => {
   const calls = setup(t, { ownsCase: false });

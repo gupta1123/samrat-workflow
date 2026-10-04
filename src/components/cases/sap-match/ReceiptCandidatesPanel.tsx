@@ -22,11 +22,17 @@ import {
 } from "@/components/ui/dialog";
 import { receiptSelection } from "@/lib/sap-match/receipt-selection";
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
-import type { CandidateView, LineResult } from "@/lib/sap-match/types";
+import type {
+  CandidateView,
+  LineResult,
+  MatchInvoice,
+} from "@/lib/sap-match/types";
 import { formatDate, inr, qty } from "./format";
+import { CandidateEvidence } from "./MatchingEvidence";
 
 function CandidateCard({
   candidate,
+  invoice,
   service,
   unit,
   value,
@@ -37,6 +43,7 @@ function CandidateCard({
   onValue,
 }: {
   candidate: CandidateView;
+  invoice: MatchInvoice;
   service: boolean;
   unit: string;
   value: string;
@@ -52,7 +59,6 @@ function CandidateCard({
   const amount = (value: number) =>
     service ? inr(value) : `${qty(value)}${unit ? ` ${unit}` : ""}`;
   const reason =
-    candidate.bad[0] ||
     candidate.good.find(
       (reason) => reason.includes("invoice") || reason.includes("reference"),
     ) ||
@@ -105,37 +111,25 @@ function CandidateCard({
                 </p>
               ) : null}
               {reason ? (
-                <p
-                  className={`mt-0.5 text-[10px] leading-4 ${candidate.bad.length ? "text-[#855009]" : "text-[#3b614c]"}`}
-                >
+                <p className="mt-0.5 text-[10px] leading-4 text-[#3b614c]">
                   {reason}
                 </p>
               ) : null}
-              <details className="mt-0.5 text-[10px] text-[#6b5d50]">
-                <summary className="cursor-pointer leading-4 font-medium">
-                  Matching details
-                </summary>
-                <div className="mt-1 space-y-0.5 border-t border-[#e0d8cc] pt-1 leading-4">
-                  {candidate.good.map((text, index) => (
-                    <p key={`good-${index}`}>{text}</p>
-                  ))}
-                  {candidate.bad.map((text, index) => (
-                    <p className="text-[#855009]" key={`bad-${index}`}>
-                      {text}
-                    </p>
-                  ))}
-                  {candidate.note ? <p>{candidate.note}</p> : null}
-                  <p>
-                    Ranking score: {candidate.score} / 100. Used to rank
-                    candidates.
-                  </p>
-                </div>
-              </details>
+              {candidate.bad.length ? (
+                <p className="mt-0.5 text-[10px] leading-4 text-[#855009]">
+                  Also review: {candidate.bad.join("; ")}
+                </p>
+              ) : null}
             </>
           )}
         </div>
         {!rejected ? (
           <div className="w-24 shrink-0 text-right">
+            {!service ? (
+              <p className="text-[10px] leading-4 text-[#6b5d50]">
+                Received: {amount(candidate.quantity)}
+              </p>
+            ) : null}
             <p className="text-[10px] leading-4 text-[#6b5d50]">
               <span
                 title={
@@ -196,12 +190,32 @@ function CandidateCard({
           </div>
         ) : null}
       </div>
+      {!rejected ? (
+        <details className="mt-0.5 text-[10px] text-[#6b5d50]">
+          <summary className="cursor-pointer leading-4 font-medium">
+            Matching details
+          </summary>
+          <div className="mt-1 space-y-0.5 border-t border-[#e0d8cc] pt-1 leading-4">
+            <CandidateEvidence
+              invoice={invoice}
+              candidate={candidate}
+              compact
+            />
+            {candidate.note ? <p>{candidate.note}</p> : null}
+            <p>
+              Search ranking score: {candidate.score}. This orders the returned
+              candidates; it is not a percentage of checks passed.
+            </p>
+          </div>
+        </details>
+      ) : null}
     </li>
   );
 }
 
 export function ReceiptCandidatesPanel({
   caseId,
+  invoice,
   line,
   title,
   unit,
@@ -211,6 +225,7 @@ export function ReceiptCandidatesPanel({
   onResetAllocation,
 }: {
   caseId: string;
+  invoice: MatchInvoice;
   line: LineResult;
   title: string;
   unit: string;
@@ -266,6 +281,7 @@ export function ReceiptCandidatesPanel({
         <CandidateCard
           key={candidate.key}
           candidate={candidate}
+          invoice={invoice}
           service={service}
           unit={unit}
           value={
@@ -372,7 +388,7 @@ export function ReceiptCandidatesPanel({
               className={`mt-1.5 text-[10px] leading-4 ${hasErrors || !matched || overPo ? "text-[#855009]" : "text-[#24583e]"}`}
             >
               {locked
-                ? "Read-only · quantities saved before posting."
+                ? "Read-only · balances and quantities from the saved comparison, not current SAP balances."
                 : hasErrors
                   ? "Correct the highlighted quantities before applying."
                   : overPo

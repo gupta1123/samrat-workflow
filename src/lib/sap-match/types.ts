@@ -52,6 +52,12 @@ export type MatchInvoice = {
   invoiceNumber: string;
   /** The primary scanned invoice, when recorded in the saved packet. */
   source?: { fileName: string | null; pageLabel: string | null };
+  referenceSources?: {
+    po: Array<{ value: string; source: string }>;
+    eWayBill: string | null;
+    lorryReceipt: string | null;
+    vehicles: Array<{ value: string; source: string }>;
+  };
   /** YYYY-MM-DD */
   invoiceDate: string | null;
   vendorName: string | null;
@@ -132,22 +138,48 @@ export type SapItemInfo = {
   inventory: boolean | null;
 };
 
+export type SupplierIdentification = {
+  method: "gstin" | "name" | "saved-mapping" | "reviewer";
+  sapGstins: string[];
+  mappingKey?: string;
+};
+
+export type ReceiptSearch = {
+  method: "identifier" | "vendor";
+  field?: string;
+  value?: string;
+  documentsRead: number;
+  limit: number;
+};
+
 export type MatchContext = {
   vendor: { cardCode: string; cardName: string } | null;
+  supplierIdentification?: SupplierIdentification | null;
+  receiptSearch?: ReceiptSearch;
+  checkedAt?: string;
+  itemMappingScopes?: Record<string, "supplier" | "shared">;
   /** More than one SAP vendor has the same authoritative invoice identifier. */
   ambiguousVendors: Array<{ cardCode: string; cardName: string; why: string }>;
   /** How this invoice's vendor is remembered (GSTIN or name), used when linking it to a SAP vendor. */
   vendorKey?: string | null;
   /** How many SAP suppliers were read; 0 usually means a permission problem. */
   suppliersRead?: number;
-  branch: { bplId: number | null; name: string; stateCode: string | null; warehouse: string | null } | null;
+  branch: {
+    bplId: number | null;
+    name: string;
+    stateCode: string | null;
+    warehouse: string | null;
+  } | null;
   /** vendor material code (normalised) → SAP item code */
   itemMap: Record<string, string>;
   items: Record<string, SapItemInfo>;
   receipts: SapReceiptLine[];
   poLines: SapPoLine[];
   /** A non-cancelled SAP A/P invoice already carries this vendor invoice number. */
-  existingInvoice: { docNum: string | number; kind?: "invoice" | "draft" } | null;
+  existingInvoice: {
+    docNum: string | number;
+    kind?: "invoice" | "draft";
+  } | null;
   /** YYYY-MM-DD used as "today" (injected so tests are deterministic). */
   today: string;
   /** Posting dates before this are in a closed SAP period. null = unknown / not checked. */
@@ -169,16 +201,13 @@ export const EMPTY_MATCH_STATE: MatchState = { decisions: {}, allocations: {} };
 // ---- Result ----
 
 export type MatchStatus =
-  | "ready"
-  | "review"
-  | "blocked"
-  | "waiting"
-  | "returned"
-  | "closed";
+  "ready" | "review" | "blocked" | "waiting" | "returned" | "closed";
 
-export type CheckSeverity = "pass" | "ack" | "confirm" | "wait" | "block";
+export type CheckSeverity =
+  "pass" | "unchecked" | "ack" | "confirm" | "wait" | "block";
 
-export type CheckEffect = "resolve" | "return" | "hold" | "stores" | "close" | "use-today";
+export type CheckEffect =
+  "resolve" | "return" | "hold" | "stores" | "close" | "use-today";
 
 export type CheckOption = {
   choice: string;
@@ -206,7 +235,11 @@ export type MatchCheck = {
   /** Suggested SAP items, shown when an item is not yet linked. */
   itemSuggestions?: Array<{ itemCode: string; name: string; why: string }>;
   /** Set on the vendor check when the vendor could not be matched. */
-  vendorSuggestions?: Array<{ cardCode: string; cardName: string; why: string }>;
+  vendorSuggestions?: Array<{
+    cardCode: string;
+    cardName: string;
+    why: string;
+  }>;
   vendorKey?: string | null;
 };
 
@@ -228,6 +261,19 @@ export type CandidateView = {
   rejected: string | null;
   allocated: number;
   note: string | null;
+  references?: {
+    po: string[];
+    invoice: string | null;
+    eWayBill: string | null;
+    lorryReceipt: string | null;
+  };
+  itemCode?: string;
+  supplierCode?: string;
+  purchaseOrder?: {
+    docEntry: number;
+    docNum: number | null;
+    lineNum: number | null;
+  } | null;
 };
 
 export type LineResult = {
@@ -241,6 +287,10 @@ export type LineResult = {
   candidates: CandidateView[];
   allocatedQty: number;
   manual: boolean;
+  itemIdentification?: {
+    method: "saved-mapping" | "exact-code";
+    scope?: "supplier" | "shared";
+  };
   /** Ordered quantity/rate/value of the PO the allocation points at. */
   po: {
     docNum: number | null;
@@ -287,13 +337,20 @@ export type PlannedPayload = {
 };
 
 export type MatchResult = {
+  checkedAt?: string;
+  supplierIdentification?: SupplierIdentification | null;
+  receiptSearch?: ReceiptSearch;
   status: MatchStatus;
   checks: MatchCheck[];
   open: MatchCheck[];
   lines: LineResult[];
   payload: PlannedPayload | null;
   /** Ordered list of the SAP documents the draft will be based on. */
-  baseDocuments: Array<{ kind: "GRPO" | "PO"; docNum: number; docEntry: number }>;
+  baseDocuments: Array<{
+    kind: "GRPO" | "PO";
+    docNum: number;
+    docEntry: number;
+  }>;
   method: "3-way" | "2-way" | "mixed" | "unknown";
   summary: string;
   postingDate: string | null;

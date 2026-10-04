@@ -184,6 +184,7 @@ async function loadVendorMapping(db: Db, keys: string[]) {
   return {
     cardCode: String(row.sap_card_code),
     cardName: String(row.sap_card_name ?? row.sap_card_code),
+    mappingKey: String(row.vendor_key),
   };
 }
 
@@ -211,13 +212,20 @@ export async function saveVendorMapping(
 async function loadItemMappings(db: Db, vendorCardCode: string) {
   const { data, error } = await db
     .from("sap_item_mappings")
-    .select("vendor_item_key, sap_item_code")
+    .select("vendor_item_key, sap_item_code, vendor_card_code")
     .in("vendor_card_code", [vendorCardCode, "*"]);
   dbCheck(error);
   const map: Record<string, string> = {};
-  for (const row of data ?? [])
+  const scopes: NonNullable<MatchContext["itemMappingScopes"]> = {};
+  for (const row of [...(data ?? [])].sort(
+    (a, b) =>
+      Number(a.vendor_card_code !== "*") - Number(b.vendor_card_code !== "*"),
+  )) {
     map[String(row.vendor_item_key)] = String(row.sap_item_code);
-  return map;
+    scopes[String(row.vendor_item_key)] =
+      row.vendor_card_code === "*" ? "shared" : "supplier";
+  }
+  return { map, scopes };
 }
 
 export async function saveItemMapping(
@@ -256,7 +264,9 @@ export async function computeCaseMatch(params: {
   const [documents, mismatchAttributions] = await Promise.all([
     db
       .from("packet_documents")
-      .select("client_document_id, document_type, extracted_fields, source_file_name, source_hint")
+      .select(
+        "client_document_id, document_type, extracted_fields, source_file_name, source_hint",
+      )
       .eq("case_id", caseRow.id)
       .order("created_at"),
     db
@@ -304,20 +314,50 @@ export async function computeCaseMatch(params: {
   let ambiguous: Array<{ cardCode: string; cardName: string; why: string }> =
     [];
   let suppliersRead: number | undefined;
+  let supplierIdentification: MatchContext["supplierIdentification"] = null;
+  let receiptSearch: MatchContext["receiptSearch"];
+  let itemMappingScopes: MatchContext["itemMappingScopes"] = {};
+  const identify = (
+    supplier: { BPAddresses?: Array<{ GSTIN?: string | null }> },
+    method: "reviewer" | "saved-mapping",
+    mappingKey?: string,
+  ) => ({
+    method,
+    sapGstins: [
+      ...new Set(
+        (supplier.BPAddresses ?? [])
+          .map((address) =>
+            String(address.GSTIN ?? "")
+              .trim()
+              .toUpperCase(),
+          )
+          .filter(Boolean),
+      ),
+    ],
+    ...(mappingKey ? { mappingKey } : {}),
+  });
   // A reviewer-confirmed choice is scoped to this case and never inferred.
   const selectedCardCode = state.decisions["vendor-link"]?.choice;
   if (selectedCardCode) {
     const supplier = await client.getSupplier(selectedCardCode);
-    if (supplier)
+    if (supplier) {
       vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
+      supplierIdentification = identify(supplier, "reviewer");
+    }
   }
   // A prior explicit link may be reused only for the same exact GSTIN and
   // vendor material code (or the same exact name when no GSTIN was available).
   const linked = vendor ? null : await loadVendorMapping(db, keys);
   if (linked) {
     const supplier = await client.getSupplier(linked.cardCode);
-    if (supplier)
+    if (supplier) {
       vendor = { cardCode: supplier.CardCode, cardName: supplier.CardName };
+      supplierIdentification = identify(
+        supplier,
+        "saved-mapping",
+        linked.mappingKey,
+      );
+    }
   }
   if (!vendor) {
     const targeted = invoice.vendorName
@@ -325,12 +365,16 @@ export async function computeCaseMatch(params: {
       : [];
     if (targeted.length) {
       suppliersRead = targeted.length;
-      ({ vendor, ambiguous } = resolveVendor(invoice, targeted));
+      ({ vendor, ambiguous } = resolveVendor(invoice, targeted, (evidence) => {
+        supplierIdentification = evidence;
+      }));
     }
     if (!vendor && !ambiguous.length) {
       const suppliers = await client.listSuppliers();
       suppliersRead = suppliers.length;
-      ({ vendor, ambiguous } = resolveVendor(invoice, suppliers));
+      ({ vendor, ambiguous } = resolveVendor(invoice, suppliers, (evidence) => {
+        supplierIdentification = evidence;
+      }));
     }
   }
 
@@ -354,17 +398,31 @@ export async function computeCaseMatch(params: {
         eWayBillField: config.eWayBillField,
         lorryReceiptField: config.lorryReceiptField,
         vehicleField: config.vehicleField,
+        onSearch: (search) => {
+          receiptSearch = { method: "identifier", ...search };
+        },
       }),
       loadItemMappings(db, vendor.cardCode),
     ]);
-    itemMap = loadedItemMap;
+    itemMap = loadedItemMap.map;
+    itemMappingScopes = loadedItemMap.scopes;
     if (targetedReceipts.length) {
       receiptDocuments = targetedReceipts;
+      receiptSearch ??= {
+        method: "identifier",
+        documentsRead: targetedReceipts.length,
+        limit: 100,
+      };
     } else {
       [receiptDocuments, purchaseOrders] = await Promise.all([
         client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
         client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
       ]);
+      receiptSearch = {
+        method: "vendor",
+        documentsRead: receiptDocuments.length,
+        limit: 1000,
+      };
     }
     // A receipt can stay open after its PO is closed, so fetch any PO a receipt points to.
     const known = new Set(purchaseOrders.map((po) => po.DocEntry));
@@ -435,6 +493,10 @@ export async function computeCaseMatch(params: {
 
   const context: MatchContext = {
     vendor,
+    supplierIdentification,
+    receiptSearch,
+    itemMappingScopes,
+    checkedAt: new Date().toISOString(),
     ambiguousVendors: ambiguous,
     vendorKey: keys[0] ?? null,
     suppliersRead,

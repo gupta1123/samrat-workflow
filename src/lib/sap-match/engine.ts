@@ -45,7 +45,8 @@ export function itemMappingKey(line: {
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
-const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+const sum = (values: number[]) =>
+  values.reduce((total, value) => total + value, 0);
 const inr = (n: number) =>
   `₹${new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(Math.abs(n))}`;
 const qty = (n: number) => (Math.round(n * 1000) / 1000).toString();
@@ -86,7 +87,10 @@ class Checks {
     const usable =
       saved && option && (!option.needsReason || (saved.reason ?? "").trim());
     if (!usable || !option) {
-      this.all.push({ ...draft, open: draft.sev !== "pass" });
+      this.all.push({
+        ...draft,
+        open: draft.sev !== "pass" && draft.sev !== "unchecked",
+      });
       return;
     }
     const decision = { ...saved, effect: option.effect };
@@ -171,7 +175,10 @@ function scoreReceipt(
       bad.push(`different e-way bill (${receipt.eWayBill})`);
     }
   }
-  if (receipt.lorryReceipt) {
+  if (
+    receipt.lorryReceipt &&
+    !/^0+$/.test(normalizeRef(receipt.lorryReceipt))
+  ) {
     if (exact(receipt.lorryReceipt, invoice.lorryReceipt)) {
       score += 35;
       truck = true;
@@ -227,6 +234,22 @@ function candidateView(
     lineNum: source.lineNum,
     date: source.date,
     poRef: source.poRefs[0] ?? null,
+    references: {
+      po: source.poRefs,
+      invoice: "vendorRef" in source ? source.vendorRef : null,
+      eWayBill: "eWayBill" in source ? source.eWayBill : null,
+      lorryReceipt: "lorryReceipt" in source ? source.lorryReceipt : null,
+    },
+    itemCode: source.itemCode,
+    supplierCode: source.cardCode,
+    purchaseOrder:
+      "poDocEntry" in source && source.poDocEntry != null
+        ? {
+            docEntry: source.poDocEntry,
+            docNum: source.poDocNum,
+            lineNum: source.poLineNum,
+          }
+        : null,
     vehicle: "vehicle" in source ? source.vehicle : null,
     quantity: source.quantity,
     open,
@@ -250,27 +273,38 @@ function suggestItems(
     const b = normalizeRef(right);
     return Boolean(a && b && a === b);
   };
-  const fromReceipt = context.receipts
-    .flatMap((receipt) => {
-      const reasons: string[] = [];
-      if (exact(receipt.vendorRef, invoice.invoiceNumber)) reasons.push(`receipt ${receipt.docNum} has the same invoice number`);
-      if (exact(receipt.eWayBill, invoice.eWayBill)) reasons.push(`receipt ${receipt.docNum} has the same e-way bill`);
-      if (exact(receipt.lorryReceipt, invoice.lorryReceipt)) reasons.push(`receipt ${receipt.docNum} has the same lorry receipt`);
-      if (!reasons.length) return [];
-      if (line.quantity !== null && Math.abs(receipt.openQty - line.quantity) < EPS) {
-        reasons.push("quantity also matches");
-      }
-      const info = context.items[receipt.itemCode];
-      return [{
+  const fromReceipt = context.receipts.flatMap((receipt) => {
+    const reasons: string[] = [];
+    if (exact(receipt.vendorRef, invoice.invoiceNumber))
+      reasons.push(`receipt ${receipt.docNum} has the same invoice number`);
+    if (exact(receipt.eWayBill, invoice.eWayBill))
+      reasons.push(`receipt ${receipt.docNum} has the same e-way bill`);
+    if (exact(receipt.lorryReceipt, invoice.lorryReceipt))
+      reasons.push(`receipt ${receipt.docNum} has the same lorry receipt`);
+    if (!reasons.length) return [];
+    if (
+      line.quantity !== null &&
+      Math.abs(receipt.openQty - line.quantity) < EPS
+    ) {
+      reasons.push("quantity also matches");
+    }
+    const info = context.items[receipt.itemCode];
+    return [
+      {
         itemCode: receipt.itemCode,
         name: info?.name ?? receipt.itemCode,
         why: reasons.join("; "),
-      }];
-    });
-  const anchored = [...new Map(fromReceipt.map((entry) => [entry.itemCode, entry])).values()];
+      },
+    ];
+  });
+  const anchored = [
+    ...new Map(fromReceipt.map((entry) => [entry.itemCode, entry])).values(),
+  ];
   if (anchored.length) return anchored.slice(0, 3);
 
-  const wanted = tokens(`${line.description ?? ""} ${line.vendorItemCode ?? ""}`);
+  const wanted = tokens(
+    `${line.description ?? ""} ${line.vendorItemCode ?? ""}`,
+  );
   if (!wanted.size) return [];
   return Object.entries(context.items)
     .map(([itemCode, info]) => {
@@ -341,7 +375,12 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
       ],
     });
   } else {
-    checks.push({ id: "dup", lineIndex: null, sev: "pass", title: "Not billed before in SAP" });
+    checks.push({
+      id: "dup",
+      lineIndex: null,
+      sev: "pass",
+      title: "Not billed before in SAP",
+    });
   }
 
   if (!context.vendor) {
@@ -375,7 +414,7 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
   checks.push({
     id: "branch",
     lineIndex: null,
-    sev: "pass",
+    sev: context.branch ? "pass" : "unchecked",
     title: context.branch
       ? `Branch: ${context.branch.name}`
       : "Branch not checked (no branch is saved for this ship-to state)",
@@ -383,7 +422,8 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
 
   // GST type against vendor and ship-to state.
   const vendorState = stateCode(invoice.vendorGstin);
-  const shipState = stateCode(invoice.shipToGstin) ?? context.branch?.stateCode ?? null;
+  const shipState =
+    stateCode(invoice.shipToGstin) ?? context.branch?.stateCode ?? null;
   if (vendorState && shipState && invoice.taxCharged !== "unknown") {
     const expected = vendorState === shipState ? "split" : "igst";
     if (expected !== invoice.taxCharged) {
@@ -394,16 +434,27 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
         ask: "Send it back for a corrected invoice?",
         title: `Wrong GST: ${invoice.taxCharged === "igst" ? "IGST" : "CGST + SGST"} charged, ${expected === "igst" ? "IGST" : "CGST + SGST"} expected`,
         help: `Supplied from state ${vendorState} to state ${shipState}. ${expected === "split" ? "Same state, so CGST + SGST applies." : "Different states, so IGST applies."} Tax credit cannot be claimed on this invoice as it is.`,
-        options: [{ ...RETURN_OPTION, recommended: true, lines: ["Ask for a credit note and a corrected invoice"] }],
+        options: [
+          {
+            ...RETURN_OPTION,
+            recommended: true,
+            lines: ["Ask for a credit note and a corrected invoice"],
+          },
+        ],
       });
     } else {
-      checks.push({ id: "tax", lineIndex: null, sev: "pass", title: "GST type is correct" });
+      checks.push({
+        id: "tax",
+        lineIndex: null,
+        sev: "pass",
+        title: "GST type is correct",
+      });
     }
   } else {
     checks.push({
       id: "tax",
       lineIndex: null,
-      sev: "pass",
+      sev: "unchecked",
       title: "GST type could not be verified from the GSTINs",
     });
   }
@@ -414,7 +465,9 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     Object.entries(state.decisions).some(
       ([id, decision]) => id === "period" && decision.choice === "use-today",
     );
-  const docDate = usesToday ? context.today : (invoice.invoiceDate ?? context.today);
+  const docDate = usesToday
+    ? context.today
+    : (invoice.invoiceDate ?? context.today);
   if (context.closedBefore && docDate < context.closedBefore) {
     checks.push({
       id: "period",
@@ -433,8 +486,22 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
         },
       ],
     });
+  } else if (context.closedBefore) {
+    checks.push({
+      id: "period",
+      lineIndex: null,
+      sev: "pass",
+      title: "Booking month is open",
+    });
   } else {
-    checks.push({ id: "period", lineIndex: null, sev: "pass", title: "Booking month is open" });
+    checks.push({
+      id: "period",
+      lineIndex: null,
+      sev: "unchecked",
+      title:
+        "Posting Period not checked (SAP period information is unavailable)",
+      help: "SAP validates the posting date when the draft is created or posted.",
+    });
   }
 
   // ---- Lines ----
@@ -447,7 +514,9 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     const directCode = ln.vendorItemCode ? normalizeRef(ln.vendorItemCode) : "";
     const itemCode =
       mapped ??
-      Object.keys(context.items).find((code) => normalizeRef(code) === directCode) ??
+      Object.keys(context.items).find(
+        (code) => normalizeRef(code) === directCode,
+      ) ??
       null;
     const info = itemCode ? context.items[itemCode] : null;
     const result: LineResult = {
@@ -461,6 +530,20 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
       candidates: [],
       allocatedQty: 0,
       manual: false,
+      ...(itemCode
+        ? {
+            itemIdentification: {
+              method: mapped
+                ? ("saved-mapping" as const)
+                : ("exact-code" as const),
+              ...(mapped &&
+              mappingKey &&
+              context.itemMappingScopes?.[mappingKey]
+                ? { scope: context.itemMappingScopes[mappingKey] }
+                : {}),
+            },
+          }
+        : {}),
       po: null,
     };
     lineResults.push(result);
@@ -487,7 +570,16 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     const isService = info?.inventory === false;
     result.kind = isService ? "service" : "material";
     if (isService) {
-      evaluateServiceLine({ ln, itemCode, result, invoice, context, state, checks, planned });
+      evaluateServiceLine({
+        ln,
+        itemCode,
+        result,
+        invoice,
+        context,
+        state,
+        checks,
+        planned,
+      });
     } else {
       bookedQtyTotal += evaluateMaterialLine({
         ln,
@@ -529,7 +621,9 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
         ],
       });
     } else if (rules.freightPolicy === "expense") {
-      freightExpense = r2(totalQty > 0 ? (freight * bookedQtyTotal) / totalQty : freight);
+      freightExpense = r2(
+        totalQty > 0 ? (freight * bookedQtyTotal) / totalQty : freight,
+      );
       checks.push({
         id: "freight",
         lineIndex: null,
@@ -563,7 +657,8 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
   // The total is only comparable once every invoice line has something booked against it.
   const everyLinePlanned =
     invoice.lines.length > 0 &&
-    new Set(planned.map((line) => line.invoiceLineIndex)).size === invoice.lines.length;
+    new Set(planned.map((line) => line.invoiceLineIndex)).size ===
+      invoice.lines.length;
   // A quantity shortfall already has its own check; do not repeat it as a total difference.
   const shortReceipt = lineResults.some(
     (line) =>
@@ -585,12 +680,30 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
       title: `The SAP invoice would be ${inr(Math.abs(difference))} ${difference > 0 ? "less" : "more"} than the vendor's bill (before tax)`,
       help: "This is more than rounding. Check the invoice lines, or confirm with a reason.",
       options: [
-        { choice: "confirm", title: "Continue anyway", lines: ["Record the reason in the audit trail"], effect: "resolve", needsReason: true },
+        {
+          choice: "confirm",
+          title: "Continue anyway",
+          lines: ["Record the reason in the audit trail"],
+          effect: "resolve",
+          needsReason: true,
+        },
         RETURN_OPTION,
       ],
     });
+  } else if (everyLinePlanned && !shortReceipt && difference !== null) {
+    checks.push({
+      id: "total",
+      lineIndex: null,
+      sev: "pass",
+      title: "SAP invoice total agrees with the vendor's bill",
+    });
   } else if (everyLinePlanned && !shortReceipt) {
-    checks.push({ id: "total", lineIndex: null, sev: "pass", title: "SAP invoice total agrees with the vendor's bill" });
+    checks.push({
+      id: "total",
+      lineIndex: null,
+      sev: "unchecked",
+      title: "Invoice total not checked (scanned taxable total is unavailable)",
+    });
   }
 
   // ---- Status ----
@@ -599,7 +712,9 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     .filter((check) => check.open)
     .sort((a, b) => severityOrder(a.sev) - severityOrder(b.sev));
   let status: MatchStatus;
-  const decisions = all.flatMap((check) => (check.decision ? [check.decision.effect] : []));
+  const decisions = all.flatMap((check) =>
+    check.decision ? [check.decision.effect] : [],
+  );
   if (decisions.includes("close")) status = "closed";
   else if (decisions.includes("return")) status = "returned";
   else if (open.some((check) => check.sev === "block")) status = "blocked";
@@ -648,6 +763,9 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
       : null;
 
   return {
+    checkedAt: context.checkedAt,
+    supplierIdentification: context.supplierIdentification,
+    receiptSearch: context.receiptSearch,
     status,
     checks: all,
     open,
@@ -661,13 +779,13 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
 }
 
 function severityOrder(sev: MatchCheck["sev"]) {
-  return { block: 0, wait: 1, confirm: 2, ack: 3, pass: 4 }[sev];
+  return { block: 0, wait: 1, confirm: 2, ack: 3, pass: 4, unchecked: 5 }[sev];
 }
 
 function summarize(status: MatchStatus, open: MatchCheck[]) {
   switch (status) {
     case "ready":
-      return "Everything matches";
+      return "Ready to create A/P Invoice Draft";
     case "returned":
       return "Sent back to the vendor for correction";
     case "closed":
@@ -677,11 +795,16 @@ function summarize(status: MatchStatus, open: MatchCheck[]) {
   }
 }
 
-function baseRateOf(line: PlannedDocumentLine, context: MatchContext): number | null {
+function baseRateOf(
+  line: PlannedDocumentLine,
+  context: MatchContext,
+): number | null {
   if (line.baseType === 20) {
     return (
       context.receipts.find(
-        (receipt) => receipt.docEntry === line.baseEntry && receipt.lineNum === line.baseLine,
+        (receipt) =>
+          receipt.docEntry === line.baseEntry &&
+          receipt.lineNum === line.baseLine,
       )?.price ?? null
     );
   }
@@ -700,7 +823,8 @@ function poForReceipt(receipt: SapReceiptLine, context: MatchContext) {
   if (receipt.poDocEntry === null) return null;
   return (
     context.poLines.find(
-      (po) => po.docEntry === receipt.poDocEntry && po.lineNum === receipt.poLineNum,
+      (po) =>
+        po.docEntry === receipt.poDocEntry && po.lineNum === receipt.poLineNum,
     ) ?? null
   );
 }
@@ -724,15 +848,34 @@ function evaluateMaterialLine(args: {
   planned: PlannedDocumentLine[];
   totalQty: number;
 }): number {
-  const { ln, itemCode, result, invoice, context, rules, state, checks, planned, totalQty } = args;
+  const {
+    ln,
+    itemCode,
+    result,
+    invoice,
+    context,
+    rules,
+    state,
+    checks,
+    planned,
+    totalQty,
+  } = args;
   const i = ln.index;
   const vendor = context.vendor!;
   const billed = ln.quantity ?? 0;
 
   const candidates = context.receipts
-    .filter((receipt) => receipt.cardCode === vendor.cardCode && receipt.itemCode === itemCode)
+    .filter(
+      (receipt) =>
+        receipt.cardCode === vendor.cardCode && receipt.itemCode === itemCode,
+    )
     .map((receipt) => {
-      const view = candidateView(receiptKey(receipt), "GRPO", receipt, r3(receipt.openQty));
+      const view = candidateView(
+        receiptKey(receipt),
+        "GRPO",
+        receipt,
+        r3(receipt.openQty),
+      );
       if (view.open <= EPS) {
         view.rejected = `Already billed${receipt.invoicedBy ? ` (${receipt.invoicedBy})` : ""}`;
         return { view, receipt, truck: false };
@@ -760,7 +903,9 @@ function evaluateMaterialLine(args: {
     for (const candidate of candidates) {
       const chosen = manual[candidate.view.key];
       if (!candidate.view.rejected && chosen != null) {
-        candidate.view.allocated = r3(Math.min(Math.max(0, chosen), candidate.view.open));
+        candidate.view.allocated = r3(
+          Math.min(Math.max(0, chosen), candidate.view.open),
+        );
       }
     }
   } else {
@@ -782,8 +927,12 @@ function evaluateMaterialLine(args: {
     }
   }
   result.candidates = candidates.map((candidate) => candidate.view);
-  const selected = candidates.filter((candidate) => candidate.view.allocated > 0);
-  result.allocatedQty = r3(sum(selected.map((candidate) => candidate.view.allocated)));
+  const selected = candidates.filter(
+    (candidate) => candidate.view.allocated > 0,
+  );
+  result.allocatedQty = r3(
+    sum(selected.map((candidate) => candidate.view.allocated)),
+  );
 
   const vendorName = invoice.vendorName ?? "The vendor";
   const branchName = context.branch?.name ?? "this branch";
@@ -795,29 +944,47 @@ function evaluateMaterialLine(args: {
         po.itemCode === itemCode &&
         po.openQty > EPS &&
         (!invoice.poReferences.length ||
-          po.poRefs.some((ref) => invoice.poReferences.map(normalizeRef).includes(normalizeRef(ref)))),
+          po.poRefs.some((ref) =>
+            invoice.poReferences.map(normalizeRef).includes(normalizeRef(ref)),
+          )),
     );
     if (openPo && !manual) {
-      result.po = { docNum: openPo.docNum, ref: openPo.poRefs[0] ?? null, qty: openPo.quantity, rate: openPo.price, rateSource: "po" };
+      result.po = {
+        docNum: openPo.docNum,
+        ref: openPo.poRefs[0] ?? null,
+        qty: openPo.quantity,
+        rate: openPo.price,
+        rateSource: "po",
+      };
       checks.push({
         id: `rcpt-${i}`,
         lineIndex: i,
         sev: "wait",
-        title: `The truck${invoice.vehicles.length ? ` ${invoice.vehicles.join(", ")}` : ""} has not been received yet`,
-        help: "Stores must record the receipt in SAP before a stock invoice can be paid. Otherwise SAP would add stock nobody checked.",
-        waitNote: `Nothing to do now. Re-check when ${branchName} stores records it.`,
+        title: "No matching open GRPO found for this invoice",
+        help: `PO ${openPo.docNum} is open, but no GRPO was selected. A physical delivery may have arrived without a matching open GRPO being available in SAP.`,
+        waitNote: `Ask ${branchName} stores to check the GRPO and its open balance, then re-check.`,
       });
     } else {
       checks.push({
         id: `rcpt-${i}`,
         lineIndex: i,
         sev: "block",
-        title: manual ? "No receipt selected" : "No receipt found for this invoice",
+        title: manual
+          ? "No receipt selected"
+          : "No receipt found for this invoice",
         help: manual
           ? "You removed every receipt. Pick one below, or go back to the automatic match."
           : `Stores has no open receipt for ${result.itemName ?? itemCode} that this invoice could be paid against.`,
         options: manual
-          ? [{ choice: "reset", title: "Go back to the automatic match", lines: ["Use the receipt we suggested"], effect: "resolve", recommended: true }]
+          ? [
+              {
+                choice: "reset",
+                title: "Go back to the automatic match",
+                lines: ["Use the receipt we suggested"],
+                effect: "resolve",
+                recommended: true,
+              },
+            ]
           : [RETURN_OPTION],
       });
     }
@@ -829,7 +996,10 @@ function evaluateMaterialLine(args: {
     id: `rcpt-${i}`,
     lineIndex: i,
     sev: "pass",
-    title: selected.length > 1 ? `Split across ${selected.length} receipts (${nos})` : `Matched to receipt ${nos}`,
+    title:
+      selected.length > 1
+        ? `Split across ${selected.length} receipts (${nos})`
+        : `Matched to receipt ${nos}`,
   });
 
   // The receipt was matched by PO and quantity only, without any truck or invoice reference.
@@ -843,7 +1013,13 @@ function evaluateMaterialLine(args: {
       title: "Matched on PO and quantity only",
       help: "The receipt has no truck number or invoice number that confirms it belongs to this invoice. Confirm it is the right one.",
       options: [
-        { choice: "ok", title: "Yes, this receipt is right", lines: [`Receipt ${nos}`], effect: "resolve", recommended: true },
+        {
+          choice: "ok",
+          title: "Yes, this receipt is right",
+          lines: [`Receipt ${nos}`],
+          effect: "resolve",
+          recommended: true,
+        },
         RETURN_OPTION,
       ],
     });
@@ -870,10 +1046,23 @@ function evaluateMaterialLine(args: {
       sev: "block",
       title: "More selected than billed",
       help: `You selected ${qty(result.allocatedQty)} but the invoice is for ${qty(billed)}.`,
-      options: [{ choice: "reset", title: "Go back to the automatic match", lines: ["Selects exactly what was billed"], effect: "resolve", recommended: true }],
+      options: [
+        {
+          choice: "reset",
+          title: "Go back to the automatic match",
+          lines: ["Selects exactly what was billed"],
+          effect: "resolve",
+          recommended: true,
+        },
+      ],
     });
   } else if (Math.abs(diff) <= EPS) {
-    checks.push({ id: `qty-${i}`, lineIndex: i, sev: "pass", title: "Quantity billed = quantity received" });
+    checks.push({
+      id: `qty-${i}`,
+      lineIndex: i,
+      sev: "pass",
+      title: "Quantity billed = quantity received",
+    });
   } else {
     const pct = (diff / result.allocatedQty) * 100;
     const overPo = poQty !== null && billed > poQty + EPS;
@@ -883,10 +1072,19 @@ function evaluateMaterialLine(args: {
         lineIndex: i,
         sev: "ack",
         ask: `How should the ${qty(diff)} extra be settled?`,
-        title: `${vendorName} billed ${qty(diff)} more than was received`,
-        help: `${pct.toFixed(2)}% is inside your ${rules.qtyTolerancePct}% limit, but SAP can only be invoiced for what stores received. Ask stores to re-check the weight, or return the invoice.`,
+        title: `${vendorName} billed ${qty(diff)} more than the available GRPO quantity`,
+        help: `${pct.toFixed(2)}% is inside your ${rules.qtyTolerancePct}% limit, but the invoice exceeds the selected GRPO open balance. Check earlier billing and the receipt quantity with stores, or return the invoice.`,
         options: [
-          { choice: "stores", title: "Stores re-weighs", lines: [`If ${qty(billed)} really arrived, stores corrects the receipt`, "The invoice waits until they do"], effect: "stores", recommended: true },
+          {
+            choice: "stores",
+            title: "Stores re-weighs",
+            lines: [
+              `If ${qty(billed)} really arrived, stores corrects the receipt`,
+              "The invoice waits until they do",
+            ],
+            effect: "stores",
+            recommended: true,
+          },
           RETURN_OPTION,
         ],
       });
@@ -896,11 +1094,27 @@ function evaluateMaterialLine(args: {
         lineIndex: i,
         sev: "block",
         ask: "What should happen to this invoice?",
-        title: `${vendorName} billed ${qty(diff)} that never arrived`,
-        help: `Only ${qty(result.allocatedQty)} was received, ${pct.toFixed(0)}% less than billed and above your ${rules.qtyTolerancePct}% limit.${overPo ? ` The PO is also only for ${qty(poQty!)}.` : ""}`,
+        title: `${vendorName} billed ${qty(diff)} more than the available GRPO quantity`,
+        help: `Only ${qty(result.allocatedQty)} is available for invoicing on the selected GRPOs, ${pct.toFixed(0)}% less than billed and above your ${rules.qtyTolerancePct}% limit. Check earlier billing and any other GRPOs.${overPo ? ` The PO is also only for ${qty(poQty!)}.` : ""}`,
         options: [
-          { ...RETURN_OPTION, recommended: true, lines: [`Ask for a corrected invoice for ${qty(result.allocatedQty)}`] },
-          { choice: "hold", title: "Hold for more receipts", lines: [`Wait until the other ${qty(diff)} arrives`, overPo ? "The PO must be increased first" : "The invoice stays open meanwhile"], effect: "hold" },
+          {
+            ...RETURN_OPTION,
+            recommended: true,
+            lines: [
+              `Ask for a corrected invoice for ${qty(result.allocatedQty)}`,
+            ],
+          },
+          {
+            choice: "hold",
+            title: "Hold for more receipts",
+            lines: [
+              `Wait until the other ${qty(diff)} arrives`,
+              overPo
+                ? "The PO must be increased first"
+                : "The invoice stays open meanwhile",
+            ],
+            effect: "hold",
+          },
         ],
       });
     }
@@ -919,7 +1133,16 @@ function evaluateMaterialLine(args: {
           title: `Billed ${qty(candidate.view.allocated)} of the ${qty(candidate.view.open)} received`,
           help: `${candidate.view.note ? `${candidate.view.note}. ` : ""}The other ${qty(left)} stays open on receipt ${candidate.view.docNum} for the vendor's next invoice.`,
           options: [
-            { choice: "ok", title: "Yes, a part bill is expected", lines: [`Bill ${qty(candidate.view.allocated)} now`, `${qty(left)} waits for the next invoice`], effect: "resolve", recommended: true },
+            {
+              choice: "ok",
+              title: "Yes, a part bill is expected",
+              lines: [
+                `Bill ${qty(candidate.view.allocated)} now`,
+                `${qty(left)} waits for the next invoice`,
+              ],
+              effect: "resolve",
+              recommended: true,
+            },
           ],
         });
       }
@@ -935,7 +1158,12 @@ function evaluateMaterialLine(args: {
     const valueDifference = difference * result.allocatedQty;
     const direction = pct < 0 ? "below" : "above";
     if (Math.abs(pct) < 0.005) {
-      checks.push({ id: `rate-${i}`, lineIndex: i, sev: "pass", title: "Rate matches the PO" });
+      checks.push({
+        id: `rate-${i}`,
+        lineIndex: i,
+        sev: "pass",
+        title: "Rate matches the PO",
+      });
     } else if (absolutePct <= rules.rateTolerancePct) {
       checks.push({
         id: `rate-${i}`,
@@ -944,7 +1172,18 @@ function evaluateMaterialLine(args: {
         ask: "Accept the different rate?",
         title: `Rate is ${inr(difference)} ${direction} the PO`,
         help: `${absolutePct.toFixed(2)}% ${direction}, inside your ${rules.rateTolerancePct}% limit. Invoice value differs by ${inr(valueDifference)} before tax.`,
-        options: [{ choice: "ok", title: "Accept the vendor's rate", lines: [`Book ${inr(rate)}`, `Difference ${inr(valueDifference)} before tax`], effect: "resolve", recommended: true }],
+        options: [
+          {
+            choice: "ok",
+            title: "Accept the vendor's rate",
+            lines: [
+              `Book ${inr(rate)}`,
+              `Difference ${inr(valueDifference)} before tax`,
+            ],
+            effect: "resolve",
+            recommended: true,
+          },
+        ],
       });
     } else {
       checks.push({
@@ -955,13 +1194,32 @@ function evaluateMaterialLine(args: {
         title: `Rate is ${inr(difference)} ${direction} the PO`,
         help: `${vendorName} charged ${inr(rate)}; the PO says ${inr(poRate)} (${absolutePct.toFixed(2)}% ${direction}), outside your ${rules.rateTolerancePct}% limit. Confirm with a reason, or return the invoice.`,
         options: [
-          { choice: "confirm", title: "Use the invoice rate", lines: [`Book ${inr(rate)}`, `Difference ${inr(valueDifference)} before tax`, "The reason is saved in the audit trail"], effect: "resolve", needsReason: true },
-          { ...RETURN_OPTION, lines: ["Ask for a corrected invoice at the PO rate"] },
+          {
+            choice: "confirm",
+            title: "Use the invoice rate",
+            lines: [
+              `Book ${inr(rate)}`,
+              `Difference ${inr(valueDifference)} before tax`,
+              "The reason is saved in the audit trail",
+            ],
+            effect: "resolve",
+            needsReason: true,
+          },
+          {
+            ...RETURN_OPTION,
+            lines: ["Ask for a corrected invoice at the PO rate"],
+          },
         ],
       });
     }
   } else {
-    checks.push({ id: `rate-${i}`, lineIndex: i, sev: "pass", title: "No PO rate to compare against" });
+    checks.push({
+      id: `rate-${i}`,
+      lineIndex: i,
+      sev: "unchecked",
+      title:
+        "Unit Price not checked (invoice or SAP base price is unavailable)",
+    });
   }
 
   // Planned SAP lines: one per receipt used.
@@ -970,11 +1228,14 @@ function evaluateMaterialLine(args: {
     const unitRate = effectiveRate(ln);
     const base = candidate.receipt.price;
     const freightPerUnit =
-      rules.freightPolicy === "item" && invoice.freightAmount > 0 && totalQty > 0
+      rules.freightPolicy === "item" &&
+      invoice.freightAmount > 0 &&
+      totalQty > 0
         ? invoice.freightAmount / totalQty
         : 0;
     const wanted = unitRate !== null ? r4(unitRate + freightPerUnit) : null;
-    const differs = wanted !== null && (base === null || Math.abs(wanted - base) > 0.005);
+    const differs =
+      wanted !== null && (base === null || Math.abs(wanted - base) > 0.005);
     planned.push({
       invoiceLineIndex: i,
       itemCode,
@@ -1006,7 +1267,8 @@ function evaluateServiceLine(args: {
   checks: Checks;
   planned: PlannedDocumentLine[];
 }) {
-  const { ln, itemCode, result, invoice, context, state, checks, planned } = args;
+  const { ln, itemCode, result, invoice, context, state, checks, planned } =
+    args;
   const i = ln.index;
   const vendor = context.vendor!;
   const amount = ln.amount ?? 0;
@@ -1017,7 +1279,11 @@ function evaluateServiceLine(args: {
     .map((po) => {
       const open = r2(po.openAmount ?? 0);
       const view = candidateView(receiptKey(po), "PO", po, open);
-      if (context.branch?.bplId != null && po.branchId != null && po.branchId !== context.branch.bplId) {
+      if (
+        context.branch?.bplId != null &&
+        po.branchId != null &&
+        po.branchId !== context.branch.bplId
+      ) {
         view.rejected = "Different branch";
         return { view, po };
       }
@@ -1058,7 +1324,12 @@ function evaluateServiceLine(args: {
   result.candidates = candidates.map((candidate) => candidate.view);
   result.allocatedQty = pick ? amount : 0;
 
-  checks.push({ id: `kind-${i}`, lineIndex: i, sev: "pass", title: "Service: nothing to receive, so no receipt is needed" });
+  checks.push({
+    id: `kind-${i}`,
+    lineIndex: i,
+    sev: "pass",
+    title: "Service: nothing to receive, so no receipt is needed",
+  });
   if (!pick) {
     checks.push({
       id: `rcpt-${i}`,
@@ -1070,11 +1341,27 @@ function evaluateServiceLine(args: {
     });
     return;
   }
-  result.po = { docNum: pick.po.docNum, ref: pick.po.poRefs[0] ?? null, qty: pick.po.quantity, rate: pick.po.price, rateSource: "po" };
-  checks.push({ id: `rcpt-${i}`, lineIndex: i, sev: "pass", title: `Matched to PO ${pick.po.docNum}` });
+  result.po = {
+    docNum: pick.po.docNum,
+    ref: pick.po.poRefs[0] ?? null,
+    qty: pick.po.quantity,
+    rate: pick.po.price,
+    rateSource: "po",
+  };
+  checks.push({
+    id: `rcpt-${i}`,
+    lineIndex: i,
+    sev: "pass",
+    title: `Matched to PO ${pick.po.docNum}`,
+  });
   const open = pick.view.open;
   if (amount <= open + 0.5) {
-    checks.push({ id: `amt-${i}`, lineIndex: i, sev: "pass", title: `Within the PO. ${inr(open - amount)} left for future bills` });
+    checks.push({
+      id: `amt-${i}`,
+      lineIndex: i,
+      sev: "pass",
+      title: `Within the PO. ${inr(open - amount)} left for future bills`,
+    });
   } else {
     const over = amount - open;
     checks.push({
@@ -1085,8 +1372,24 @@ function evaluateServiceLine(args: {
       title: `Bill is ${inr(over)} more than the PO allows`,
       help: `The PO has ${inr(open)} left; the vendor billed ${inr(amount)} (${((over / open) * 100).toFixed(0)}% more). Confirm with a reason, or return the invoice.`,
       options: [
-        { choice: "confirm", title: "Pay the full amount", lines: [`Pay ${inr(amount)} plus tax`, "The reason is saved in the audit trail"], effect: "resolve", needsReason: true },
-        { ...RETURN_OPTION, recommended: true, lines: [`Ask them to bill ${inr(open)} now`, "Extra only after a PO increase"] },
+        {
+          choice: "confirm",
+          title: "Pay the full amount",
+          lines: [
+            `Pay ${inr(amount)} plus tax`,
+            "The reason is saved in the audit trail",
+          ],
+          effect: "resolve",
+          needsReason: true,
+        },
+        {
+          ...RETURN_OPTION,
+          recommended: true,
+          lines: [
+            `Ask them to bill ${inr(open)} now`,
+            "Extra only after a PO increase",
+          ],
+        },
       ],
     });
   }
@@ -1112,7 +1415,9 @@ export function findOption(
 ): { check: MatchCheck; option: CheckOption } | null {
   const check = result.checks.find((candidate) => candidate.id === checkId);
   if (!check) return null;
-  const option = check.options?.find((candidate) => candidate.choice === choice);
+  const option = check.options?.find(
+    (candidate) => candidate.choice === choice,
+  );
   return option ? { check, option } : null;
 }
 

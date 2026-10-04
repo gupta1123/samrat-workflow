@@ -18,6 +18,7 @@ import { buildMatchInvoice, vendorKeys } from "@/server/sap/match-mapping";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 import { findPostedApInvoice } from "@/lib/sap-match-progress";
 import { readPostedSapDetails } from "@/server/sap/posted-details";
+import { postedSapDetails } from "@/lib/sap-posted-details";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -38,7 +39,9 @@ async function postings(
 ) {
   const result = await db
     .from("sap_postings")
-    .select("kind, status, sap_env, sap_docnum, error, created_at, updated_at, payload, response")
+    .select(
+      "kind, status, sap_env, sap_docnum, error, created_at, updated_at, payload, response",
+    )
     .eq("case_id", uuid(caseId))
     .eq("owner_user_id", user)
     .order("created_at");
@@ -57,7 +60,8 @@ export async function GET(request: Request, context: Context) {
       caseStatus: row.status,
       postable: row.status === "accepted",
       postings: savedPostings.map(({ payload, response, ...posting }) => {
-        void payload; void response;
+        void payload;
+        void response;
         return posting;
       }),
     };
@@ -71,14 +75,40 @@ export async function GET(request: Request, context: Context) {
         postedDetails: await readPostedSapDetails(db, user, id, sapEnv, posted),
       };
     }
+    const draft = savedPostings.find(
+      (posting) =>
+        posting.kind === "AP" &&
+        posting.sap_env === sapEnv &&
+        posting.status === "prepared" &&
+        posting.sap_docnum,
+    );
+    if (draft) {
+      // The draft's immutable creation snapshot is the authority for its bases
+      // and quantities. A later match job may see depleted/closed GRPO balances.
+      return {
+        ...base,
+        postable: false,
+        available: false,
+        reason: "A/P Invoice Draft saved in SAP",
+        draftDetails: postedSapDetails({
+          ...draft,
+          updated_at: draft.created_at,
+        }),
+      };
+    }
     if (!REVIEWABLE.includes(row.status)) {
-      return { ...base, available: false, reason: "Analyze the case before matching it to SAP." };
+      return {
+        ...base,
+        available: false,
+        reason: "Analyze the case before matching it to SAP.",
+      };
     }
     if (sapEnv !== "test") {
       return {
         ...base,
         available: false,
-        reason: "SAP matching is available only against the SAP Test company for now.",
+        reason:
+          "SAP matching is available only against the SAP Test company for now.",
       };
     }
     try {
@@ -120,7 +150,9 @@ export async function GET(request: Request, context: Context) {
         ...base,
         available: false,
         sapError:
-          error instanceof Error ? error.message : "Could not read SAP for matching.",
+          error instanceof Error
+            ? error.message
+            : "Could not read SAP for matching.",
         reason: "Could not read SAP. Nothing was changed.",
       };
     }
@@ -157,7 +189,8 @@ export async function POST(request: Request, context: Context) {
         action: name,
         details,
       });
-      if (event.error) console.error("Could not record SAP match event:", event.error.message);
+      if (event.error)
+        console.error("Could not record SAP match event:", event.error.message);
     };
     const requeue = () => enqueueSapMatch(db, user, id, true);
 
@@ -173,7 +206,8 @@ export async function POST(request: Request, context: Context) {
         return { ok: true };
       }
       const choice = typeof body.choice === "string" ? body.choice.trim() : "";
-      const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
+      const reason =
+        typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
       if (!choice || choice.length > 40) throw new ApiError("Invalid choice.");
       state.decisions[checkId] = {
         choice,
@@ -181,7 +215,11 @@ export async function POST(request: Request, context: Context) {
         at: new Date().toISOString(),
       };
       await saveMatchState(db, id, user, state);
-      await audit("sap_match_decision", { checkId, choice, reason: reason || null });
+      await audit("sap_match_decision", {
+        checkId,
+        choice,
+        reason: reason || null,
+      });
       await requeue();
       return { ok: true };
     }
@@ -201,11 +239,16 @@ export async function POST(request: Request, context: Context) {
       }
       const raw = record(body.allocations);
       const entries = Object.entries(raw);
-      if (entries.length > 50) throw new ApiError("Too many receipts selected.");
+      if (entries.length > 50)
+        throw new ApiError("Too many receipts selected.");
       const allocations: Record<string, number> = {};
       for (const [key, value] of entries) {
         const quantity = Number(value);
-        if (!ALLOCATION_KEY.test(key) || !Number.isFinite(quantity) || quantity < 0) {
+        if (
+          !ALLOCATION_KEY.test(key) ||
+          !Number.isFinite(quantity) ||
+          quantity < 0
+        ) {
           throw new ApiError("Invalid receipt selection.");
         }
         if (quantity > 0) allocations[key] = Math.round(quantity * 1000) / 1000;
@@ -218,16 +261,35 @@ export async function POST(request: Request, context: Context) {
     }
 
     if (action === "map-item") {
-      const vendorCardCode = typeof body.vendorCardCode === "string" ? body.vendorCardCode.trim() : "";
-      const mappingKey = typeof body.mappingKey === "string" ? body.mappingKey.trim() : "";
-      const sapItemCode = typeof body.sapItemCode === "string" ? body.sapItemCode.trim() : "";
-      if (!vendorCardCode || vendorCardCode.length > 50 || !mappingKey || mappingKey.length > 200 || !sapItemCode || sapItemCode.length > 50) {
-        throw new ApiError("Choose the vendor material and the SAP item to link.");
+      const vendorCardCode =
+        typeof body.vendorCardCode === "string"
+          ? body.vendorCardCode.trim()
+          : "";
+      const mappingKey =
+        typeof body.mappingKey === "string" ? body.mappingKey.trim() : "";
+      const sapItemCode =
+        typeof body.sapItemCode === "string" ? body.sapItemCode.trim() : "";
+      if (
+        !vendorCardCode ||
+        vendorCardCode.length > 50 ||
+        !mappingKey ||
+        mappingKey.length > 200 ||
+        !sapItemCode ||
+        sapItemCode.length > 50
+      ) {
+        throw new ApiError(
+          "Choose the vendor material and the SAP item to link.",
+        );
       }
       if (readSapEnvironment() !== "test") {
-        throw new ApiError("SAP matching is available only against the SAP Test company for now.", 409);
+        throw new ApiError(
+          "SAP matching is available only against the SAP Test company for now.",
+          409,
+        );
       }
-      const found = await withTestServiceLayer((client) => client.listItemsByCodes([sapItemCode]));
+      const found = await withTestServiceLayer((client) =>
+        client.listItemsByCodes([sapItemCode]),
+      );
       const item = found.find((entry) => entry.ItemCode === sapItemCode);
       if (!item) throw new ApiError("That item does not exist in SAP.", 409);
       await saveItemMapping(db, {
@@ -237,16 +299,25 @@ export async function POST(request: Request, context: Context) {
         sapItemName: item.ItemName ?? null,
         userId: user,
       });
-      await audit("sap_item_linked", { vendorCardCode, mappingKey, sapItemCode });
+      await audit("sap_item_linked", {
+        vendorCardCode,
+        mappingKey,
+        sapItemCode,
+      });
       await requeue();
       return { ok: true };
     }
 
     if (action === "map-vendor") {
-      const cardCode = typeof body.cardCode === "string" ? body.cardCode.trim() : "";
-      if (!cardCode || cardCode.length > 50) throw new ApiError("Choose the SAP vendor to link.");
+      const cardCode =
+        typeof body.cardCode === "string" ? body.cardCode.trim() : "";
+      if (!cardCode || cardCode.length > 50)
+        throw new ApiError("Choose the SAP vendor to link.");
       if (readSapEnvironment() !== "test") {
-        throw new ApiError("SAP matching is available only against the SAP Test company for now.", 409);
+        throw new ApiError(
+          "SAP matching is available only against the SAP Test company for now.",
+          409,
+        );
       }
       const documents = await db
         .from("packet_documents")
@@ -259,9 +330,19 @@ export async function POST(request: Request, context: Context) {
         documents: documents.data ?? [],
       });
       const keys = invoice ? vendorKeys(invoice) : [];
-      if (!invoice) throw new ApiError("This case has no numbered vendor invoice to link.", 409);
-      const supplier = await withTestServiceLayer((client) => client.getSupplier(cardCode));
-      if (!supplier) throw new ApiError("That vendor does not exist in SAP as a supplier.", 409);
+      if (!invoice)
+        throw new ApiError(
+          "This case has no numbered vendor invoice to link.",
+          409,
+        );
+      const supplier = await withTestServiceLayer((client) =>
+        client.getSupplier(cardCode),
+      );
+      if (!supplier)
+        throw new ApiError(
+          "That vendor does not exist in SAP as a supplier.",
+          409,
+        );
       const state = await loadMatchState(db, id);
       state.decisions["vendor-link"] = {
         choice: supplier.CardCode,

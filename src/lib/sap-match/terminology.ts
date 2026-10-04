@@ -108,6 +108,10 @@ export function sapMessage(
     text = text.split(old).join(replacement);
   text = text
     .replace(
+      /^The truck(?: .*?)? has not been received yet$/,
+      "No matching open GRPO found for this invoice",
+    )
+    .replace(
       /Billed (.+?) of the (.+?) received/g,
       "Invoice Qty. $1 of GRPO Open Qty. $2",
     )
@@ -187,7 +191,14 @@ export function sapMatchPresentation(
       candidates: line.candidates.map((candidate) => ({
         ...candidate,
         good: candidate.good.map(message),
-        bad: candidate.bad.map(message),
+        bad: candidate.bad
+          .filter(
+            (text) =>
+              !/different (?:lorry receipt|Lorry Receipt No\.) \(0+\)/i.test(
+                text,
+              ),
+          )
+          .map(message),
         rejected: candidate.rejected
           ? message(candidate.rejected)
           : candidate.rejected,

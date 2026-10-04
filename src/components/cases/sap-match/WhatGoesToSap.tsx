@@ -162,7 +162,7 @@ export function WhatGoesToSap({
         ) : null}
         <div className="pt-1 text-[10px] leading-4 text-[#8a7f72]">
           {saved
-            ? "Saved when the draft was created. Final posting details are shown above."
+            ? "Saved when the draft was created. This preview does not show current GRPO balances or subsequent SAP changes."
             : "SAP works out tax from the linked documents. Nothing is created until you choose to create the draft."}
         </div>
       </dl>

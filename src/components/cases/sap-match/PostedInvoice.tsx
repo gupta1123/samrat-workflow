@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Check, CheckCircle2, FileText, ArrowRight } from "lucide-react";
+import { Check, CheckCircle2, FileText, ArrowRight, Minus } from "lucide-react";
 import type { PostedSapDetails } from "@/lib/sap-posted-details";
 import { MatchLineCard } from "./MatchLineCard";
 import { WhatGoesToSap } from "./WhatGoesToSap";
 import { formatDate, qty } from "./format";
 import { SAP_TERMS, sapMatchPresentation } from "@/lib/sap-match/terminology";
+import { truthfulChecks } from "@/lib/sap-match/evidence";
+import { SupplierEvidence } from "./MatchingEvidence";
 
 function money(value: number | null, currency: string | null) {
   if (value === null) return "—";
@@ -41,11 +43,14 @@ export function PostedInvoice({
   const match = savedMatch
     ? {
         ...savedMatch,
-        result: sapMatchPresentation(savedMatch.result, [
-          savedMatch.invoice.vendorName ?? "",
-          savedMatch.vendor?.cardName ?? "",
-          ...savedMatch.invoice.lines.map((line) => line.description ?? ""),
-        ]),
+        result: sapMatchPresentation(
+          { ...savedMatch.result, checks: truthfulChecks(savedMatch.result) },
+          [
+            savedMatch.invoice.vendorName ?? "",
+            savedMatch.vendor?.cardName ?? "",
+            ...savedMatch.invoice.lines.map((line) => line.description ?? ""),
+          ],
+        ),
       }
     : null;
   const vendor = details?.vendorName ?? details?.vendorCode;
@@ -191,6 +196,11 @@ export function PostedInvoice({
               that saved check.
             </p>
           </div>
+          <SupplierEvidence
+            invoice={match.invoice}
+            vendor={match.vendor}
+            result={match.result}
+          />
           {match.result.lines.map((line) => (
             <MatchLineCard
               key={line.index}
@@ -230,8 +240,20 @@ export function PostedInvoice({
                   key={check.id}
                   className="flex items-start gap-2 text-[#3d3530]"
                 >
-                  <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2c6a4f]" />
+                  {check.sev === "unchecked" ? (
+                    <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6b5d50]" />
+                  ) : (
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2c6a4f]" />
+                  )}
                   <div>
+                    <span className="mr-1.5 text-[10px] font-medium">
+                      {check.sev === "unchecked"
+                        ? "Not checked"
+                        : check.decision
+                          ? "Accepted by reviewer"
+                          : "Matched"}{" "}
+                      ·
+                    </span>
                     {check.title}
                     {check.decision ? (
                       <p className="mt-0.5 text-[10px] text-[#8a7f72]">

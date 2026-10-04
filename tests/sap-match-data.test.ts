@@ -256,6 +256,56 @@ test("the saved packet and SAP data flow through to a ready match", async () => 
   assert.equal(match.result.payload?.freightExpense, 130685.28);
 });
 
+test("matching records supplier identification, item mapping scope and the returned GRPO search", async () => {
+  const data = tables();
+  // Deliberately put the shared mapping last: the supplier-specific link wins.
+  data.sap_item_mappings.push({
+    vendor_card_code: "*",
+    vendor_item_key: "3434405",
+    sap_item_code: "WRONG-SHARED",
+  });
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    client: sapClient({
+      searchSuppliers: async () => [
+        {
+          CardCode: "V-TATA01",
+          CardName: "Different registered SAP name",
+          BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+        },
+      ],
+      findOpenReceiptDocumentsForInvoice: async (input: {
+        onSearch?: (value: Record<string, unknown>) => void;
+      }) => {
+        const receipts = await sapClient().findOpenReceiptDocumentsForInvoice();
+        input.onSearch?.({
+          field: "Invoice No.",
+          value: "1444099137",
+          documentsRead: receipts.length,
+          limit: 100,
+        });
+        return receipts;
+      },
+    }) as never,
+    caseRow: CASE,
+  });
+  assert.ok(match.available);
+  assert.equal(match.result.supplierIdentification?.method, "gstin");
+  assert.deepEqual(match.result.supplierIdentification?.sapGstins, [
+    "20AAACT2803M2ZO",
+  ]);
+  assert.equal(match.result.receiptSearch?.field, "Invoice No.");
+  assert.equal(match.result.receiptSearch?.documentsRead, 1);
+  assert.equal(match.result.lines[0].itemCode, "BW-TW20-091");
+  assert.equal(match.result.lines[0].itemIdentification?.scope, "supplier");
+  assert.equal(match.result.lines[0].candidates[0].purchaseOrder?.docNum, 412);
+  assert.equal(
+    match.result.lines[0].candidates[0].references?.invoice,
+    "1444099137",
+  );
+  assert.ok(match.result.checkedAt);
+});
+
 test("an unlinked item blocks until it is linked", async () => {
   const data = tables();
   data.sap_item_mappings = [];
@@ -281,7 +331,9 @@ test("an invoice already posted in SAP is a duplicate", async () => {
   const match = await computeCaseMatch({
     db: fakeDb(tables()) as never,
     client: sapClient({
-      findInvoiceByReference: async () => ({ DocNum: 23755 }),
+      findInvoiceByReference: async () => ({
+        DocNum: 23755,
+      }),
     }) as never,
     caseRow: CASE,
   });
@@ -343,7 +395,10 @@ test("an unknown vendor blocks with a clear reason instead of guessing", async (
     client: sapClient({
       searchSuppliers: async () => [],
       listSuppliers: async () => [
-        { CardCode: "V-OTHER", CardName: "Other Traders" },
+        {
+          CardCode: "V-OTHER",
+          CardName: "Other Traders",
+        },
       ],
     }) as never,
     caseRow: CASE,
@@ -422,7 +477,10 @@ test("an explicit vendor choice applies to this case when GSTIN is shared", asyn
     caseRow: CASE,
   });
   assert.ok(match.available);
-  if (match.available) assert.equal(match.vendor?.cardCode, "V-TATA01");
+  if (match.available) {
+    assert.equal(match.vendor?.cardCode, "V-TATA01");
+    assert.equal(match.result.supplierIdentification?.method, "reviewer");
+  }
 });
 
 test("a vendor linked earlier is used even when the names differ", async () => {
@@ -453,6 +511,7 @@ test("a vendor linked earlier is used even when the names differ", async () => {
   if (match.available) {
     assert.equal(match.vendor?.cardCode, "V-TATA01");
     assert.equal(match.result.status, "ready");
+    assert.equal(match.result.supplierIdentification?.method, "saved-mapping");
   }
 });
 

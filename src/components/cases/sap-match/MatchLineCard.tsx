@@ -10,6 +10,8 @@ import { inr, qty } from "./format";
 import { ItemLinker } from "./ItemLinker";
 import { ReceiptCandidatesPanel } from "./ReceiptCandidatesPanel";
 import { priceReviewDetails } from "@/lib/sap-match/price-review";
+import { quantityBalances } from "@/lib/sap-match/evidence";
+import { MatchingEvidence } from "./MatchingEvidence";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -38,6 +40,7 @@ function Row({
   tone,
   orderNote,
   billedNote,
+  receivedNote,
 }: {
   label: string;
   order: string;
@@ -46,6 +49,7 @@ function Row({
   tone: Tone;
   orderNote?: string;
   billedNote?: string;
+  receivedNote?: string;
 }) {
   return (
     <tr className="border-t border-[#f0ece4]">
@@ -56,7 +60,14 @@ function Row({
           <div className="mt-0.5 text-[9px] text-[#6b5d50]">{orderNote}</div>
         ) : null}
       </td>
-      <td className="py-2 pr-3 tabular-nums text-[#111827]">{received}</td>
+      <td className="py-2 pr-3 tabular-nums text-[#111827]">
+        {received}
+        {receivedNote ? (
+          <div className="mt-0.5 text-[10px] text-[#6b5d50]">
+            {receivedNote}
+          </div>
+        ) : null}
+      </td>
       <td className={`py-2 tabular-nums font-semibold ${TONE_TEXT[tone]}`}>
         {billed}
         {billedNote ? (
@@ -131,10 +142,7 @@ export function MatchLineCard({
   const selected = line.candidates.filter(
     (candidate) => candidate.allocated > 0,
   );
-  const received = selected.reduce(
-    (total, candidate) => total + candidate.open,
-    0,
-  );
+  const balances = quantityBalances(line);
   const title =
     invoiceLine?.description ||
     invoiceLine?.vendorItemCode ||
@@ -149,14 +157,17 @@ export function MatchLineCard({
     value == null ? "—" : `${qty(value)}${unit ? ` ${unit}` : ""}`;
   const needsReview = checks.some((check) => check.open);
   const hasChecked = checks.some((check) => check.lineIndex === line.index);
+  const unchecked = checks.filter((check) => check.sev === "unchecked");
   const status = locked
-    ? "Saved comparison"
+    ? "At draft creation"
     : unmapped
       ? "Link item"
       : needsReview
         ? "Needs review"
         : hasChecked
-          ? "Checks complete"
+          ? unchecked.length
+            ? "Checks incomplete"
+            : "Line checks complete"
           : selected.length
             ? "GRPO selected"
             : "Awaiting match";
@@ -291,8 +302,8 @@ export function MatchLineCard({
                         order={quantity(line.po?.qty ?? null)}
                         received={
                           selected.length
-                            ? `${quantity(received)} open${selected.length > 1 ? ` (${selected.length} GRPOs)` : ""}`
-                            : "Not yet"
+                            ? `${quantity(balances.received)} received${selected.length > 1 ? ` (${selected.length} GRPO lines)` : ""}`
+                            : "No selection"
                         }
                         billed={quantity(line.invoiceQty)}
                         tone={toneOf(checks, [
@@ -323,63 +334,80 @@ export function MatchLineCard({
                             : undefined
                         }
                       />
-                      <Row
-                        label="Vehicle No."
-                        order="—"
-                        received={
-                          [
-                            ...new Set(
-                              selected
-                                .map((candidate) => candidate.vehicle)
-                                .filter(Boolean),
-                            ),
-                          ].join(", ") || "—"
-                        }
-                        billed={invoice.vehicles.join(", ") || "—"}
-                        billedNote={
-                          invoice.vehicles.length
-                            ? "From scanned packet"
-                            : undefined
-                        }
-                        tone={toneOf(checks, [`anchor-${line.index}`])}
-                      />
                     </>
                   )}
-                  <Row
-                    label="PO No."
-                    order={line.po?.ref ?? "—"}
-                    received="—"
-                    billed={invoice.poReferences.join(", ") || "—"}
-                    billedNote={
-                      invoice.poReferences.length
-                        ? "From scanned packet"
-                        : undefined
-                    }
-                    tone="ok"
-                  />
                 </tbody>
               </table>
             </div>
 
-            {others.map((check) => (
-              <CheckBlock
-                key={check.id}
-                check={check}
-                locked={locked}
-                busy={busy}
-                priceReview={
-                  check.id === `rate-${line.index}`
-                    ? priceReviewDetails(invoice, line, rateTolerancePct)
-                    : undefined
-                }
-                onChoose={(choice, reason) => onChoose(check, choice, reason)}
-                onUndo={() => onUndo(check)}
-              />
-            ))}
+            {!service && selected.length ? (
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-[#f0ece4] pt-2 text-[10px] sm:grid-cols-3">
+                {[
+                  [
+                    locked ? "Open at saved check" : "Available to invoice",
+                    balances.available,
+                  ],
+                  [locked ? "Used in draft" : "Used now", balances.used],
+                  [
+                    locked
+                      ? "Remaining at saved check"
+                      : "Remaining after allocation",
+                    balances.remaining,
+                  ],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-[#6b5d50]">{label}</dt>
+                    <dd className="mt-0.5 text-[11px] font-medium tabular-nums text-[#111827]">
+                      {quantity(value as number)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+
+            {!locked
+              ? others.map((check) => (
+                  <CheckBlock
+                    key={check.id}
+                    check={check}
+                    locked={locked}
+                    busy={busy}
+                    priceReview={
+                      check.id === `rate-${line.index}`
+                        ? priceReviewDetails(invoice, line, rateTolerancePct)
+                        : undefined
+                    }
+                    onChoose={(choice, reason) =>
+                      onChoose(check, choice, reason)
+                    }
+                    onUndo={() => onUndo(check)}
+                  />
+                ))
+              : others
+                  .filter((check) => check.decision)
+                  .map((check) => (
+                    <CheckBlock
+                      key={check.id}
+                      check={check}
+                      locked
+                      busy={busy}
+                      onChoose={() => {}}
+                      onUndo={() => {}}
+                    />
+                  ))}
+
+            <MatchingEvidence invoice={invoice} line={line} locked={locked} />
+
+            {unchecked.length ? (
+              <p className="text-[11px] text-[#6b5d50]">
+                Not checked: {unchecked.map((check) => check.title).join("; ")}
+              </p>
+            ) : null}
 
             {line.candidates.length ? (
               <ReceiptCandidatesPanel
                 caseId={caseId}
+                invoice={invoice}
                 line={line}
                 title={title}
                 unit={unit}

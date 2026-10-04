@@ -1,7 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Check, Clock, Loader2, ShieldAlert, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Clock,
+  Loader2,
+  ShieldAlert,
+  XCircle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { MatchCheck } from "@/lib/sap-match/types";
@@ -9,11 +16,36 @@ import type { PriceReviewDetails } from "@/lib/sap-match/price-review";
 import { PriceReviewBlock } from "./PriceReviewBlock";
 
 const TONES = {
-  block: { box: "border-[#f3c6c0] bg-[#fdf3f1]", icon: "text-[#b3261e]", Icon: XCircle },
-  confirm: { box: "border-[#f0d7a6] bg-[#fdf7ea]", icon: "text-[#9a5a0a]", Icon: ShieldAlert },
-  ack: { box: "border-[#f0d7a6] bg-[#fdf7ea]", icon: "text-[#9a5a0a]", Icon: AlertTriangle },
-  wait: { box: "border-[#dcd5cb] bg-[#f6f3ee]", icon: "text-[#5c5650]", Icon: Clock },
-  pass: { box: "border-[#c4dfcf] bg-[#f1f8f4]", icon: "text-[#2c6a4f]", Icon: Check },
+  block: {
+    box: "border-[#f3c6c0] bg-[#fdf3f1]",
+    icon: "text-[#b3261e]",
+    Icon: XCircle,
+  },
+  confirm: {
+    box: "border-[#f0d7a6] bg-[#fdf7ea]",
+    icon: "text-[#9a5a0a]",
+    Icon: ShieldAlert,
+  },
+  ack: {
+    box: "border-[#f0d7a6] bg-[#fdf7ea]",
+    icon: "text-[#9a5a0a]",
+    Icon: AlertTriangle,
+  },
+  wait: {
+    box: "border-[#dcd5cb] bg-[#f6f3ee]",
+    icon: "text-[#5c5650]",
+    Icon: Clock,
+  },
+  pass: {
+    box: "border-[#c4dfcf] bg-[#f1f8f4]",
+    icon: "text-[#2c6a4f]",
+    Icon: Check,
+  },
+  unchecked: {
+    box: "border-[#dcd5cb] bg-[#f6f3ee]",
+    icon: "text-[#5c5650]",
+    Icon: AlertTriangle,
+  },
 } as const;
 
 const MIN_REASON = 5;
@@ -45,10 +77,19 @@ export function CheckBlock({
     return (
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#c4dfcf] bg-[#f1f8f4] px-3 py-2 text-[11px] text-[#1b4332]">
         <Check className="h-3.5 w-3.5 shrink-0" />
-        <span className="font-medium">{answered?.title ?? "Confirmed"}</span>
-        {check.decision.reason ? <span className="text-[#476b58]">· “{check.decision.reason}”</span> : null}
+        <span className="font-medium">
+          Accepted by reviewer · {answered?.title ?? "Confirmed"}
+        </span>
+        {check.decision.reason ? (
+          <span className="text-[#476b58]">· “{check.decision.reason}”</span>
+        ) : null}
         {!locked ? (
-          <button type="button" className="ml-auto text-[11px] font-medium underline" disabled={busy} onClick={onUndo}>
+          <button
+            type="button"
+            className="ml-auto text-[11px] font-medium underline"
+            disabled={busy}
+            onClick={onUndo}
+          >
             Change
           </button>
         ) : null}
@@ -57,8 +98,12 @@ export function CheckBlock({
   }
   if (!check.open) return null;
   if (
-    priceReview && !check.decision && check.sev === "confirm" &&
-    check.options?.some(option => option.needsReason && option.effect === "resolve")
+    priceReview &&
+    !check.decision &&
+    check.sev === "confirm" &&
+    check.options?.some(
+      (option) => option.needsReason && option.effect === "resolve",
+    )
   ) {
     return (
       <PriceReviewBlock
@@ -80,10 +125,20 @@ export function CheckBlock({
             {!check.decision && check.ask ? check.ask : check.title}
           </div>
           {!check.decision && check.ask ? (
-            <div className="mt-0.5 text-[11px] font-medium leading-4 text-[#3d3530]">{check.title}</div>
+            <div className="mt-0.5 text-[11px] font-medium leading-4 text-[#3d3530]">
+              {check.title}
+            </div>
           ) : null}
-          {check.help ? <div className="mt-1 text-[11px] leading-4 text-[#6b5d50]">{check.help}</div> : null}
-          {check.waitNote ? <div className="mt-1 text-[11px] leading-4 text-[#6b5d50]">{check.waitNote}</div> : null}
+          {check.help ? (
+            <div className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
+              {check.help}
+            </div>
+          ) : null}
+          {check.waitNote ? (
+            <div className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
+              {check.waitNote}
+            </div>
+          ) : null}
 
           {check.decision ? (
             <div className="mt-2 flex items-center gap-2 text-[11px] text-[#3d3530]">
@@ -91,7 +146,12 @@ export function CheckBlock({
                 You chose: <b>{answered?.title ?? check.decision.choice}</b>
               </span>
               {!locked ? (
-                <button type="button" className="font-medium underline" disabled={busy} onClick={onUndo}>
+                <button
+                  type="button"
+                  className="font-medium underline"
+                  disabled={busy}
+                  onClick={onUndo}
+                >
                   Change
                 </button>
               ) : null}
@@ -112,7 +172,9 @@ export function CheckBlock({
                         Recommended
                       </div>
                     ) : null}
-                    <div className="text-[11px] font-semibold text-[#111827]">{option.title}</div>
+                    <div className="text-[11px] font-semibold text-[#111827]">
+                      {option.title}
+                    </div>
                     <ul className="mt-1 space-y-0.5 text-[10px] leading-4 text-[#6b5d50]">
                       {option.lines.map((line) => (
                         <li key={line}>{line}</li>
@@ -134,20 +196,31 @@ export function CheckBlock({
                       className="mt-2 h-7 px-2.5 text-[11px]"
                       disabled={
                         busy ||
-                        (option.needsReason && selected && reason.trim().length < MIN_REASON)
+                        (option.needsReason &&
+                          selected &&
+                          reason.trim().length < MIN_REASON)
                       }
                       onClick={() => {
                         if (option.needsReason && !selected) {
                           setPicked(option.choice);
                           return;
                         }
-                        onChoose(option.choice, option.needsReason ? reason.trim() : "");
+                        onChoose(
+                          option.choice,
+                          option.needsReason ? reason.trim() : "",
+                        );
                         setPicked(null);
                         setReason("");
                       }}
                     >
-                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                      {option.needsReason && !selected ? "Choose this" : option.needsReason ? "Confirm with reason" : "Choose this"}
+                      {busy ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : null}
+                      {option.needsReason && !selected
+                        ? "Choose this"
+                        : option.needsReason
+                          ? "Confirm with reason"
+                          : "Choose this"}
                     </Button>
                   </div>
                 );
