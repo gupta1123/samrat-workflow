@@ -22,6 +22,7 @@ import {
   type SapMatchResponse,
 } from "@/lib/sap-match-client";
 import { itemMappingKey } from "@/lib/sap-match/engine";
+import { findPostedApInvoice, needsSapMatchPolling, pollSapMatch } from "@/lib/sap-match-progress";
 import type { LineResult, MatchCheck, MatchStatus } from "@/lib/sap-match/types";
 import { CheckBlock } from "./sap-match/CheckBlock";
 import { FinalPostSection } from "./sap-match/FinalPostSection";
@@ -73,9 +74,12 @@ export function SapMatchPanel({
       if (!quiet) setLoading(true);
       setLoadError(null);
       try {
-        setData(await fetchSapMatch(caseId, refresh));
+        const response = await fetchSapMatch(caseId, refresh);
+        setData(response);
+        return response;
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : "Could not load the SAP match.");
+        return null;
       } finally {
         setLoading(false);
       }
@@ -90,11 +94,14 @@ export function SapMatchPanel({
     void load();
   }, [load]);
 
+  const polling = needsSapMatchPolling(data) && !loadError;
   useEffect(() => {
-    if (data?.matchJob?.status !== "queued" && data?.matchJob?.status !== "running") return;
-    const timer = window.setTimeout(() => void load(true), 2_000);
-    return () => window.clearTimeout(timer);
-  }, [data?.matchJob?.status, data?.matchJob?.attempt, data?.matchJob?.stage, load]);
+    if (!polling) return;
+    return pollSapMatch(
+      () => load(true),
+      (error) => setLoadError(error instanceof Error ? error.message : "Could not load the SAP match."),
+    );
+  }, [polling, load]);
 
   async function act(action: SapMatchAction) {
     setBusy(true);
@@ -148,6 +155,32 @@ export function SapMatchPanel({
             Retry
           </Button>
         </div>
+      </div>
+    );
+  }
+
+  const posted = findPostedApInvoice(data.postings, data.sapEnv);
+  if (posted) {
+    if (variant === "sidebar") {
+      return (
+        <div className="space-y-1 px-4 py-3">
+          <StatusPill status="ready" label="Posted" />
+          <div className="text-[11px] text-[#3d3530]">Posted as A/P invoice {posted.sap_docnum}</div>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-3 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 text-[11px] text-[#6b5d50]">
+          <StatusPill status="ready" label="Posted" />
+          <span>SAP {data.sapEnv === "test" ? "Test" : "Live"}</span>
+        </div>
+        <FinalPostSection
+          caseId={caseId}
+          status="posted"
+          documentNumber={posted.sap_docnum}
+          onChanged={() => void load(true)}
+        />
       </div>
     );
   }

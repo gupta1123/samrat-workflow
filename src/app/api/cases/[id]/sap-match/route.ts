@@ -16,6 +16,7 @@ import {
 import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
 import { buildMatchInvoice, vendorKeys } from "@/server/sap/match-mapping";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { findPostedApInvoice } from "@/lib/sap-match-progress";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -56,6 +57,15 @@ export async function GET(request: Request, context: Context) {
       postable: row.status === "accepted",
       postings: savedPostings,
     };
+    const posted = findPostedApInvoice(savedPostings, sapEnv);
+    if (posted) {
+      return {
+        ...base,
+        postable: false,
+        available: false,
+        reason: `Posted as A/P invoice ${posted.sap_docnum}`,
+      };
+    }
     if (!REVIEWABLE.includes(row.status)) {
       return { ...base, available: false, reason: "Analyze the case before matching it to SAP." };
     }
