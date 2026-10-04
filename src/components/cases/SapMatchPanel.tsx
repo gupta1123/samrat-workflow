@@ -38,7 +38,6 @@ import { PostedInvoice } from "./sap-match/PostedInvoice";
 import { sapMatchPresentation, sapMessage } from "@/lib/sap-match/terminology";
 import { inr } from "./sap-match/format";
 import { MatchLineCard } from "./sap-match/MatchLineCard";
-import { AppliedMatchingRules } from "./sap-match/AppliedMatchingRules";
 import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
 
@@ -697,8 +696,6 @@ function Matched({
           ) : null}
         </div>
       ) : null}
-
-      <AppliedMatchingRules rules={data.rules} />
     </div>
   );
 }
