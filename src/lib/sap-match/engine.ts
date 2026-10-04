@@ -956,7 +956,7 @@ function evaluateMaterialLine(args: {
         help: `${vendorName} charged ${inr(rate)}; the PO says ${inr(poRate)} (${absolutePct.toFixed(2)}% ${direction}), outside your ${rules.rateTolerancePct}% limit. Confirm with a reason, or return the invoice.`,
         options: [
           { choice: "confirm", title: "Use the invoice rate", lines: [`Book ${inr(rate)}`, `Difference ${inr(valueDifference)} before tax`, "The reason is saved in the audit trail"], effect: "resolve", needsReason: true },
-          { ...RETURN_OPTION, recommended: true, lines: ["Ask for a corrected invoice at the PO rate"] },
+          { ...RETURN_OPTION, lines: ["Ask for a corrected invoice at the PO rate"] },
         ],
       });
     }

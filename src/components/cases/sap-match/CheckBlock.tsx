@@ -5,6 +5,8 @@ import { AlertTriangle, Check, Clock, Loader2, ShieldAlert, XCircle } from "luci
 
 import { Button } from "@/components/ui/button";
 import type { MatchCheck } from "@/lib/sap-match/types";
+import type { PriceReviewDetails } from "@/lib/sap-match/price-review";
+import { PriceReviewBlock } from "./PriceReviewBlock";
 
 const TONES = {
   block: { box: "border-[#f3c6c0] bg-[#fdf3f1]", icon: "text-[#b3261e]", Icon: XCircle },
@@ -22,12 +24,14 @@ export function CheckBlock({
   busy,
   onChoose,
   onUndo,
+  priceReview,
 }: {
   check: MatchCheck;
   locked: boolean;
   busy: boolean;
   onChoose: (choice: string, reason: string) => void;
   onUndo: () => void;
+  priceReview?: PriceReviewDetails;
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -52,6 +56,20 @@ export function CheckBlock({
     );
   }
   if (!check.open) return null;
+  if (
+    priceReview && !check.decision && check.sev === "confirm" &&
+    check.options?.some(option => option.needsReason && option.effect === "resolve")
+  ) {
+    return (
+      <PriceReviewBlock
+        check={check}
+        details={priceReview}
+        locked={locked}
+        busy={busy}
+        onChoose={onChoose}
+      />
+    );
+  }
 
   return (
     <div className={`rounded-lg border px-4 py-3 ${tone.box}`}>

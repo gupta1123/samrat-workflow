@@ -9,6 +9,7 @@ import { CheckBlock } from "./CheckBlock";
 import { inr, qty } from "./format";
 import { ItemLinker } from "./ItemLinker";
 import { ReceiptCandidatesPanel } from "./ReceiptCandidatesPanel";
+import { priceReviewDetails } from "@/lib/sap-match/price-review";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -103,6 +104,7 @@ export function MatchLineCard({
   locked,
   busy,
   vendorFound,
+  rateTolerancePct,
   onChoose,
   onUndo,
   onAllocate,
@@ -116,6 +118,7 @@ export function MatchLineCard({
   locked: boolean;
   busy: boolean;
   vendorFound: boolean;
+  rateTolerancePct?: number;
   onChoose: (check: MatchCheck, choice: string, reason: string) => void;
   onUndo: (check: MatchCheck) => void;
   onAllocate: (lineIndex: number, allocations: Record<string, number>) => void;
@@ -364,6 +367,11 @@ export function MatchLineCard({
                 check={check}
                 locked={locked}
                 busy={busy}
+                priceReview={
+                  check.id === `rate-${line.index}`
+                    ? priceReviewDetails(invoice, line, rateTolerancePct)
+                    : undefined
+                }
                 onChoose={(choice, reason) => onChoose(check, choice, reason)}
                 onUndo={() => onUndo(check)}
               />

@@ -370,6 +370,7 @@ test("a printed invoice rate is not replaced by an inferred amount-per-quantity 
   const result = evaluateMatch({ invoice: inv, context: ctx });
   const rate = result.checks.find((check) => check.id === "rate-0")!;
   assert.equal(rate.title, "Rate is ₹6,132 below the PO");
+  assert.equal(rate.options?.find(option => option.effect === "return")?.recommended, undefined);
   assert.match(rate.help ?? "", /charged ₹58,308/);
   assert.equal(result.status, "review");
   assert.equal(result.payload?.lines[0].unitPrice, 58308);
