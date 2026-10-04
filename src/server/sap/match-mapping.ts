@@ -14,6 +14,8 @@ import { parseSapAmount } from "@/lib/sap-decision";
 import { readStoredLineItems } from "@/server/line-items";
 import { sapInvoiceDate } from "./dates";
 import type { SapMatchDocument } from "./service-layer";
+import { findVehicles } from "@/lib/sap-vehicles";
+export { findVehicles } from "@/lib/sap-vehicles";
 
 type StoredDocument = {
   document_type: unknown;
@@ -39,19 +41,6 @@ function amount(value: unknown): number | null {
     return null;
   }
   return parseSapAmount(value);
-}
-
-const VEHICLE_PATTERN = /\b[A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{0,3}[\s-]?\d{4}\b/g;
-
-/** Vehicle registrations found in free text, normalised (no spaces or dashes). */
-export function findVehicles(value: unknown): string[] {
-  const source = text(value).toUpperCase();
-  if (!source) return [];
-  return [
-    ...new Set(
-      (source.match(VEHICLE_PATTERN) ?? []).map((match) => match.replace(/[\s-]/g, "")),
-    ),
-  ];
 }
 
 const INVOICE_TYPES = new Set(["Invoice", "Tax Invoice"]);

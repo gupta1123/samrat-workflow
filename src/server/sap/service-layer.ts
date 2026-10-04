@@ -12,6 +12,7 @@ import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
 import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
 import { readODataCollection } from "./odata-pagination";
 import { businessPartnerReadPath, type BusinessPartnerQuery } from "@/lib/sap-business-partners";
+import { grpoInspectorReadPath, type GrpoInspectorQuery, type GrpoReferenceFields } from "@/lib/sap-grpo-inspector";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -131,6 +132,7 @@ export async function withTestServiceLayer<T>(
     searchSuppliers: (query: string) => Promise<SapSupplierRow[]>;
     getSupplier: (cardCode: string) => Promise<SapSupplierRow | null>;
     listBusinessPartnersPage: (query: BusinessPartnerQuery) => Promise<Record<string, unknown>[]>;
+    listInspectorGrposPage: (query: GrpoInspectorQuery, fields: GrpoReferenceFields) => Promise<Record<string, unknown>[]>;
     listOpenReceiptDocumentsForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
@@ -531,6 +533,9 @@ export async function withTestServiceLayer<T>(
       },
       async listBusinessPartnersPage(query) {
         return pageAll<Record<string, unknown>>(businessPartnerReadPath(query), query.limit + 1);
+      },
+      async listInspectorGrposPage(query, fields) {
+        return pageAll<Record<string, unknown>>(grpoInspectorReadPath(query, fields), query.limit + 1);
       },
       async searchSuppliers(query) {
         const term = query.trim().replaceAll("'", "''").slice(0, 60);

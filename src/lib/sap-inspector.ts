@@ -1,9 +1,28 @@
+import { findVehicles } from "./sap-vehicles";
+
 export type SapInspectorDataset = "open-po" | "po" | "grpo" | "ap-invoice";
 
 export type SapInspectorFinding = {
   severity: "ok" | "warning" | "blocked";
   title: string;
   detail: string;
+};
+
+export type SapInspectorMatchReferences = {
+  invoice: string | null;
+  eWayBill: string | null;
+  lorryReceipt: string | null;
+  vehicle: string | null;
+};
+
+type SapInspectorOptions = {
+  feed?: "service-layer" | "spapi";
+  poReferenceFields?: readonly string[];
+  vehicleField?: string | null;
+  invoiceField?: string | null;
+  eWayBillField?: string | null;
+  lorryReceiptField?: string | null;
+  purchaseOrders?: readonly Record<string, unknown>[];
 };
 
 export type SapInspectorLine = {
@@ -19,6 +38,11 @@ export type SapInspectorLine = {
   baseType: number | null;
   baseEntry: number | null;
   baseLine: number | null;
+  linkedPoNumber?: string | null;
+  linkedPoPrice?: number | null;
+  linkedPoQuantity?: number | null;
+  linkedPoReferences?: string[];
+  matchReferences?: SapInspectorMatchReferences;
   raw: Record<string, unknown>;
 };
 
@@ -39,6 +63,7 @@ export type SapInspectorRecord = {
   branchId: string | null;
   comments: string | null;
   poReferences: string[];
+  matchReferences?: SapInspectorMatchReferences;
   lines: SapInspectorLine[];
   findings: SapInspectorFinding[];
   raw: Record<string, unknown>;
@@ -47,9 +72,7 @@ export type SapInspectorRecord = {
 export type SapInspectorResponse = {
   dataset: SapInspectorDataset;
   source:
-    | "SPAPI"
-    | "SPAPI OpenGRPO fallback"
-    | "SAP Business One Service Layer";
+    "SPAPI" | "SPAPI OpenGRPO fallback" | "SAP Business One Service Layer";
   environment: "test" | "live";
   fetchedAt: string;
   limit: number;
@@ -112,11 +135,7 @@ function normalizeLine(value: unknown): SapInspectorLine {
   return {
     lineNumber: text(source, ["LineNum", "PO Line Num", "BaseLine"]),
     itemCode: text(source, ["ItemCode", "Item Code"]),
-    description: text(source, [
-      "ItemDescription",
-      "Dscription",
-      "Description",
-    ]),
+    description: text(source, ["ItemDescription", "Dscription", "Description"]),
     quantity: numberValue(source, ["Quantity", "Qty"]),
     openQuantity: numberValue(source, [
       "RemainingOpenQuantity",
@@ -125,11 +144,7 @@ function normalizeLine(value: unknown): SapInspectorLine {
       "Open Qty",
     ]),
     price: numberValue(source, ["UnitPrice", "Price", "PriceAfterVAT"]),
-    lineTotal: numberValue(source, [
-      "LineTotal",
-      "Line Total",
-      "Total Amount",
-    ]),
+    lineTotal: numberValue(source, ["LineTotal", "Line Total", "Total Amount"]),
     status: text(source, ["LineStatus", "Status"]),
     warehouse: text(source, ["WarehouseCode", "WhsCode", "Warehouse"]),
     baseType: numberValue(source, ["BaseType", "Base Type"]),
@@ -280,6 +295,7 @@ function findingsFor(input: {
     }
     if (
       input.vehicleField &&
+      !input.lines.some((line) => line.matchReferences?.vehicle) &&
       !text(input.source, [input.vehicleField, "Comments"])
     ) {
       add(
@@ -326,11 +342,7 @@ export function normalizeSapInspectorRecord(
   dataset: SapInspectorDataset,
   value: unknown,
   index: number,
-  options: {
-    feed?: "service-layer" | "spapi";
-    poReferenceFields?: readonly string[];
-    vehicleField?: string | null;
-  } = {},
+  options: SapInspectorOptions = {},
 ): SapInspectorRecord {
   const source = record(value);
   const embeddedLines = Array.isArray(source.DocumentLines)
@@ -338,7 +350,46 @@ export function normalizeSapInspectorRecord(
     : Array.isArray(source.Lines)
       ? source.Lines
       : null;
-  const lines = (embeddedLines ?? [source]).map(normalizeLine);
+  const matchRefs = (
+    line: Record<string, unknown>,
+  ): SapInspectorMatchReferences => {
+    const field = (name: string | null | undefined) =>
+      name ? (text(line, [name]) ?? text(source, [name])) : null;
+    return {
+      invoice: field(options.invoiceField) ?? text(source, ["NumAtCard"]),
+      eWayBill: field(options.eWayBillField),
+      lorryReceipt: field(options.lorryReceiptField),
+      vehicle:
+        findVehicles(field(options.vehicleField))[0] ??
+        findVehicles(source.Comments)[0] ??
+        null,
+    };
+  };
+  const lines = (embeddedLines ?? [source]).map((value) => {
+    const line = normalizeLine(value);
+    if (dataset !== "grpo") return line;
+    // Match the price source used by mapReceiptLines, rather than UnitPrice.
+    line.price = numberValue(record(value), ["Price"]);
+    const po =
+      line.baseType === 22 && line.baseEntry !== null
+        ? options.purchaseOrders?.find(
+            (po) => Number(po.DocEntry) === line.baseEntry,
+          )
+        : undefined;
+    const poLine = po && Array.isArray(po.DocumentLines)
+      ? po.DocumentLines.map(record).find(candidate => Number(candidate.LineNum) === line.baseLine)
+      : undefined;
+    return {
+      ...line,
+      linkedPoNumber: po ? text(po, ["DocNum"]) : null,
+      linkedPoPrice: poLine ? numberValue(poLine, ["Price", "UnitPrice"]) : null,
+      linkedPoQuantity: poLine ? numberValue(poLine, ["Quantity"]) : null,
+      linkedPoReferences: po
+        ? configuredReferences(po, "po", options.poReferenceFields ?? [])
+        : [],
+      matchReferences: matchRefs(record(value)),
+    };
+  });
   const cancelled = isCancelled(source);
   const reportedStatus = displayStatus(source, cancelled);
   const status =
@@ -348,11 +399,7 @@ export function normalizeSapInspectorRecord(
       ? "Open"
       : reportedStatus;
   const docEntry = text(source, ["DocEntry", "Document Entry"]);
-  const docNumber = text(source, [
-    "DocNum",
-    "Document Number",
-    "PO Number",
-  ]);
+  const docNumber = text(source, ["DocNum", "Document Number", "PO Number"]);
   const vendorCode = text(source, ["CardCode", "BP Code", "Vendor Code"]);
   const vendorReference = text(source, [
     "NumAtCard",
@@ -360,11 +407,10 @@ export function normalizeSapInspectorRecord(
     "VendorRef",
     "Invoice Number",
   ]);
-  const poReferences = configuredReferences(
-    source,
-    dataset,
-    options.poReferenceFields ?? [],
-  );
+  const poReferences =
+    dataset === "grpo"
+      ? [...new Set(lines.flatMap((line) => line.linkedPoReferences ?? []))]
+      : configuredReferences(source, dataset, options.poReferenceFields ?? []);
   const findings = findingsFor({
     dataset,
     feed: options.feed ?? "service-layer",
@@ -375,7 +421,11 @@ export function normalizeSapInspectorRecord(
     docEntry,
     docNumber,
     vendorCode,
-    vendorReference,
+    vendorReference:
+      dataset === "grpo"
+        ? (lines.find((line) => line.matchReferences?.invoice)?.matchReferences
+            ?.invoice ?? vendorReference)
+        : vendorReference,
     poReferences,
     vehicleField: options.vehicleField,
   });
@@ -390,11 +440,7 @@ export function normalizeSapInspectorRecord(
     vendorCode,
     vendorName: text(source, ["CardName", "BP Name", "Vendor Name"]),
     vendorReference,
-    total: numberValue(source, [
-      "DocTotal",
-      "Total Amount",
-      "Document Total",
-    ]),
+    total: numberValue(source, ["DocTotal", "Total Amount", "Document Total"]),
     currency: text(source, ["DocCurrency", "Currency"]),
     status,
     cancelled,
@@ -403,6 +449,7 @@ export function normalizeSapInspectorRecord(
     poReferences,
     lines,
     findings,
+    ...(dataset === "grpo" ? { matchReferences: matchRefs({}) } : {}),
     raw: source,
   };
 }
@@ -410,11 +457,7 @@ export function normalizeSapInspectorRecord(
 export function normalizeSapInspectorRecords(
   dataset: SapInspectorDataset,
   values: unknown[],
-  options?: {
-    feed?: "service-layer" | "spapi";
-    poReferenceFields?: readonly string[];
-    vehicleField?: string | null;
-  },
+  options?: SapInspectorOptions,
 ) {
   return values.map((value, index) =>
     normalizeSapInspectorRecord(dataset, value, index, options),

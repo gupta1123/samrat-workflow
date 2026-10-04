@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/dashboard/AppShell";
 import { Button } from "@/components/ui/button";
 import { BusinessPartnersTab } from "./BusinessPartnersTab";
+import { GrpoInspectorTab } from "./GrpoInspectorTab";
 import type {
   SapInspectorDataset,
   SapInspectorFinding,
@@ -142,7 +143,7 @@ function StatusPill({ record }: { record: SapInspectorRecord }) {
   );
 }
 
-function RecordDetails({ record }: { record: SapInspectorRecord }) {
+export function RecordDetails({ record }: { record: SapInspectorRecord }) {
   const [showRaw, setShowRaw] = useState(false);
   return (
     <div className="border-t border-[#e7e0d6] bg-[#fbfaf8] px-4 py-4 lg:px-6">
@@ -173,7 +174,7 @@ function RecordDetails({ record }: { record: SapInspectorRecord }) {
               </dd>
             </div>
             <div className="col-span-2">
-              <dt className="text-[#8a8174]">PO references SAP exposes</dt>
+              <dt className="text-[#8a8174]">{record.dataset === "grpo" ? "Linked PO references" : "PO references SAP exposes"}</dt>
               <dd className="break-words font-mono text-[#29221d]">
                 {record.poReferences.join(" · ") || "—"}
               </dd>
@@ -185,6 +186,10 @@ function RecordDetails({ record }: { record: SapInspectorRecord }) {
               </dd>
             </div>
           </dl>
+          {record.matchReferences ? <dl className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
+            {[["Vendor Invoice No.", record.matchReferences.invoice], ["E-way Bill No.", record.matchReferences.eWayBill], ["LR No.", record.matchReferences.lorryReceipt], ["Vehicle No.", record.matchReferences.vehicle], ["SAP vendor reference (NumAtCard)", record.vendorReference]].map(([label, value]) => <div key={label}><dt className="text-[#8a8174]">{label}</dt><dd className="break-words font-mono">{value ?? "—"}</dd></div>)}
+            <p className="col-span-2 text-[10px] text-[#8a8174]">Header values shown here. Line overrides and the references used for matching appear in the line table.</p>
+          </dl> : null}
         </section>
 
         <section className="min-w-0">
@@ -215,8 +220,10 @@ function RecordDetails({ record }: { record: SapInspectorRecord }) {
                     <th className="px-3 py-2">Description</th>
                     <th className="px-3 py-2 text-right">Qty</th>
                     <th className="px-3 py-2 text-right">Open</th>
-                    <th className="px-3 py-2 text-right">Price</th>
+                    <th className="px-3 py-2 text-right">{record.dataset === "grpo" ? "GRPO unit price" : "Price"}</th>
                     <th className="px-3 py-2">Warehouse</th>
+                    <th className="px-3 py-2">Line status</th>
+                    {record.dataset === "grpo" ? <><th className="px-3 py-2">Linked PO No.</th><th className="px-3 py-2">Matching references</th></> : null}
                     <th className="px-3 py-2">Base link</th>
                   </tr>
                 </thead>
@@ -247,6 +254,16 @@ function RecordDetails({ record }: { record: SapInspectorRecord }) {
                       <td className="px-3 py-2 font-mono">
                         {line.warehouse ?? "—"}
                       </td>
+                      <td className="px-3 py-2">{line.status?.replace(/^bost_/, "") ?? "Unknown"}</td>
+                      {record.dataset === "grpo" ? <>
+                        <td className="whitespace-nowrap px-3 py-2 font-mono">
+                          {line.linkedPoNumber ?? (line.baseType === 22 && line.baseEntry !== null ? "PO not returned" : "No PO base link")}
+                          {line.linkedPoNumber ? <div className="mt-1 space-y-0.5 text-[10px] text-[#8a8174]"><div>PO unit price: {line.linkedPoPrice ?? "—"}</div><div>PO quantity: {line.linkedPoQuantity ?? "—"}</div></div> : null}
+                        </td>
+                        <td className="min-w-[190px] px-3 py-2 text-[10px]">
+                          {[["Invoice", line.matchReferences?.invoice], ["E-way bill", line.matchReferences?.eWayBill], ["LR", line.matchReferences?.lorryReceipt], ["Vehicle", line.matchReferences?.vehicle]].map(([label, value]) => <div key={label}><span className="text-[#8a8174]">{label}: </span><span className="font-mono">{value ?? "—"}</span></div>)}
+                        </td>
+                      </> : null}
                       <td className="whitespace-nowrap px-3 py-2 font-mono">
                         {line.baseEntry !== null
                           ? `${line.baseType ?? "?"} / ${line.baseEntry} / ${line.baseLine ?? "?"}`
@@ -332,7 +349,7 @@ export function SapInspectorPage() {
   }, []);
 
   useEffect(() => {
-    if (initialized && activeTab !== "business-partners" && !states[activeTab]) void load(activeTab);
+    if (initialized && activeTab !== "business-partners" && activeTab !== "grpo" && !states[activeTab]) void load(activeTab);
   }, [activeTab, initialized, load, states]);
 
   useEffect(() => {
@@ -396,7 +413,7 @@ export function SapInspectorPage() {
                 a packet cannot find or use that record.
               </p>
             </div>
-            {activeTab !== "business-partners" ? <div className="flex items-center gap-2">
+            {activeTab !== "business-partners" && activeTab !== "grpo" ? <div className="flex items-center gap-2">
               {data ? (
                 <div className="text-right text-[10px] leading-4 text-[#897f74]">
                   <div>{data.source}</div>
@@ -458,7 +475,7 @@ export function SapInspectorPage() {
             </div>
           </div>
 
-          {activeTab === "business-partners" ? <BusinessPartnersTab /> : <>
+          {activeTab === "business-partners" ? <BusinessPartnersTab /> : activeTab === "grpo" ? <GrpoInspectorTab renderDetails={record => <RecordDetails record={record} />} /> : <>
           <div className="mt-4">
             <h2 className="text-sm font-semibold">{tab.label}</h2>
             <p className="mt-0.5 text-xs text-[#81766b]">{tab.description}</p>
