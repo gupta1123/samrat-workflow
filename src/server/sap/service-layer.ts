@@ -11,6 +11,7 @@ import type { SapWithholdingTaxRow } from "./draft-total";
 import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
 import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
 import { readODataCollection } from "./odata-pagination";
+import { businessPartnerReadPath, type BusinessPartnerQuery } from "@/lib/sap-business-partners";
 
 type SapDraftResponse = {
   DocEntry?: number;
@@ -129,6 +130,7 @@ export async function withTestServiceLayer<T>(
     listSuppliers: () => Promise<SapSupplierRow[]>;
     searchSuppliers: (query: string) => Promise<SapSupplierRow[]>;
     getSupplier: (cardCode: string) => Promise<SapSupplierRow | null>;
+    listBusinessPartnersPage: (query: BusinessPartnerQuery) => Promise<Record<string, unknown>[]>;
     listOpenReceiptDocumentsForVendor: (
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
@@ -526,6 +528,9 @@ export async function withTestServiceLayer<T>(
             "&$orderby=CardCode%20asc",
           5000,
         );
+      },
+      async listBusinessPartnersPage(query) {
+        return pageAll<Record<string, unknown>>(businessPartnerReadPath(query), query.limit + 1);
       },
       async searchSuppliers(query) {
         const term = query.trim().replaceAll("'", "''").slice(0, 60);

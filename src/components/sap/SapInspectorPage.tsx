@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/dashboard/AppShell";
 import { Button } from "@/components/ui/button";
+import { BusinessPartnersTab } from "./BusinessPartnersTab";
 import type {
   SapInspectorDataset,
   SapInspectorFinding,
@@ -33,12 +34,18 @@ type DatasetState =
 type RecordFilter = "all" | "open" | "issues";
 
 const PAGE_SIZE = 25;
+type InspectorTab = SapInspectorDataset | "business-partners";
 
 const TABS: Array<{
-  id: SapInspectorDataset;
+  id: InspectorTab;
   label: string;
   description: string;
 }> = [
+  {
+    id: "business-partners",
+    label: "Business Partners",
+    description: "SAP Business Partner master data",
+  },
   {
     id: "open-po",
     label: "Open PO",
@@ -279,7 +286,8 @@ function recordSearchText(record: SapInspectorRecord) {
 }
 
 export function SapInspectorPage() {
-  const [activeTab, setActiveTab] = useState<SapInspectorDataset>("open-po");
+  const [activeTab, setActiveTab] = useState<InspectorTab>("open-po");
+  const [initialized, setInitialized] = useState(false);
   const [states, setStates] = useState<
     Partial<Record<SapInspectorDataset, DatasetState>>
   >({});
@@ -324,15 +332,21 @@ export function SapInspectorPage() {
   }, []);
 
   useEffect(() => {
-    if (!states[activeTab]) void load(activeTab);
-  }, [activeTab, load, states]);
+    if (initialized && activeTab !== "business-partners" && !states[activeTab]) void load(activeTab);
+  }, [activeTab, initialized, load, states]);
+
+  useEffect(() => {
+    const initial = new URLSearchParams(window.location.search).get("tab");
+    if (TABS.some((tab) => tab.id === initial)) setActiveTab(initial as InspectorTab);
+    setInitialized(true);
+  }, []);
 
   useEffect(() => {
     setPage(1);
     setExpanded(null);
   }, [activeTab, query, filter]);
 
-  const activeState = states[activeTab];
+  const activeState = activeTab === "business-partners" ? null : states[activeTab];
   const data = activeState?.status === "ready" ? activeState.data : null;
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase("en-IN");
@@ -382,7 +396,7 @@ export function SapInspectorPage() {
                 a packet cannot find or use that record.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            {activeTab !== "business-partners" ? <div className="flex items-center gap-2">
               {data ? (
                 <div className="text-right text-[10px] leading-4 text-[#897f74]">
                   <div>{data.source}</div>
@@ -405,13 +419,13 @@ export function SapInspectorPage() {
                 )}
                 Refresh SAP
               </Button>
-            </div>
+            </div> : null}
           </header>
 
           <div className="mt-6 overflow-x-auto border-b border-[#ddd5ca]">
             <div className="flex min-w-max gap-1" role="tablist" aria-label="SAP datasets">
               {TABS.map((item) => {
-                const state = states[item.id];
+                const state = item.id === "business-partners" ? null : states[item.id];
                 const count = state?.status === "ready" ? state.data.records.length : null;
                 const active = item.id === activeTab;
                 return (
@@ -420,7 +434,12 @@ export function SapInspectorPage() {
                     type="button"
                     role="tab"
                     aria-selected={active}
-                    onClick={() => setActiveTab(item.id)}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      const url = new URL(window.location.href);
+                      url.searchParams.set("tab", item.id);
+                      window.history.replaceState(null, "", url);
+                    }}
                     className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
                       active
                         ? "border-[#6b3d20] text-[#3e2414]"
@@ -439,6 +458,7 @@ export function SapInspectorPage() {
             </div>
           </div>
 
+          {activeTab === "business-partners" ? <BusinessPartnersTab /> : <>
           <div className="mt-4">
             <h2 className="text-sm font-semibold">{tab.label}</h2>
             <p className="mt-0.5 text-xs text-[#81766b]">{tab.description}</p>
@@ -649,6 +669,7 @@ export function SapInspectorPage() {
               </div>
             </>
           ) : null}
+          </>}
         </div>
       </div>
     </AppShell>
