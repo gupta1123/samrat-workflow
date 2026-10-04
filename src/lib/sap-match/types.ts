@@ -50,6 +50,8 @@ export type MatchInvoiceLine = {
 
 export type MatchInvoice = {
   invoiceNumber: string;
+  /** The primary scanned invoice, when recorded in the saved packet. */
+  source?: { fileName: string | null; pageLabel: string | null };
   /** YYYY-MM-DD */
   invoiceDate: string | null;
   vendorName: string | null;
@@ -240,7 +242,14 @@ export type LineResult = {
   allocatedQty: number;
   manual: boolean;
   /** Ordered quantity/rate/value of the PO the allocation points at. */
-  po: { docNum: number | null; ref: string | null; qty: number | null; rate: number | null } | null;
+  po: {
+    docNum: number | null;
+    ref: string | null;
+    qty: number | null;
+    rate: number | null;
+    /** A GRPO rate can be used when the linked PO price is unavailable. */
+    rateSource?: "po" | "grpo";
+  } | null;
 };
 
 export type PlannedDocumentLine = {

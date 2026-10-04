@@ -177,6 +177,16 @@ test("clean match: one truck, one receipt is ready and builds a linked payload",
   assert.equal(result.payload?.freightExpense, 130685.28);
   assert.equal(result.payload?.docDate, "2026-06-10");
   assert.equal(result.payload?.numAtCard, "1444099137");
+  assert.equal(result.lines[0].po?.rateSource, "po");
+});
+
+test("a GRPO price fallback is identified even when the PO line still exists", () => {
+  const source = receipt(4412, truck);
+  source.po.price = null;
+  const result = evaluateMatch({ invoice: invoice(), context: context([source]) });
+  assert.equal(result.lines[0].po?.qty, source.po.quantity);
+  assert.equal(result.lines[0].po?.rate, source.receipt.price);
+  assert.equal(result.lines[0].po?.rateSource, "grpo");
 });
 
 test("a small short receipt needs a decision and can only be settled by stores or a return", () => {

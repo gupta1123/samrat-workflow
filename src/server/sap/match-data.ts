@@ -256,7 +256,7 @@ export async function computeCaseMatch(params: {
   const [documents, mismatchAttributions] = await Promise.all([
     db
       .from("packet_documents")
-      .select("client_document_id, document_type, extracted_fields")
+      .select("client_document_id, document_type, extracted_fields, source_file_name, source_hint")
       .eq("case_id", caseRow.id)
       .order("created_at"),
     db

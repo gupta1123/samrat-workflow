@@ -18,6 +18,8 @@ import type { SapMatchDocument } from "./service-layer";
 type StoredDocument = {
   document_type: unknown;
   extracted_fields: unknown;
+  source_file_name?: unknown;
+  source_hint?: unknown;
 };
 
 function record(value: unknown): Record<string, unknown> {
@@ -136,6 +138,10 @@ export function buildMatchInvoice(input: {
 
   return {
     invoiceNumber,
+    source: {
+      fileName: text(primary.source_file_name) || null,
+      pageLabel: text(primary.source_hint).match(/\bpages?\s+\d+(?:\s*[-–]\s*\d+)?/i)?.[0] ?? null,
+    },
     invoiceDate: sapInvoiceDate(fields.documentDate),
     vendorName: text(fields.vendorName) || text(fields.supplierName) || null,
     vendorGstin: text(fields.supplierGstin) || null,

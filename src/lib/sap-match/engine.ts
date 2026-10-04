@@ -798,7 +798,7 @@ function evaluateMaterialLine(args: {
           po.poRefs.some((ref) => invoice.poReferences.map(normalizeRef).includes(normalizeRef(ref)))),
     );
     if (openPo && !manual) {
-      result.po = { docNum: openPo.docNum, ref: openPo.poRefs[0] ?? null, qty: openPo.quantity, rate: openPo.price };
+      result.po = { docNum: openPo.docNum, ref: openPo.poRefs[0] ?? null, qty: openPo.quantity, rate: openPo.price, rateSource: "po" };
       checks.push({
         id: `rcpt-${i}`,
         lineIndex: i,
@@ -858,6 +858,7 @@ function evaluateMaterialLine(args: {
     ref: first.receipt.poRefs[0] ?? null,
     qty: poQty,
     rate: poRate,
+    rateSource: po?.price != null ? "po" : "grpo",
   };
 
   // Quantity
@@ -1069,7 +1070,7 @@ function evaluateServiceLine(args: {
     });
     return;
   }
-  result.po = { docNum: pick.po.docNum, ref: pick.po.poRefs[0] ?? null, qty: pick.po.quantity, rate: pick.po.price };
+  result.po = { docNum: pick.po.docNum, ref: pick.po.poRefs[0] ?? null, qty: pick.po.quantity, rate: pick.po.price, rateSource: "po" };
   checks.push({ id: `rcpt-${i}`, lineIndex: i, sev: "pass", title: `Matched to PO ${pick.po.docNum}` });
   const open = pick.view.open;
   if (amount <= open + 0.5) {

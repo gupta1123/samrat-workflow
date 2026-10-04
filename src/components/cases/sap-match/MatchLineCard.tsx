@@ -35,22 +35,63 @@ function Row({
   received,
   billed,
   tone,
+  orderNote,
+  billedNote,
 }: {
   label: string;
   order: string;
   received: string;
   billed: string;
   tone: Tone;
+  orderNote?: string;
+  billedNote?: string;
 }) {
   return (
     <tr className="border-t border-[#f0ece4]">
       <td className="py-2 pr-3 text-[#6b5d50]">{label}</td>
-      <td className="py-2 pr-3 tabular-nums text-[#111827]">{order}</td>
+      <td className="py-2 pr-3 tabular-nums text-[#111827]">
+        {order}
+        {orderNote ? (
+          <div className="mt-0.5 text-[9px] text-[#6b5d50]">{orderNote}</div>
+        ) : null}
+      </td>
       <td className="py-2 pr-3 tabular-nums text-[#111827]">{received}</td>
       <td className={`py-2 tabular-nums font-semibold ${TONE_TEXT[tone]}`}>
         {billed}
+        {billedNote ? (
+          <div className="mt-0.5 text-[9px] font-normal text-[#6b5d50]">
+            {billedNote}
+          </div>
+        ) : null}
       </td>
     </tr>
+  );
+}
+
+function SourceHeader({
+  title,
+  reference,
+  detail,
+}: {
+  title: string;
+  reference: string;
+  detail?: string;
+}) {
+  return (
+    <th scope="col" className="w-[29%] pb-2 pr-3 align-top font-semibold">
+      <div className="text-[10px] uppercase tracking-wide">{title}</div>
+      <div className="mt-1 text-[9px] font-normal normal-case tracking-normal">
+        {reference}
+      </div>
+      {detail ? (
+        <div
+          className="mt-0.5 max-w-[210px] truncate text-[9px] font-normal normal-case tracking-normal"
+          title={detail}
+        >
+          {detail}
+        </div>
+      ) : null}
+    </th>
   );
 }
 
@@ -121,6 +162,29 @@ export function MatchLineCard({
     !service && line.po?.rate != null && line.invoiceRate != null
       ? line.invoiceRate - line.po.rate
       : null;
+  const grpoNumbers = [
+    ...new Set(
+      selected
+        .filter((candidate) => candidate.kind === "GRPO")
+        .map((candidate) => candidate.docNum),
+    ),
+  ];
+  const poNumber =
+    line.po?.docNum ??
+    selected.find((candidate) => candidate.kind === "PO")?.docNum;
+  const invoiceSource = [invoice.source?.fileName, invoice.source?.pageLabel]
+    .filter(Boolean)
+    .join(" · ");
+  const grpoRateFallback = line.po?.rateSource === "grpo";
+  const grpoRates = [
+    ...new Set(
+      selected
+        .filter(
+          (candidate) => candidate.kind === "GRPO" && candidate.price != null,
+        )
+        .map((candidate) => inr(candidate.price)),
+    ),
+  ];
 
   return (
     <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
@@ -172,15 +236,35 @@ export function MatchLineCard({
                 : `${quantity(line.allocatedQty)} allocated of ${quantity(line.invoiceQty)} billed`}
             </p>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[360px] text-[11px]">
+              <table className="w-full min-w-[520px] text-[11px]">
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wider text-[#6b5d50]">
-                    <th className="w-24 pb-1 font-semibold" />
-                    <th className="pb-1 font-semibold">Purchase Order</th>
-                    <th className="pb-1 font-semibold">
-                      {service ? "Service" : "GRPO"}
+                    <th scope="col" className="w-20 pb-1 font-semibold">
+                      <span className="sr-only">Field</span>
                     </th>
-                    <th className="pb-1 font-semibold">Vendor Invoice</th>
+                    <SourceHeader
+                      title="SAP Purchase Order"
+                      reference={
+                        poNumber != null
+                          ? `PO No. ${poNumber}`
+                          : "No SAP PO linked"
+                      }
+                    />
+                    <SourceHeader
+                      title="SAP Goods Receipt PO (GRPO)"
+                      reference={
+                        service
+                          ? "Not required for services"
+                          : grpoNumbers.length
+                            ? `GRPO No. ${grpoNumbers.join(", ")}`
+                            : "No GRPO selected"
+                      }
+                    />
+                    <SourceHeader
+                      title="Scanned Supplier Invoice"
+                      reference={`Invoice No. ${invoice.invoiceNumber}`}
+                      detail={invoiceSource || undefined}
+                    />
                   </tr>
                 </thead>
                 <tbody>
@@ -215,10 +299,26 @@ export function MatchLineCard({
                       />
                       <Row
                         label="Unit Price"
-                        order={line.po?.rate != null ? inr(line.po.rate) : "—"}
-                        received="—"
+                        order={
+                          !grpoRateFallback && line.po?.rate != null
+                            ? inr(line.po.rate)
+                            : "—"
+                        }
+                        orderNote={
+                          grpoRateFallback
+                            ? "PO price unavailable"
+                            : line.po?.rate != null && !line.po.rateSource
+                              ? "Price source not recorded"
+                              : undefined
+                        }
+                        received={grpoRates.join(" / ") || "—"}
                         billed={`${inr(line.invoiceRate)}${rateDelta !== null && Math.abs(rateDelta) > 0.005 ? ` (${rateDelta > 0 ? "+" : "−"}${inr(Math.abs(rateDelta))})` : ""}`}
                         tone={toneOf(checks, [`rate-${line.index}`])}
+                        billedNote={
+                          grpoRateFallback
+                            ? `Compared with GRPO${grpoNumbers[0] != null ? ` No. ${grpoNumbers[0]}` : ""} price`
+                            : undefined
+                        }
                       />
                       <Row
                         label="Vehicle No."
@@ -233,6 +333,11 @@ export function MatchLineCard({
                           ].join(", ") || "—"
                         }
                         billed={invoice.vehicles.join(", ") || "—"}
+                        billedNote={
+                          invoice.vehicles.length
+                            ? "From scanned packet"
+                            : undefined
+                        }
                         tone={toneOf(checks, [`anchor-${line.index}`])}
                       />
                     </>
@@ -242,6 +347,11 @@ export function MatchLineCard({
                     order={line.po?.ref ?? "—"}
                     received="—"
                     billed={invoice.poReferences.join(", ") || "—"}
+                    billedNote={
+                      invoice.poReferences.length
+                        ? "From scanned packet"
+                        : undefined
+                    }
                     tone="ok"
                   />
                 </tbody>

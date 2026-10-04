@@ -118,6 +118,26 @@ test("no numbered vendor invoice means nothing to match", () => {
   );
 });
 
+test("invoice source identifies the selected invoice, not another scanned document", () => {
+  const invoice = buildMatchInvoice({
+    caseInvoiceNumber: "INV-2",
+    casePoNumber: null,
+    documents: [
+      { ...stored("Invoice", { invoiceNumber: "INV-1" }), source_file_name: "other.pdf", source_hint: "other.pdf · Page 1" },
+      { ...stored("Tax Invoice", { invoiceNumber: "INV-2" }), source_file_name: "packet.pdf", source_hint: "packet.pdf · Pages 2–3" },
+    ],
+  });
+  assert.deepEqual(invoice?.source, { fileName: "packet.pdf", pageLabel: "Pages 2–3" });
+});
+
+test("older invoices do not invent a source file or page", () => {
+  const invoice = buildMatchInvoice({
+    caseInvoiceNumber: "INV-1", casePoNumber: null,
+    documents: [stored("Invoice", { invoiceNumber: "INV-1" })],
+  });
+  assert.deepEqual(invoice?.source, { fileName: null, pageLabel: null });
+});
+
 test("vendor resolution prefers an exact name and refuses ambiguity", () => {
   const suppliers = [
     { CardCode: "V-TATA01", CardName: "Tata Steel Limited" },
