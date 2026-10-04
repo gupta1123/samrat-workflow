@@ -22,10 +22,10 @@ const yesNo = (value: boolean | null) =>
 
 export function BusinessPartnersTab() {
   const [search, setSearch] = useState("");
-  const [type, setType] = useState<BusinessPartnerType>("all");
+  const [type, setType] = useState<BusinessPartnerType>("cSupplier");
   const [criteria, setCriteria] = useState({
     search: "",
-    type: "all" as BusinessPartnerType,
+    type: "cSupplier" as BusinessPartnerType,
   });
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const [page, setPage] = useState(0);
