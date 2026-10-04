@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { GET } from "../src/app/api/cases/[id]/sap-match/route";
+import { postedFixture } from "./sap-posted-fixture";
 
 const userId = "a1111111-1111-4111-8111-111111111111";
 const caseId = "f8753e44-f8ac-412a-b507-58b7e79836f3";
@@ -32,6 +33,9 @@ function setup(
     ownsCase?: boolean;
     validSession?: boolean;
     environment?: string;
+    nextCases?: string[];
+    postedCases?: string[];
+    historyError?: boolean;
   } = {},
 ) {
   const env = {
@@ -78,6 +82,15 @@ function setup(
       }
       assert.equal(url.searchParams.get("owner_user_id"), `eq.${userId}`);
       if (url.pathname === "/rest/v1/packet_cases") {
+        if (url.searchParams.get("select") === "id") {
+          assert.equal(url.searchParams.get("id"), `neq.${caseId}`);
+          assert.equal(url.searchParams.get("deleted_at"), "is.null");
+          assert.equal(
+            url.searchParams.get("status"),
+            "in.(completed,accepted,rejected)",
+          );
+          return Response.json((options.nextCases ?? []).map((id) => ({ id })));
+        }
         assert.equal(url.searchParams.get("id"), `eq.${caseId}`);
         return Response.json(
           options.ownsCase === false
@@ -85,7 +98,34 @@ function setup(
             : [{ id: caseId, status: "accepted", deleted_at: null }],
         );
       }
+      if (
+        url.pathname === "/rest/v1/sap_postings" &&
+        url.searchParams.get("select") === "case_id"
+      ) {
+        assert.equal(
+          url.searchParams.get("sap_env"),
+          `eq.${options.environment ?? "test"}`,
+        );
+        assert.equal(url.searchParams.get("kind"), "eq.AP");
+        assert.equal(url.searchParams.get("status"), "eq.posted");
+        return Response.json(
+          (options.postedCases ?? []).map((id) => ({ case_id: id })),
+        );
+      }
       assert.equal(url.searchParams.get("case_id"), `eq.${caseId}`);
+      if (url.pathname === "/rest/v1/case_review_events") {
+        if (options.historyError)
+          return Response.json(
+            { message: "History unavailable" },
+            { status: 403 },
+          );
+        return Response.json([
+          {
+            action: "sap_ap_invoice_posted",
+            created_at: "2026-10-01T12:00:00Z",
+          },
+        ]);
+      }
       if (url.pathname === "/rest/v1/sap_postings")
         return Response.json(options.postings ?? [posting]);
       if (url.pathname === "/rest/v1/sap_match_jobs") {
@@ -133,6 +173,8 @@ for (const refresh of [false, true]) {
       "/auth/v1/user",
       "/rest/v1/packet_cases",
       "/rest/v1/sap_postings",
+      "/rest/v1/case_review_events",
+      "/rest/v1/packet_cases",
     ]);
   });
 }
@@ -145,7 +187,7 @@ test("posted invoice in the live company also returns without starting test matc
   const result = await read();
   assert.equal(result.status, 200);
   assert.equal((await result.json()).reason, "Posted as A/P invoice 848");
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 5);
 });
 
 for (const [name, postings] of [
@@ -175,4 +217,38 @@ test("the posted shortcut still requires a valid session", async (t) => {
   const result = await read();
   assert.equal(result.status, 401);
   assert.deepEqual(calls, ["/auth/v1/user"]);
+});
+
+test("posted details return the saved match, never the current matching job, and hide raw posting data", async (t) => {
+  const calls = setup(t, {
+    postings: [postedFixture],
+    nextCases: ["already-posted", "next-invoice"],
+    postedCases: ["already-posted"],
+  });
+  const result = await read(true);
+  assert.equal(result.status, 200);
+  const body = await result.json();
+  assert.equal(body.postedDetails.match.result.status, "ready");
+  assert.equal(body.postedDetails.bases[0].number, "718");
+  assert.equal(body.postedDetails.nextCaseId, "next-invoice");
+  assert.equal(body.postings[0].payload, undefined);
+  assert.equal(body.postings[0].response, undefined);
+  assert.equal(calls.includes("/rest/v1/sap_match_jobs"), false);
+});
+
+test("a history read error cannot hide a confirmed posting", async (t) => {
+  setup(t, { historyError: true });
+  t.mock.method(console, "error", () => {});
+  const result = await read();
+  assert.equal(result.status, 200);
+  const body = await result.json();
+  assert.equal(body.reason, "Posted as A/P invoice 848");
+  assert.deepEqual(body.postedDetails.history, []);
+});
+
+test("next invoice is omitted when every other reviewable case is already posted", async (t) => {
+  setup(t, { nextCases: ["completed-case"], postedCases: ["completed-case"] });
+  const result = await read();
+  assert.equal(result.status, 200);
+  assert.equal((await result.json()).postedDetails.nextCaseId, null);
 });

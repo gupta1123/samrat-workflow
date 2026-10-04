@@ -1,3 +1,4 @@
+import { sapMatchPresentation } from "./terminology";
 import {
   DEFAULT_MATCH_RULES,
   EMPTY_MATCH_STATE,
@@ -301,6 +302,15 @@ const RETURN_OPTION: CheckOption = {
 };
 
 export function evaluateMatch(input: EvaluateInput): MatchResult {
+  return sapMatchPresentation(evaluateMatchRaw(input), [
+    input.invoice.vendorName ?? "",
+    input.context.vendor?.cardName ?? "",
+    ...input.invoice.lines.map((line) => line.description ?? ""),
+    ...Object.values(input.context.items).map((item) => item.name),
+  ]);
+}
+
+function evaluateMatchRaw(input: EvaluateInput): MatchResult {
   const rules: MatchRules = { ...DEFAULT_MATCH_RULES, ...input.rules };
   const state = input.state ?? EMPTY_MATCH_STATE;
   const { invoice, context } = input;

@@ -17,6 +17,7 @@ import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
 import { buildMatchInvoice, vendorKeys } from "@/server/sap/match-mapping";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 import { findPostedApInvoice } from "@/lib/sap-match-progress";
+import { readPostedSapDetails } from "@/server/sap/posted-details";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -37,7 +38,7 @@ async function postings(
 ) {
   const result = await db
     .from("sap_postings")
-    .select("kind, status, sap_env, sap_docnum, error, created_at, updated_at")
+    .select("kind, status, sap_env, sap_docnum, error, created_at, updated_at, payload, response")
     .eq("case_id", uuid(caseId))
     .eq("owner_user_id", user)
     .order("created_at");
@@ -55,7 +56,10 @@ export async function GET(request: Request, context: Context) {
       sapEnv,
       caseStatus: row.status,
       postable: row.status === "accepted",
-      postings: savedPostings,
+      postings: savedPostings.map(({ payload, response, ...posting }) => {
+        void payload; void response;
+        return posting;
+      }),
     };
     const posted = findPostedApInvoice(savedPostings, sapEnv);
     if (posted) {
@@ -64,6 +68,7 @@ export async function GET(request: Request, context: Context) {
         postable: false,
         available: false,
         reason: `Posted as A/P invoice ${posted.sap_docnum}`,
+        postedDetails: await readPostedSapDetails(db, user, id, sapEnv, posted),
       };
     }
     if (!REVIEWABLE.includes(row.status)) {

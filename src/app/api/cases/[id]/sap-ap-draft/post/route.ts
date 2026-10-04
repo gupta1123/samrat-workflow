@@ -11,6 +11,7 @@ import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 import { sapMaterialFormPolicy } from "@/lib/sap-material-form";
+import { postingLineSnapshot } from "@/lib/sap-posted-details";
 import {
   resolveSapTransporter,
   sapTransportFieldUpdates,
@@ -582,6 +583,7 @@ async function handle(
           invoiceDate: expectedInvoiceDate,
           baseKind: payload.baseKind,
           baseDocument: payload.baseDocNum,
+          lines: postingLineSnapshot(draft.DocumentLines),
         };
         const materialFormState =
           requiresMaterialForm && materialForm
@@ -738,6 +740,16 @@ async function handle(
           FinalDocNum: result.invoice?.DocNum,
           FinalizeResponse: result.serviceResult,
           MaterialForm: savedMaterialForm,
+          PostingSummary: result.draft ?? {
+            vendorCode: result.invoice?.CardCode,
+            vendorName: result.invoice?.CardName,
+            invoiceNumber: expectedInvoiceNumber,
+            postingDate: expectedPostingDate,
+            invoiceDate: expectedInvoiceDate,
+            total: result.invoice?.DocTotal,
+            currency: result.invoice?.DocCurrency,
+            lines: postingLineSnapshot(result.invoice?.DocumentLines),
+          },
         },
         error: null,
       })

@@ -8,6 +8,7 @@ import {
   withUser,
 } from "@/server/api/helpers";
 import { readSapEnvironment } from "@/server/sap/config";
+import { saveSapMatch } from "@/lib/sap-posted-details";
 import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
 import {
   buildMatchedDraftPayload,
@@ -188,6 +189,7 @@ export async function POST(request: Request, context: Context) {
           documentType: "APInvoiceDraft",
           caseId: id,
           matched: true,
+          matchSnapshot: saveSapMatch(match, created.postingDate),
           method: match.result.method,
           baseKind: match.result.baseDocuments.some((doc) => doc.kind === "PO") ? "PO" : "GRPO",
           baseDocNum: first.docNum,

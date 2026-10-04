@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { sapMessage } from "@/lib/sap-match/terminology";
 import { apiFetch } from "@/lib/api-client";
 import {
   fetchCaseDetailPreferCache,
@@ -105,9 +106,7 @@ type MaterialFormConfig = {
   options: Array<{ value: string; label: string }>;
 };
 
-function formatMoney(
-  value: string | number | null | undefined,
-): string {
+function formatMoney(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") return "—";
   const numericValue = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numericValue)) return "—";
@@ -129,9 +128,7 @@ function formatDate(value: string | null | undefined): string {
   }).format(date);
 }
 
-function formatQuantity(
-  value: string | number | null | undefined,
-): string {
+function formatQuantity(value: string | number | null | undefined): string {
   if (value === null || value === undefined || value === "") return "—";
   const numericValue = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(numericValue)) return "—";
@@ -214,7 +211,9 @@ function buildPostedInvoiceView(documents: SavedCaseDocument[]) {
   const headerSum = (key: string) =>
     invoices.length
       ? sumOrNull(
-          invoices.map((document) => invoiceAmount(document.extractedFields[key])),
+          invoices.map((document) =>
+            invoiceAmount(document.extractedFields[key]),
+          ),
         )
       : null;
   const headerTaxable = headerSum("subtotal");
@@ -291,10 +290,10 @@ function PostedApInvoiceView({
         <div>
           <div className="text-[12px] font-semibold">
             Already posted in SAP Test
-            {postedDocNum ? ` · AP invoice ${postedDocNum}` : ""}
+            {postedDocNum ? ` · A/P Invoice ${postedDocNum}` : ""}
           </div>
           <div className="mt-0.5 text-[11px] leading-4">
-            Linked to {baseLabel} {baseDocNum ?? "—"}. SAP vendor reference:{" "}
+            Base Document {baseLabel} {baseDocNum ?? "—"}. SAP vendor reference:{" "}
             {result.postedInvoice?.vendorReference || "not recorded"}. This
             invoice cannot be created or posted again.
           </div>
@@ -337,13 +336,13 @@ function PostedApInvoiceView({
             </span>
           </div>
           <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-right text-[11px]">
-            <dt className="text-[#8a7f72]">Vendor ref.</dt>
+            <dt className="text-[#8a7f72]">Vendor Ref. No.</dt>
             <dd className="font-semibold tabular-nums text-[#111827]">
               {view.invoiceNumber ??
                 result.postedInvoice?.vendorReference ??
                 "—"}
             </dd>
-            <dt className="text-[#8a7f72]">Invoice date</dt>
+            <dt className="text-[#8a7f72]">Document Date</dt>
             <dd className="font-medium tabular-nums text-[#111827]">
               {formatDate(view.invoiceDate)}
             </dd>
@@ -383,8 +382,12 @@ function PostedApInvoiceView({
                 <tr className="border-b border-[#e0d8cc] text-[10px] uppercase tracking-wider text-[#8a7f72]">
                   <th className="w-8 py-2 pr-2 text-left font-semibold">#</th>
                   <th className="py-2 pr-3 text-left font-semibold">Item</th>
-                  <th className="py-2 pl-3 text-right font-semibold">Qty</th>
-                  <th className="py-2 pl-3 text-right font-semibold">Rate</th>
+                  <th className="py-2 pl-3 text-right font-semibold">
+                    Quantity
+                  </th>
+                  <th className="py-2 pl-3 text-right font-semibold">
+                    Unit Price
+                  </th>
                   <th className="py-2 pl-3 text-right font-semibold">
                     Taxable
                   </th>
@@ -593,12 +596,12 @@ export function SapInvoicePreparePanel({
       }
       setSaveResult(
         response.ok
-          ? (body.message ?? "SAP Test AP Invoice Draft created.")
+          ? (body.message ?? "SAP Test A/P Invoice Draft created.")
           : (body.error ?? "Draft creation failed."),
       );
     } catch {
       setSaveFailed(true);
-      setSaveResult("Could not create the SAP draft.");
+      setSaveResult("Could not create the A/P Invoice Draft.");
     } finally {
       setSaving(false);
       setConfirming(false);
@@ -617,9 +620,7 @@ export function SapInvoicePreparePanel({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            materialForm
-              ? { materialForm: selectedMaterialForm }
-              : {},
+            materialForm ? { materialForm: selectedMaterialForm } : {},
           ),
         },
       );
@@ -627,7 +628,7 @@ export function SapInvoicePreparePanel({
       setSaveFailed(!response.ok);
       setSaveResult(
         response.ok
-          ? (body.message ?? "SAP Test AP Invoice posted successfully.")
+          ? (body.message ?? "SAP Test A/P Invoice posted successfully.")
           : (body.error ?? "Final SAP posting failed."),
       );
       if (response.ok && body.posted && body.docNum) {
@@ -646,7 +647,7 @@ export function SapInvoicePreparePanel({
       }
     } catch {
       setSaveFailed(true);
-      setSaveResult("Could not post the final AP invoice in SAP Test.");
+      setSaveResult("Could not post the A/P Invoice in SAP Test.");
     } finally {
       setFinalPosting(false);
     }
@@ -740,9 +741,9 @@ export function SapInvoicePreparePanel({
         "The PO returned by the legacy SAP list could not be verified in the SAP Test company.",
       no_line_match:
         "A vendor or document number was found, but none of the invoice lines matched. Review the SAP document before proceeding.",
-      closed_po: `${documentLabel} exists in SAP Test but is closed. This check did not confirm a linked posted AP invoice; it cannot be used for a new draft.`,
-      closed_grpo: `${documentLabel} exists in SAP Test but is closed. This check did not confirm a linked posted AP invoice; it cannot be used for a new draft.`,
-      already_posted: `A posted SAP Test AP invoice ${data?.postedInvoice?.docNum ?? "—"} is linked to ${documentLabel}. SAP vendor reference: ${data?.postedInvoice?.vendorReference || "not recorded"}. Do not post this packet again.`,
+      closed_po: `${documentLabel} exists in SAP Test but is closed. This check did not confirm a linked posted A/P Invoice; it cannot be used for a new draft.`,
+      closed_grpo: `${documentLabel} exists in SAP Test but is closed. This check did not confirm a linked posted A/P Invoice; it cannot be used for a new draft.`,
+      already_posted: `A posted SAP Test A/P Invoice ${data?.postedInvoice?.docNum ?? "—"} is linked to ${documentLabel}. SAP vendor reference: ${data?.postedInvoice?.vendorReference || "not recorded"}. Do not post this packet again.`,
       error: "Could not load SAP data. Try again.",
     };
     const message =
@@ -762,7 +763,7 @@ export function SapInvoicePreparePanel({
         <div className="px-4 py-4">
           <div className="text-[11px] font-medium text-[#3d3530]">{title}</div>
           <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">
-            {message}
+            {sapMessage(message)}
           </div>
         </div>
       );
@@ -775,7 +776,9 @@ export function SapInvoicePreparePanel({
             <div className="text-[12px] font-semibold text-[#3d3530]">
               {title}
             </div>
-            <div className="mt-0.5 text-[11px] text-[#8a7f72]">{message}</div>
+            <div className="mt-0.5 text-[11px] text-[#8a7f72]">
+              {sapMessage(message)}
+            </div>
           </div>
         </div>
       </div>
@@ -820,8 +823,10 @@ export function SapInvoicePreparePanel({
   }
 
   const lineStats = {
-    exact: matchedLines?.filter((l) => l.matchConfidence === "exact").length ?? 0,
-    fuzzy: matchedLines?.filter((l) => l.matchConfidence === "fuzzy").length ?? 0,
+    exact:
+      matchedLines?.filter((l) => l.matchConfidence === "exact").length ?? 0,
+    fuzzy:
+      matchedLines?.filter((l) => l.matchConfidence === "fuzzy").length ?? 0,
     none: matchedLines?.filter((l) => l.matchConfidence === "none").length ?? 0,
   };
   const matchPercent =
@@ -831,7 +836,10 @@ export function SapInvoicePreparePanel({
   const documentStatus = sapPosting
     ? sapPosting.status === "posted"
       ? { label: "Posted", tone: "bg-[#ebf5ee] text-[#1b4332] ring-[#c3dfcb]" }
-      : { label: "Draft saved", tone: "bg-[#eef2fb] text-[#1e3a8a] ring-[#cdd8f1]" }
+      : {
+          label: "A/P Invoice Draft saved",
+          tone: "bg-[#eef2fb] text-[#1e3a8a] ring-[#cdd8f1]",
+        }
     : { label: "Preview", tone: "bg-[#f4efe7] text-[#6b5d50] ring-[#e0d8cc]" };
 
   return (
@@ -894,15 +902,15 @@ export function SapInvoicePreparePanel({
               </span>
             </div>
             <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-right text-[11px]">
-              <dt className="text-[#8a7f72]">Vendor ref.</dt>
+              <dt className="text-[#8a7f72]">Vendor Ref. No.</dt>
               <dd className="font-semibold tabular-nums text-[#111827]">
                 {apPayload.invoiceNumber ?? "—"}
               </dd>
-              <dt className="text-[#8a7f72]">Invoice date</dt>
+              <dt className="text-[#8a7f72]">Document Date</dt>
               <dd className="font-medium tabular-nums text-[#111827]">
                 {formatDate(apPayload.invoiceDate)}
               </dd>
-              <dt className="text-[#8a7f72]">Posting date</dt>
+              <dt className="text-[#8a7f72]">Posting Date</dt>
               <dd className="font-medium tabular-nums text-[#111827]">
                 {formatDate(apPayload.postingDate)}
               </dd>
@@ -932,7 +940,9 @@ export function SapInvoicePreparePanel({
                 {grpoDocNum ? (
                   <>
                     <dt className="text-[#8a7f72]">GRPO</dt>
-                    <dd className="font-medium tabular-nums text-[#111827]">{grpoDocNum}</dd>
+                    <dd className="font-medium tabular-nums text-[#111827]">
+                      {grpoDocNum}
+                    </dd>
                   </>
                 ) : null}
                 <dt className="text-[#8a7f72]">PO</dt>
@@ -940,7 +950,9 @@ export function SapInvoicePreparePanel({
                   {poDocNum ?? apPayload.poNumber ?? "—"}
                 </dd>
                 <dt className="text-[#8a7f72]">Currency</dt>
-                <dd className="font-medium text-[#111827]">{apPayload.currency ?? "INR"}</dd>
+                <dd className="font-medium text-[#111827]">
+                  {apPayload.currency ?? "INR"}
+                </dd>
               </dl>
             </div>
           </div>
@@ -952,27 +964,44 @@ export function SapInvoicePreparePanel({
                 <tr className="border-b border-[#e0d8cc] text-[10px] uppercase tracking-wider text-[#8a7f72]">
                   <th className="w-8 py-2 pr-2 text-left font-semibold">#</th>
                   <th className="py-2 pr-3 text-left font-semibold">Item</th>
-                  <th className="py-2 pl-3 text-right font-semibold">Qty</th>
-                  <th className="py-2 pl-3 text-right font-semibold">Rate</th>
-                  <th className="py-2 pl-3 text-right font-semibold">Taxable</th>
+                  <th className="py-2 pl-3 text-right font-semibold">
+                    Quantity
+                  </th>
+                  <th className="py-2 pl-3 text-right font-semibold">
+                    Unit Price
+                  </th>
+                  <th className="py-2 pl-3 text-right font-semibold">
+                    Taxable
+                  </th>
                   <th className="py-2 pl-3 text-right font-semibold">Tax</th>
                 </tr>
               </thead>
               <tbody className="tabular-nums">
                 {apPayload.lines.map((line, i) => (
-                  <tr key={i} className="border-b border-[#f0ece4] align-top last:border-0">
-                    <td className="py-3 pr-2 text-[#b3a899]">{String(i + 1).padStart(2, "0")}</td>
+                  <tr
+                    key={i}
+                    className="border-b border-[#f0ece4] align-top last:border-0"
+                  >
+                    <td className="py-3 pr-2 text-[#b3a899]">
+                      {String(i + 1).padStart(2, "0")}
+                    </td>
                     <td className="py-3 pr-3">
                       <div className="font-medium leading-4 text-[#111827]">
                         {line.description ?? "—"}
                       </div>
                       {line.hsnSac ? (
-                        <div className="mt-0.5 text-[10px] text-[#8a7f72]">HSN/SAC {line.hsnSac}</div>
+                        <div className="mt-0.5 text-[10px] text-[#8a7f72]">
+                          HSN/SAC {line.hsnSac}
+                        </div>
                       ) : null}
                     </td>
                     <td className="whitespace-nowrap py-3 pl-3 text-right text-[#111827]">
                       {formatQuantity(line.quantity)}
-                      {line.unit ? <span className="ml-1 text-[10px] text-[#8a7f72]">{line.unit}</span> : null}
+                      {line.unit ? (
+                        <span className="ml-1 text-[10px] text-[#8a7f72]">
+                          {line.unit}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="whitespace-nowrap py-3 pl-3 text-right text-[#3d3530]">
                       {formatMoney(line.rate)}
@@ -994,21 +1023,30 @@ export function SapInvoicePreparePanel({
             <dl className="w-full max-w-[280px] space-y-1.5 text-[11px] tabular-nums">
               <div className="flex justify-between">
                 <dt className="text-[#8a7f72]">Taxable value</dt>
-                <dd className="font-medium text-[#111827]">{formatMoney(apPayload.totals.taxable)}</dd>
+                <dd className="font-medium text-[#111827]">
+                  {formatMoney(apPayload.totals.taxable)}
+                </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-[#8a7f72]">Tax (GST)</dt>
-                <dd className="font-medium text-[#111827]">{formatMoney(apPayload.totals.tax)}</dd>
+                <dd className="font-medium text-[#111827]">
+                  {formatMoney(apPayload.totals.tax)}
+                </dd>
               </div>
               <div className="mt-2 flex items-baseline justify-between rounded-lg bg-[#2b1a10] px-3 py-2.5 text-white">
-                <dt className="text-[11px] font-medium uppercase tracking-wider text-[#e8dccd]">Total</dt>
-                <dd className="text-[16px] font-semibold">{formatMoney(apPayload.totals.total)}</dd>
+                <dt className="text-[11px] font-medium uppercase tracking-wider text-[#e8dccd]">
+                  Total
+                </dt>
+                <dd className="text-[16px] font-semibold">
+                  {formatMoney(apPayload.totals.total)}
+                </dd>
               </div>
             </dl>
           </div>
 
           <footer className="border-t border-dashed border-[#e0d8cc] bg-[#fcfbf9] px-6 py-2.5 text-[10px] leading-4 text-[#8a7f72]">
-            Case {apPayload.caseName} · Values extracted from the vendor invoice. SAP recalculates from the base {baseLabel}.
+            Case {apPayload.caseName} · Values extracted from the vendor
+            invoice. SAP recalculates from the base {baseLabel}.
           </footer>
         </article>
 
@@ -1016,7 +1054,9 @@ export function SapInvoicePreparePanel({
         <aside className="flex flex-col overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
           <div className="border-b border-[#ece6dc] px-4 py-3">
             <div className="flex items-center justify-between">
-              <div className="text-[12px] font-semibold text-[#111827]">SAP line match</div>
+              <div className="text-[12px] font-semibold text-[#111827]">
+                SAP line match
+              </div>
               <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#6b5d50]">
                 {apPayload.invoiceNumber ?? "Invoice"}
                 <ArrowRight className="h-3 w-3" />
@@ -1028,11 +1068,20 @@ export function SapInvoicePreparePanel({
                 [
                   ["Exact", lineStats.exact, "text-[#1b4332]", "bg-[#f3faf5]"],
                   ["Fuzzy", lineStats.fuzzy, "text-[#92400e]", "bg-[#fffbeb]"],
-                  ["Unmatched", lineStats.none, "text-[#991b1b]", "bg-[#fef5f5]"],
+                  [
+                    "Unmatched",
+                    lineStats.none,
+                    "text-[#991b1b]",
+                    "bg-[#fef5f5]",
+                  ],
                 ] as const
               ).map(([label, count, text, bg]) => (
                 <div key={label} className={`rounded-lg px-2.5 py-2 ${bg}`}>
-                  <div className={`text-[16px] font-semibold tabular-nums leading-none ${text}`}>{count}</div>
+                  <div
+                    className={`text-[16px] font-semibold tabular-nums leading-none ${text}`}
+                  >
+                    {count}
+                  </div>
                   <div className="mt-1 text-[10px] text-[#8a7f72]">{label}</div>
                 </div>
               ))}
@@ -1042,22 +1091,34 @@ export function SapInvoicePreparePanel({
           {matchedLines && matchedLines.length > 0 ? (
             <ul className="divide-y divide-[#f0ece4]">
               {matchedLines.map((line, i) => {
-                const sapQty = baseSource === "grpo" ? line.grpoQty : line.poQty;
-                const sapRate = baseSource === "grpo" ? line.grpoRate : line.poRate;
-                const itemCode = baseSource === "grpo" ? line.grpoItemCode : line.poItemCode;
+                const sapQty =
+                  baseSource === "grpo" ? line.grpoQty : line.poQty;
+                const sapRate =
+                  baseSource === "grpo" ? line.grpoRate : line.poRate;
+                const itemCode =
+                  baseSource === "grpo" ? line.grpoItemCode : line.poItemCode;
                 const qtyMismatch =
-                  line.quantity != null && sapQty != null && Number(line.quantity) !== Number(sapQty);
+                  line.quantity != null &&
+                  sapQty != null &&
+                  Number(line.quantity) !== Number(sapQty);
                 const rateMismatch =
-                  line.rate != null && sapRate != null && Math.abs(Number(line.rate) - Number(sapRate)) > 0.01;
+                  line.rate != null &&
+                  sapRate != null &&
+                  Math.abs(Number(line.rate) - Number(sapRate)) > 0.01;
                 return (
                   <li key={i} className="px-4 py-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate text-[11px] font-medium text-[#111827]" title={line.description ?? undefined}>
+                        <div
+                          className="truncate text-[11px] font-medium text-[#111827]"
+                          title={line.description ?? undefined}
+                        >
                           {line.description ?? "—"}
                         </div>
                         {itemCode ? (
-                          <div className="mt-0.5 font-mono text-[10px] text-[#8a7f72]">{itemCode}</div>
+                          <div className="mt-0.5 font-mono text-[10px] text-[#8a7f72]">
+                            {itemCode}
+                          </div>
                         ) : null}
                       </div>
                       <ConfidenceBadge confidence={line.matchConfidence} />
@@ -1065,19 +1126,29 @@ export function SapInvoicePreparePanel({
                     <div className="mt-2 grid grid-cols-[auto_1fr_1fr] gap-x-3 gap-y-0.5 text-[10px] tabular-nums">
                       <span />
                       <span className="text-right text-[#b3a899]">Invoice</span>
-                      <span className="text-right text-[#b3a899]">SAP {baseLabel}</span>
-                      <span className="text-[#8a7f72]">Qty</span>
-                      <span className={`text-right ${qtyMismatch ? "font-semibold text-[#b91c1c]" : "text-[#111827]"}`}>
+                      <span className="text-right text-[#b3a899]">
+                        SAP {baseLabel}
+                      </span>
+                      <span className="text-[#8a7f72]">Quantity</span>
+                      <span
+                        className={`text-right ${qtyMismatch ? "font-semibold text-[#b91c1c]" : "text-[#111827]"}`}
+                      >
                         {formatQuantity(line.quantity)}
                       </span>
-                      <span className={`text-right ${qtyMismatch ? "font-semibold text-[#b91c1c]" : "text-[#111827]"}`}>
+                      <span
+                        className={`text-right ${qtyMismatch ? "font-semibold text-[#b91c1c]" : "text-[#111827]"}`}
+                      >
                         {formatQuantity(sapQty)}
                       </span>
-                      <span className="text-[#8a7f72]">Rate</span>
-                      <span className={`text-right ${rateMismatch ? "font-semibold text-[#b45309]" : "text-[#111827]"}`}>
+                      <span className="text-[#8a7f72]">Unit Price</span>
+                      <span
+                        className={`text-right ${rateMismatch ? "font-semibold text-[#b45309]" : "text-[#111827]"}`}
+                      >
                         {formatMoney(line.rate)}
                       </span>
-                      <span className={`text-right ${rateMismatch ? "font-semibold text-[#b45309]" : "text-[#111827]"}`}>
+                      <span
+                        className={`text-right ${rateMismatch ? "font-semibold text-[#b45309]" : "text-[#111827]"}`}
+                      >
                         {formatMoney(sapRate)}
                       </span>
                     </div>
@@ -1086,7 +1157,9 @@ export function SapInvoicePreparePanel({
               })}
             </ul>
           ) : (
-            <div className="px-4 py-6 text-center text-[11px] text-[#8a7f72]">No line-level match details.</div>
+            <div className="px-4 py-6 text-center text-[11px] text-[#8a7f72]">
+              No line-level match details.
+            </div>
           )}
         </aside>
       </div>
@@ -1099,25 +1172,27 @@ export function SapInvoicePreparePanel({
             <div>
               <div className="text-[12px] font-semibold">
                 {draftCreated
-                  ? "Draft created in SAP Test — not posted"
-                  : "Final AP invoice posted in SAP"}
+                  ? "A/P Invoice Draft saved in SAP Test"
+                  : "A/P Invoice posted in SAP"}
               </div>
               <div className="mt-0.5 text-[11px] leading-4">
                 {draftCreated
-                  ? `Draft ${sapPosting.documentNumber} is saved in SAP Test. It is not a final AP invoice.`
-                  : `AP invoice ${sapPosting.documentNumber} has already been posted. Do not create or post it again.`}
+                  ? `Draft Entry No. ${sapPosting.documentNumber} is saved in SAP Test. It has not been posted as an A/P Invoice.`
+                  : `A/P Invoice ${sapPosting.documentNumber} has already been posted. Do not create or post it again.`}
               </div>
               {draftCreated ? (
                 <>
                   <div className="mt-1 text-[11px] font-medium">
-                    Next step: Review Draft {sapPosting.documentNumber}, then
-                    post it as the final AP invoice when it is correct.
+                    Next step: Review A/P Invoice Draft (Entry No.{" "}
+                    {sapPosting.documentNumber}), then post it as the A/P
+                    Invoice when it is correct.
                   </div>
                   {confirmingFinalPost ? (
                     <div className="mt-3 rounded-md border border-[#d8c5b6] bg-white/70 p-3 text-[#3d3530]">
                       <div className="text-[11px] font-semibold">
-                        Post Draft {sapPosting.documentNumber} as the final AP
-                        invoice in SAP Test?
+                        Post A/P Invoice Draft (Entry No.{" "}
+                        {sapPosting.documentNumber}) as the A/P Invoice in SAP
+                        Test?
                       </div>
                       <div className="mt-0.5 text-[10px] leading-4 text-[#6b5f55]">
                         This creates a final accounting document in SAP Test. It
@@ -1183,7 +1258,8 @@ export function SapInvoicePreparePanel({
                       ) : (
                         <Send className="mr-1.5 h-3 w-3" />
                       )}
-                      Post Draft {sapPosting.documentNumber} as Final AP Invoice
+                      Post A/P Invoice Draft (Entry No.{" "}
+                      {sapPosting.documentNumber}) as A/P Invoice
                     </Button>
                   )}
                 </>
@@ -1195,17 +1271,17 @@ export function SapInvoicePreparePanel({
         <div
           className={`rounded-lg border px-3 py-2 text-[11px] ${saveFailed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}
         >
-          {saveResult}
+          {sapMessage(saveResult)}
         </div>
       ) : null}
       {saveResult && saveFailed && sapPosting ? (
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">
-          {saveResult}
+          {sapMessage(saveResult)}
         </div>
       ) : null}
       {sapPosting ? null : data.caseStatus !== "accepted" ? (
         <p className="text-[11px] text-[#8a7f72]">
-          Approve this case before creating an SAP draft.
+          Approve this case before creating an A/P Invoice Draft.
         </p>
       ) : data.sapEnv !== "test" ? (
         <p className="text-[11px] text-[#b45309]">
@@ -1219,13 +1295,13 @@ export function SapInvoicePreparePanel({
       ) : !canCreateDraft ? (
         <p className="text-[11px] text-[#b45309]">
           A verified open {baseLabel}, invoice total, and approved case are
-          required for an AP Invoice Draft.
+          required for an A/P Invoice Draft.
         </p>
       ) : confirming ? (
         <div className="flex items-center gap-2 text-[11px]">
           <span>
-            Create an AP Invoice Draft in SAP Test from {baseLabel} {baseDocNum}
-            ? No invoice will be posted.
+            Create an A/P Invoice Draft in SAP Test from {baseLabel}{" "}
+            {baseDocNum}? No invoice will be posted.
           </span>
           <Button size="sm" disabled={saving} onClick={() => void handleSave()}>
             {saving ? (
@@ -1247,7 +1323,7 @@ export function SapInvoicePreparePanel({
       ) : null}
       {baseSource === "po" && canCreateDraft && !sapPosting ? (
         <p className="text-[11px] text-[#b45309]">
-          This draft is based directly on a PO. Review goods receipt and
+          This draft is based directly on a PO. Review the Goods Receipt PO and
           inventory impact in SAP before posting the draft as a final invoice.
         </p>
       ) : null}
@@ -1267,7 +1343,7 @@ export function SapInvoicePreparePanel({
             onClick={() => setConfirming(true)}
           >
             <Send className="mr-1.5 h-3 w-3" />
-            Create AP Invoice Draft in SAP Test
+            Create A/P Invoice Draft in SAP Test
           </Button>
         ) : null}
         {!sapPosting ? (

@@ -33,7 +33,9 @@ export function ItemLinker({
     try {
       setResults(await searchSapItems(caseId, query));
     } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : "Search failed.");
+      setError(
+        searchError instanceof Error ? searchError.message : "Search failed.",
+      );
     } finally {
       setSearching(false);
     }
@@ -42,8 +44,14 @@ export function ItemLinker({
   const suggestions = check.itemSuggestions ?? [];
   return (
     <div className="rounded-lg border border-[#f3c6c0] bg-[#fdf3f1] px-4 py-3">
-      <div className="text-[12px] font-semibold text-[#111827]">{check.title}</div>
-      {check.help ? <div className="mt-1 text-[11px] leading-4 text-[#6b5d50]">{check.help}</div> : null}
+      <div className="text-[12px] font-semibold text-[#111827]">
+        {check.title}
+      </div>
+      {check.help ? (
+        <div className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
+          {check.help}
+        </div>
+      ) : null}
       {!canLink ? (
         <div className="mt-2 text-[11px] text-[#b3261e]">
           The SAP vendor must be found before an item can be linked.
@@ -52,17 +60,30 @@ export function ItemLinker({
         <>
           {suggestions.length ? (
             <div className="mt-3 space-y-1.5">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#8a7f72]">Suggested</div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#8a7f72]">
+                Suggested
+              </div>
               {suggestions.map((suggestion) => (
-                <div key={suggestion.itemCode} className="flex items-center gap-2 rounded-md border border-[#e0d8cc] bg-white px-3 py-2">
+                <div
+                  key={suggestion.itemCode}
+                  className="flex items-center gap-2 rounded-md border border-[#e0d8cc] bg-white px-3 py-2"
+                >
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] font-medium text-[#111827]">{suggestion.name}</div>
+                    <div className="truncate text-[11px] font-medium text-[#111827]">
+                      {suggestion.name}
+                    </div>
                     <div className="text-[10px] text-[#8a7f72]">
-                      <span className="font-mono">{suggestion.itemCode}</span> · {suggestion.why}
+                      <span className="font-mono">{suggestion.itemCode}</span> ·{" "}
+                      {suggestion.why}
                     </div>
                   </div>
-                  <Button size="sm" className="h-7 px-2.5 text-[11px]" disabled={busy} onClick={() => onLink(suggestion.itemCode)}>
-                    <Link2 className="h-3 w-3" /> Link
+                  <Button
+                    size="sm"
+                    className="h-7 px-2.5 text-[11px]"
+                    disabled={busy}
+                    onClick={() => onLink(suggestion.itemCode)}
+                  >
+                    <Link2 className="h-3 w-3" /> Select Item
                   </Button>
                 </div>
               ))}
@@ -71,31 +92,59 @@ export function ItemLinker({
           <div className="mt-3 flex gap-2">
             <input
               className="h-8 min-w-0 flex-1 rounded-md border border-[#cfc4b8] bg-white px-2 text-[11px] outline-none focus:border-[#2d6a4f]"
-              placeholder="Search your SAP items by name or code"
+              placeholder="Search Item Description or Item No."
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" && query.trim().length >= 2) void search();
+                if (event.key === "Enter" && query.trim().length >= 2)
+                  void search();
               }}
             />
-            <Button size="sm" variant="outline" className="h-8 px-3 text-[11px]" disabled={searching || query.trim().length < 2} onClick={() => void search()}>
-              {searching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />} Search
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 px-3 text-[11px]"
+              disabled={searching || query.trim().length < 2}
+              onClick={() => void search()}
+            >
+              {searching ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Search className="h-3 w-3" />
+              )}{" "}
+              Search
             </Button>
           </div>
-          {error ? <div className="mt-2 text-[11px] text-[#b3261e]">{error}</div> : null}
+          {error ? (
+            <div className="mt-2 text-[11px] text-[#b3261e]">{error}</div>
+          ) : null}
           {results.length ? (
             <ul className="mt-2 max-h-48 divide-y divide-[#f0ece4] overflow-y-auto rounded-md border border-[#e0d8cc] bg-white">
               {results.map((item) => (
-                <li key={item.itemCode} className="flex items-center gap-2 px-3 py-2">
+                <li
+                  key={item.itemCode}
+                  className="flex items-center gap-2 px-3 py-2"
+                >
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[11px] font-medium text-[#111827]">{item.name}</div>
+                    <div className="truncate text-[11px] font-medium text-[#111827]">
+                      {item.name}
+                    </div>
                     <div className="text-[10px] text-[#8a7f72]">
                       <span className="font-mono">{item.itemCode}</span>
-                      {item.inventory === true ? " · stock item" : item.inventory === false ? " · service" : ""}
+                      {item.inventory === true
+                        ? " · stock item"
+                        : item.inventory === false
+                          ? " · service"
+                          : ""}
                     </div>
                   </div>
-                  <Button size="sm" className="h-7 px-2.5 text-[11px]" disabled={busy} onClick={() => onLink(item.itemCode)}>
-                    <Link2 className="h-3 w-3" /> Link
+                  <Button
+                    size="sm"
+                    className="h-7 px-2.5 text-[11px]"
+                    disabled={busy}
+                    onClick={() => onLink(item.itemCode)}
+                  >
+                    <Link2 className="h-3 w-3" /> Select Item
                   </Button>
                 </li>
               ))}

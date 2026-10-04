@@ -1,6 +1,7 @@
 "use client";
 
 import { apiFetch } from "@/lib/api-client";
+import type { PostedSapDetails } from "./sap-posted-details";
 import type {
   MatchInvoice,
   MatchResult,
@@ -23,6 +24,7 @@ type Shared = {
   caseStatus: string;
   postable: boolean;
   postings: SapMatchPosting[];
+  postedDetails?: PostedSapDetails;
   matchJob?: {
     status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
     stage: string;

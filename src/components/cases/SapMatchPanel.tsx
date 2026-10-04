@@ -22,10 +22,20 @@ import {
   type SapMatchResponse,
 } from "@/lib/sap-match-client";
 import { itemMappingKey } from "@/lib/sap-match/engine";
-import { findPostedApInvoice, needsSapMatchPolling, pollSapMatch } from "@/lib/sap-match-progress";
-import type { LineResult, MatchCheck, MatchStatus } from "@/lib/sap-match/types";
+import {
+  findPostedApInvoice,
+  needsSapMatchPolling,
+  pollSapMatch,
+} from "@/lib/sap-match-progress";
+import type {
+  LineResult,
+  MatchCheck,
+  MatchStatus,
+} from "@/lib/sap-match/types";
 import { CheckBlock } from "./sap-match/CheckBlock";
 import { FinalPostSection } from "./sap-match/FinalPostSection";
+import { PostedInvoice } from "./sap-match/PostedInvoice";
+import { sapMatchPresentation, sapMessage } from "@/lib/sap-match/terminology";
 import { inr } from "./sap-match/format";
 import { MatchLineCard } from "./sap-match/MatchLineCard";
 import { RulesEditor } from "./sap-match/RulesEditor";
@@ -36,17 +46,55 @@ const STATUS: Record<
   MatchStatus,
   { label: string; pill: string; banner: string; Icon: typeof Check }
 > = {
-  ready: { label: "Ready", pill: "bg-[#e9f4ee] text-[#2c6a4f]", banner: "border-[#c4dfcf] bg-[#f1f8f4]", Icon: CheckCircle2 },
-  review: { label: "Needs you", pill: "bg-[#fdf4e2] text-[#9a5a0a]", banner: "border-[#f0d7a6] bg-[#fdf7ea]", Icon: AlertTriangle },
-  blocked: { label: "Can't send yet", pill: "bg-[#fdeeec] text-[#b3261e]", banner: "border-[#f3c6c0] bg-[#fdf3f1]", Icon: XCircle },
-  waiting: { label: "Waiting", pill: "bg-[#f0ede8] text-[#5c5650]", banner: "border-[#dcd5cb] bg-[#f6f3ee]", Icon: Clock },
-  returned: { label: "Returned", pill: "bg-[#f0ede8] text-[#5c5650]", banner: "border-[#dcd5cb] bg-[#f6f3ee]", Icon: Send },
-  closed: { label: "Closed", pill: "bg-[#f0ede8] text-[#5c5650]", banner: "border-[#dcd5cb] bg-[#f6f3ee]", Icon: XCircle },
+  ready: {
+    label: "Ready",
+    pill: "bg-[#e9f4ee] text-[#2c6a4f]",
+    banner: "border-[#c4dfcf] bg-[#f1f8f4]",
+    Icon: CheckCircle2,
+  },
+  review: {
+    label: "Needs you",
+    pill: "bg-[#fdf4e2] text-[#9a5a0a]",
+    banner: "border-[#f0d7a6] bg-[#fdf7ea]",
+    Icon: AlertTriangle,
+  },
+  blocked: {
+    label: "Can't send yet",
+    pill: "bg-[#fdeeec] text-[#b3261e]",
+    banner: "border-[#f3c6c0] bg-[#fdf3f1]",
+    Icon: XCircle,
+  },
+  waiting: {
+    label: "Waiting",
+    pill: "bg-[#f0ede8] text-[#5c5650]",
+    banner: "border-[#dcd5cb] bg-[#f6f3ee]",
+    Icon: Clock,
+  },
+  returned: {
+    label: "Returned",
+    pill: "bg-[#f0ede8] text-[#5c5650]",
+    banner: "border-[#dcd5cb] bg-[#f6f3ee]",
+    Icon: Send,
+  },
+  closed: {
+    label: "Closed",
+    pill: "bg-[#f0ede8] text-[#5c5650]",
+    banner: "border-[#dcd5cb] bg-[#f6f3ee]",
+    Icon: XCircle,
+  },
 };
 
-function StatusPill({ status, label }: { status: MatchStatus; label?: string }) {
+function StatusPill({
+  status,
+  label,
+}: {
+  status: MatchStatus;
+  label?: string;
+}) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS[status].pill}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS[status].pill}`}
+    >
       {label ?? STATUS[status].label}
     </span>
   );
@@ -66,7 +114,10 @@ export function SapMatchPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmingDraft, setConfirmingDraft] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [draftMessage, setDraftMessage] = useState<{ text: string; failed: boolean } | null>(null);
+  const [draftMessage, setDraftMessage] = useState<{
+    text: string;
+    failed: boolean;
+  } | null>(null);
   const [showPassed, setShowPassed] = useState(false);
 
   const load = useCallback(
@@ -78,7 +129,11 @@ export function SapMatchPanel({
         setData(response);
         return response;
       } catch (error) {
-        setLoadError(error instanceof Error ? error.message : "Could not load the SAP match.");
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Could not load the SAP match.",
+        );
         return null;
       } finally {
         setLoading(false);
@@ -99,7 +154,12 @@ export function SapMatchPanel({
     if (!polling) return;
     return pollSapMatch(
       () => load(true),
-      (error) => setLoadError(error instanceof Error ? error.message : "Could not load the SAP match."),
+      (error) =>
+        setLoadError(
+          error instanceof Error
+            ? error.message
+            : "Could not load the SAP match.",
+        ),
     );
   }, [polling, load]);
 
@@ -117,7 +177,12 @@ export function SapMatchPanel({
       void act({ action: "reset-allocation", lineIndex: check.lineIndex });
       return;
     }
-    void act({ action: "decide", checkId: check.id, choice, ...(reason ? { reason } : {}) });
+    void act({
+      action: "decide",
+      checkId: check.id,
+      choice,
+      ...(reason ? { reason } : {}),
+    });
   }
 
   async function createDraft() {
@@ -151,7 +216,12 @@ export function SapMatchPanel({
       <div className="px-4 py-4">
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[11px] text-[#b91c1c]">
           {loadError ?? "SAP is unavailable."}
-          <Button size="sm" variant="outline" className="ml-3 h-7 px-2.5 text-[11px]" onClick={() => void load()}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-3 h-7 px-2.5 text-[11px]"
+            onClick={() => void load()}
+          >
             Retry
           </Button>
         </div>
@@ -165,36 +235,38 @@ export function SapMatchPanel({
       return (
         <div className="space-y-1 px-4 py-3">
           <StatusPill status="ready" label="Posted" />
-          <div className="text-[11px] text-[#3d3530]">Posted as A/P invoice {posted.sap_docnum}</div>
+          <div className="text-[11px] text-[#3d3530]">
+            Posted as A/P Invoice {posted.sap_docnum}
+          </div>
         </div>
       );
     }
     return (
-      <div className="space-y-3 px-4 py-3">
-        <div className="flex items-center justify-between gap-3 text-[11px] text-[#6b5d50]">
-          <StatusPill status="ready" label="Posted" />
-          <span>SAP {data.sapEnv === "test" ? "Test" : "Live"}</span>
-        </div>
-        <FinalPostSection
-          caseId={caseId}
-          status="posted"
-          documentNumber={posted.sap_docnum}
-          onChanged={() => void load(true)}
-        />
-      </div>
+      <PostedInvoice
+        caseId={caseId}
+        documentNumber={posted.sap_docnum}
+        environment={data.sapEnv}
+        details={data.postedDetails}
+      />
     );
   }
 
-  if (data.matchJob?.status === "queued" || data.matchJob?.status === "running") {
+  if (
+    data.matchJob?.status === "queued" ||
+    data.matchJob?.status === "running"
+  ) {
     const stage = data.matchJob.stage || "Matching with SAP";
     return (
       <div className="px-4 py-4">
         <div className="flex items-start gap-2.5 rounded-lg border border-[#d8d0c5] bg-[#fbfaf8] px-4 py-3">
           <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-[#8a5a2b]" />
           <div className="min-w-0 flex-1">
-            <div className="text-[12px] font-semibold text-[#3d3530]">{stage}</div>
+            <div className="text-[12px] font-semibold text-[#3d3530]">
+              {stage}
+            </div>
             <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">
-              This continues safely in the background. You can leave this tab and return later.
+              This continues safely in the background. You can leave this tab
+              and return later.
             </div>
             {data.matchJob.error ? (
               <div className="mt-1 text-[10px] text-[#9a5a0a]">
@@ -220,8 +292,12 @@ export function SapMatchPanel({
     if (variant === "sidebar") {
       return (
         <div className="px-4 py-4">
-          <div className="text-[11px] font-medium text-[#3d3530]">No SAP match</div>
-          <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">{message}</div>
+          <div className="text-[11px] font-medium text-[#3d3530]">
+            No SAP match
+          </div>
+          <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">
+            {message}
+          </div>
         </div>
       );
     }
@@ -238,11 +314,22 @@ export function SapMatchPanel({
         <div className="flex items-start gap-2.5 rounded-lg border border-[#e0d8cc] bg-[#fbfaf8] px-4 py-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
           <div className="min-w-0 flex-1">
-            <div className="text-[12px] font-semibold text-[#3d3530]">No SAP match</div>
+            <div className="text-[12px] font-semibold text-[#3d3530]">
+              No SAP match
+            </div>
             <div className="mt-0.5 text-[11px] text-[#8a7f72]">{message}</div>
-            {data.sapError ? <div className="mt-1 break-words text-[10px] text-[#b3261e]">{data.sapError}</div> : null}
+            {data.sapError ? (
+              <div className="mt-1 break-words text-[10px] text-[#b3261e]">
+                {data.sapError}
+              </div>
+            ) : null}
           </div>
-          <Button size="sm" variant="outline" className="h-7 px-2.5 text-[11px]" onClick={() => void recheck()}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-[11px]"
+            onClick={() => void recheck()}
+          >
             <RefreshCw className="h-3 w-3" /> Try again
           </Button>
         </div>
@@ -268,14 +355,23 @@ export function SapMatchPanel({
       onRefresh={() => void recheck()}
       onChoose={choose}
       onUndo={(check) => void act({ action: "undo", checkId: check.id })}
-      onAllocate={(lineIndex, allocations) => void act({ action: "allocate", lineIndex, allocations })}
-      onResetAllocation={(lineIndex) => void act({ action: "reset-allocation", lineIndex })}
+      onAllocate={(lineIndex, allocations) =>
+        void act({ action: "allocate", lineIndex, allocations })
+      }
+      onResetAllocation={(lineIndex) =>
+        void act({ action: "reset-allocation", lineIndex })
+      }
       onLinkVendor={(cardCode) => void act({ action: "map-vendor", cardCode })}
       onLink={(line: LineResult, itemCode: string) => {
         const invoiceLine = data.invoice.lines[line.index];
         const key = invoiceLine ? itemMappingKey(invoiceLine) : null;
         if (!data.vendor || !key) return;
-        void act({ action: "map-item", vendorCardCode: data.vendor.cardCode, mappingKey: key, sapItemCode: itemCode });
+        void act({
+          action: "map-item",
+          vendorCardCode: data.vendor.cardCode,
+          mappingKey: key,
+          sapItemCode: itemCode,
+        });
       }}
     />
   );
@@ -324,7 +420,12 @@ function Matched({
   onLink: (line: LineResult, itemCode: string) => void;
   onLinkVendor: (cardCode: string) => void;
 }) {
-  const { result, invoice } = data;
+  const { invoice } = data;
+  const result = sapMatchPresentation(data.result, [
+    invoice.vendorName ?? "",
+    data.vendor?.cardName ?? "",
+    ...invoice.lines.map((line) => line.description ?? ""),
+  ]);
   const locked = Boolean(ap);
   const meta = STATUS[locked ? "ready" : result.status];
   const openCount = result.open.length;
@@ -333,82 +434,139 @@ function Matched({
     return (
       <div className="space-y-1 px-4 py-3">
         <div className="flex items-center gap-2">
-          <StatusPill status={locked ? "ready" : result.status} label={ap ? (ap.status === "posted" ? "Posted" : "Draft in SAP") : undefined} />
-          <span className="truncate text-[11px] text-[#8a7f72]">{invoice.invoiceNumber}</span>
+          <StatusPill
+            status={locked ? "ready" : result.status}
+            label={
+              ap
+                ? ap.status === "posted"
+                  ? "Posted"
+                  : "A/P Invoice Draft"
+                : undefined
+            }
+          />
+          <span className="truncate text-[11px] text-[#8a7f72]">
+            {invoice.invoiceNumber}
+          </span>
         </div>
         <div className="text-[11px] leading-4 text-[#3d3530]">
           {ap
             ? ap.status === "posted"
-              ? `Posted as A/P invoice ${ap.sap_docnum}`
-              : `Draft ${ap.sap_docnum} saved, not posted`
+              ? `Posted as A/P Invoice ${ap.sap_docnum}`
+              : `Draft Entry No. ${ap.sap_docnum} saved, not posted`
             : result.summary}
         </div>
         {!ap && openCount > 1 ? (
-          <div className="text-[10px] text-[#8a7f72]">{openCount - 1} more to resolve</div>
+          <div className="text-[10px] text-[#8a7f72]">
+            {openCount - 1} more to resolve
+          </div>
         ) : null}
       </div>
     );
   }
 
   const generalOpen = result.checks.filter(
-    (check) => check.lineIndex === null && check.id !== "freight" && check.id !== "total" && (check.open || check.decision),
+    (check) =>
+      check.lineIndex === null &&
+      check.id !== "freight" &&
+      check.id !== "total" &&
+      (check.open || check.decision),
   );
   const invoiceLevel = result.checks.filter(
-    (check) => (check.id === "freight" || check.id === "total") && (check.open || check.decision),
+    (check) =>
+      (check.id === "freight" || check.id === "total") &&
+      (check.open || check.decision),
   );
-  const passed = result.checks.filter((check) => !check.open && !check.decision);
-  const canCreate = data.postable && result.status === "ready" && !ap && Boolean(result.payload);
-  const vendorLabel = data.vendor ? `${data.vendor.cardName} (${data.vendor.cardCode})` : (invoice.vendorName ?? "vendor");
+  const passed = result.checks.filter(
+    (check) => !check.open && !check.decision,
+  );
+  const canCreate =
+    data.postable &&
+    result.status === "ready" &&
+    !ap &&
+    Boolean(result.payload);
+  const vendorLabel = data.vendor
+    ? `${data.vendor.cardName} (${data.vendor.cardCode})`
+    : (invoice.vendorName ?? "vendor");
   const first = result.open[0];
 
   return (
     <div className="space-y-4 px-4 py-3">
       {/* Verdict */}
-      <section className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${ap ? "border-[#c4dfcf] bg-[#f1f8f4]" : meta.banner}`}>
+      <section
+        className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${ap ? "border-[#c4dfcf] bg-[#f1f8f4]" : meta.banner}`}
+      >
         <meta.Icon className="h-5 w-5 shrink-0 text-[#3d3530]" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-[13px] font-semibold text-[#111827]">
               {ap
                 ? ap.status === "posted"
-                  ? `Posted as A/P invoice ${ap.sap_docnum}`
-                  : `Draft ${ap.sap_docnum} is saved in SAP`
+                  ? `Posted as A/P Invoice ${ap.sap_docnum}`
+                  : `Draft Entry No. ${ap.sap_docnum} is saved in SAP`
                 : result.status === "ready"
                   ? "Everything matches"
                   : (first?.title ?? result.summary)}
             </div>
-            <StatusPill status={locked ? "ready" : result.status} label={ap ? (ap.status === "posted" ? "Posted" : "Draft in SAP") : undefined} />
+            <StatusPill
+              status={locked ? "ready" : result.status}
+              label={
+                ap
+                  ? ap.status === "posted"
+                    ? "Posted"
+                    : "A/P Invoice Draft"
+                  : undefined
+              }
+            />
           </div>
           <div className="mt-0.5 text-[11px] leading-4 text-[#6b5d50]">
-            {vendorLabel} · invoice {invoice.invoiceNumber}
-            {result.payload ? ` · ${inr(result.payload.bookedTaxable)} before tax` : ""}
-            {!ap && result.status !== "ready" && openCount > 1 ? ` · ${openCount - 1} more thing${openCount > 2 ? "s" : ""} below` : ""}
+            {vendorLabel} · Vendor Ref. No. {invoice.invoiceNumber}
+            {result.payload
+              ? ` · ${inr(result.payload.bookedTaxable)} before tax`
+              : ""}
+            {!ap && result.status !== "ready" && openCount > 1
+              ? ` · ${openCount - 1} more thing${openCount > 2 ? "s" : ""} below`
+              : ""}
           </div>
         </div>
         <span className="rounded-full bg-[#fff7ed] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#b45309] ring-1 ring-inset ring-[#fcd9b6]">
           SAP {data.sapEnv === "test" ? "Test" : data.sapEnv}
         </span>
-        <Button size="sm" variant="outline" className="h-7 px-2.5 text-[11px]" disabled={busy} onClick={onRefresh}>
-          <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} /> Re-check
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2.5 text-[11px]"
+          disabled={busy}
+          onClick={onRefresh}
+        >
+          <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />{" "}
+          Re-check
         </Button>
       </section>
 
       {actionError ? (
-        <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">{actionError}</div>
+        <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">
+          {sapMessage(actionError)}
+        </div>
       ) : null}
 
       {generalOpen.map((check) =>
         check.id === "vendor" && check.sev === "block" ? (
-          <VendorLinker key={check.id} caseId={caseId} check={check} busy={busy || locked} onLink={onLinkVendor} />
+          <VendorLinker
+            key={check.id}
+            caseId={caseId}
+            check={check}
+            busy={busy || locked}
+            onLink={onLinkVendor}
+          />
         ) : (
-        <CheckBlock
-          key={check.id}
-          check={check}
-          locked={locked}
-          busy={busy}
-          onChoose={(choice, reason) => onChoose(check, choice, reason)}
-          onUndo={() => onUndo(check)}
-        />
+          <CheckBlock
+            key={check.id}
+            check={check}
+            locked={locked}
+            busy={busy}
+            onChoose={(choice, reason) => onChoose(check, choice, reason)}
+            onUndo={() => onUndo(check)}
+          />
         ),
       )}
 
@@ -418,7 +576,9 @@ function Matched({
           caseId={caseId}
           invoice={invoice}
           line={line}
-          checks={result.checks.filter((check) => check.lineIndex === line.index)}
+          checks={result.checks.filter(
+            (check) => check.lineIndex === line.index,
+          )}
           locked={locked}
           busy={busy}
           vendorFound={Boolean(data.vendor)}
@@ -441,7 +601,11 @@ function Matched({
         />
       ))}
 
-      <WhatGoesToSap result={result} lines={result.lines} vendorLabel={vendorLabel} />
+      <WhatGoesToSap
+        result={result}
+        lines={result.lines}
+        vendorLabel={vendorLabel}
+      />
 
       {/* Draft and final posting */}
       {ap ? (
@@ -454,21 +618,37 @@ function Matched({
       ) : (
         <div className="space-y-2">
           {draftMessage ? (
-            <div className={`rounded-lg border px-3 py-2 text-[11px] ${draftMessage.failed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}>
-              {draftMessage.text}
+            <div
+              className={`rounded-lg border px-3 py-2 text-[11px] ${draftMessage.failed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}
+            >
+              {sapMessage(draftMessage.text)}
             </div>
           ) : null}
           {!data.postable ? (
-            <p className="text-[11px] text-[#8a7f72]">Approve this case before creating an SAP draft.</p>
+            <p className="text-[11px] text-[#8a7f72]">
+              Approve this case before creating an A/P Invoice Draft.
+            </p>
           ) : result.status === "ready" ? (
             confirmingDraft ? (
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span>Create an AP Invoice Draft in SAP Test? No invoice will be posted.</span>
+                <span>
+                  Create an A/P Invoice Draft in SAP Test? No invoice will be
+                  posted.
+                </span>
                 <Button size="sm" disabled={creating} onClick={onCreateDraft}>
-                  {creating ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Send className="mr-1.5 h-3 w-3" />}
+                  {creating ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                  ) : (
+                    <Send className="mr-1.5 h-3 w-3" />
+                  )}
                   Confirm draft
                 </Button>
-                <Button size="sm" variant="outline" disabled={creating} onClick={() => onConfirmDraft(false)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={creating}
+                  onClick={() => onConfirmDraft(false)}
+                >
                   Cancel
                 </Button>
               </div>
@@ -480,12 +660,13 @@ function Matched({
                 onClick={() => onConfirmDraft(true)}
               >
                 <Send className="mr-1.5 h-3 w-3" />
-                Create AP Invoice Draft in SAP Test
+                Create A/P Invoice Draft in SAP Test
               </Button>
             )
           ) : (
             <p className="text-[11px] text-[#8a7f72]">
-              The draft can be created once every item above is settled. It is checked against SAP again at that moment.
+              The draft can be created once every item above is settled. It is
+              checked against SAP again at that moment.
             </p>
           )}
         </div>
@@ -493,13 +674,20 @@ function Matched({
 
       {passed.length ? (
         <div>
-          <button type="button" className="text-[11px] font-medium text-[#6b4a33] underline" onClick={onTogglePassed}>
+          <button
+            type="button"
+            className="text-[11px] font-medium text-[#6b4a33] underline"
+            onClick={onTogglePassed}
+          >
             {showPassed ? "Hide" : "Show"} {passed.length} checks that passed
           </button>
           {showPassed ? (
             <ul className="mt-2 space-y-1">
               {passed.map((check) => (
-                <li key={check.id} className="flex items-center gap-2 text-[11px] text-[#3d3530]">
+                <li
+                  key={check.id}
+                  className="flex items-center gap-2 text-[11px] text-[#3d3530]"
+                >
                   <Check className="h-3.5 w-3.5 shrink-0 text-[#2c6a4f]" />
                   {check.title}
                 </li>
