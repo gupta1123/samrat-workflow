@@ -1,5 +1,6 @@
 "use client";
 import { AppShell } from "@/components/dashboard/AppShell";
+import { SapMatchingSettings } from "@/components/settings/SapMatchingSettings";
 import { apiFetch } from "@/lib/api-client";
 import {
   fetchComparisonGroups,
@@ -108,12 +109,11 @@ export default function SettingsPage() {
               Samrat Group
             </p>
             <h1 className="mt-2 text-3xl font-semibold text-slate-900">
-              Review settings
+              Settings
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-500">
-              Choose the documents and fields checked during analysis. These
-              settings are shared across this workspace. Changing them does not
-              alter a completed review.
+              Manage document review checks and SAP matching policy for this
+              workspace. Each section saves separately.
             </p>
           </div>
           <button
@@ -126,9 +126,10 @@ export default function SettingsPage() {
             ) : (
               <Save className="h-4 w-4" />
             )}
-            Save changes
+            Save review settings
           </button>
         </header>
+        <SapMatchingSettings />
         {message && (
           <p
             role="status"

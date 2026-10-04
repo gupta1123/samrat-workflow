@@ -24,7 +24,7 @@ import styles from "./DashboardSidebar.module.css";
 
 const settingsItem = {
   href: "/settings",
-  label: "Review settings",
+  label: "Settings",
   icon: Settings,
 };
 

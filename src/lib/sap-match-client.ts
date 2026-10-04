@@ -117,6 +117,14 @@ export async function searchSapItems(caseId: string, query: string): Promise<Sap
   return Array.isArray(body.items) ? (body.items as SapItemChoice[]) : [];
 }
 
+export async function fetchSapMatchRules(): Promise<MatchRules> {
+  const response = await apiFetch("/api/settings/sap-match", { cache: "no-store" });
+  const body = await readJson(response);
+  if (!response.ok) throw new Error(errorText(body, "Could not load SAP matching rules."));
+  if (!body.rules || typeof body.rules !== "object") throw new Error("Could not load SAP matching rules.");
+  return body.rules as MatchRules;
+}
+
 export async function saveSapMatchRules(rules: MatchRules) {
   const response = await apiFetch("/api/settings/sap-match", {
     method: "PUT",

@@ -38,7 +38,7 @@ import { PostedInvoice } from "./sap-match/PostedInvoice";
 import { sapMatchPresentation, sapMessage } from "@/lib/sap-match/terminology";
 import { inr } from "./sap-match/format";
 import { MatchLineCard } from "./sap-match/MatchLineCard";
-import { RulesEditor } from "./sap-match/RulesEditor";
+import { AppliedMatchingRules } from "./sap-match/AppliedMatchingRules";
 import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
 
@@ -698,7 +698,7 @@ function Matched({
         </div>
       ) : null}
 
-      <RulesEditor rules={data.rules} disabled={false} onSaved={onRefresh} />
+      <AppliedMatchingRules rules={data.rules} />
     </div>
   );
 }
