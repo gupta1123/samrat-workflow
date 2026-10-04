@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import type { PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { loadPdfPreviewRuntime } from "@/lib/pdf-preview";
 
 import styles from "./PdfEvidencePreview.module.css";
 
@@ -324,7 +325,7 @@ export function PdfEvidencePreview({
 
     void (async () => {
       try {
-        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+        const pdfjs = await loadPdfPreviewRuntime();
         if (!pdfjs.GlobalWorkerOptions.workerSrc) {
           pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
         }
@@ -623,7 +624,13 @@ export function PdfEvidencePreview({
               height: pageSize.height || undefined,
             }}
           >
-            <canvas ref={canvasRef} className={styles.canvas} />
+            <canvas
+              ref={canvasRef}
+              className={styles.canvas}
+              role="img"
+              aria-label={`PDF page ${pageNumber}`}
+              aria-busy={renderState === "loading"}
+            />
             {matchedTextBoxes[0] ? (
               <span
                 data-pdf-focus

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -41,6 +42,7 @@ import {
 } from "@/components/cases/CaseDetailRedesign";
 import { ExtractedFieldsPanel, type ExtractedFieldItem } from "@/components/cases/ExtractedFieldsPanel";
 import { PdfEvidencePreview } from "@/components/cases/PdfEvidencePreview";
+import { loadPdfPreviewRuntime, pdfPreviewPage } from "@/lib/pdf-preview";
 import { PacketIntelligencePanel } from "@/components/cases/PacketIntelligencePanel";
 import { ShipmentBatchPanel } from "@/components/cases/ShipmentBatchPanel";
 import { SapMatchPanel } from "@/components/cases/SapMatchPanel";
@@ -1378,7 +1380,10 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
   const [documentFieldComparison, setDocumentFieldComparison] =
     useState<DocumentFieldComparison>(null);
   const [previewPdfPage, setPreviewPdfPage] = useState<number | null>(null);
-  const [previewPdfPageCount, setPreviewPdfPageCount] = useState(1);
+  const [previewPdfSource, setPreviewPdfSource] = useState<{
+    url: string | null;
+    pageCount: number;
+  }>({ url: null, pageCount: 0 });
   const [dataPaneWidth, setDataPaneWidth] = useState(DEFAULT_DATA_PANE_WIDTH);
   const [isPaneResizing, setIsPaneResizing] = useState(false);
   const [signedFileUrls, setSignedFileUrls] = useState<
@@ -1396,6 +1401,10 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     let active = true;
+
+    // Load the browser PDF engine while the authenticated case read is in flight.
+    // A failed warm-up is retried by the viewer and must not hide case details.
+    void loadPdfPreviewRuntime().catch(() => {});
 
     fetchCaseDetailPreferCache(caseId)
       .then((payload) => {
@@ -1974,6 +1983,14 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
       activePreviewFile.signedUrl ??
       null)
     : null;
+  const previewPdfPageCount =
+    previewPdfSource.url === activeFileUrl ? previewPdfSource.pageCount : 0;
+  const setPreviewPdfPageCount = useCallback(
+    (pageCount: number) => {
+      setPreviewPdfSource({ url: activeFileUrl, pageCount });
+    },
+    [activeFileUrl],
+  );
   const isPreviewUrlLoading =
     Boolean(activePreviewFile) &&
     loadingPreviewFileId === activePreviewFile?.id;
@@ -1990,9 +2007,10 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
       activeDocument?.sourceHint,
   );
   const activeDocumentSourcePage = getDocumentSourcePage(activeDocument);
-  const activePdfPage = Math.min(
-    Math.max(1, previewPdfPage ?? activeDocumentSourcePage),
-    Math.max(1, previewPdfPageCount),
+  const activePdfPage = pdfPreviewPage(
+    previewPdfPage,
+    activeDocumentSourcePage,
+    previewPdfPageCount,
   );
   const canGoToPreviousPreviewPage = activeSourceIsImage
     ? previewPageIndex > 0
@@ -2009,7 +2027,6 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
     setPreviewZoom(DEFAULT_PREVIEW_ZOOM);
     setPreviewFocus(null);
     setPreviewPdfPage(null);
-    setPreviewPdfPageCount(Math.max(1, activeDocument?.pageCount || 1));
   }, [activeDocument?.pageCount, activeDocumentId]);
 
   useEffect(() => {
@@ -2217,6 +2234,9 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
 
   function handleDocumentSelection(documentId: string) {
     setActiveDocumentId(documentId);
+    setPreviewPdfPage(null);
+    setPreviewFocus(null);
+    setPreviewPageIndex(0);
     setActiveTab("preview");
   }
 
