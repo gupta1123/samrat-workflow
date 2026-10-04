@@ -8,8 +8,10 @@ import { Fragment } from "react";
 import {
   candidateEvidence,
   itemIdentificationLabel,
+  quantityBalances,
   type EvidenceRow,
 } from "@/lib/sap-match/evidence";
+import { inr, qty } from "./format";
 
 const color = {
   Matched: "text-[#24583e]",
@@ -204,39 +206,135 @@ export function MatchingEvidence({
   const selected = line.candidates.filter(
     (candidate) => candidate.allocated > 0,
   );
+  const balances = quantityBalances(line);
+  const service = line.kind === "service";
+  const amount = (value: number) =>
+    service
+      ? inr(value)
+      : `${qty(value)}${invoice.lines[line.index]?.unit ? ` ${invoice.lines[line.index].unit}` : ""}`;
+  const notices = [
+    ...new Set(
+      selected.flatMap((candidate) => [
+        ...(!candidate.references
+          ? [
+              `${candidate.kind} ${candidate.docNum}: reference values were not recorded in this saved check.`,
+            ]
+          : []),
+        ...candidateEvidence(invoice, candidate)
+          .filter(
+            (row) =>
+              row.status !== "Matched" &&
+              row.scanned !== "Not recorded" &&
+              row.sap !== "Not recorded in saved check",
+          )
+          .map((row) => {
+            const document = `${candidate.kind} ${candidate.docNum}`;
+            if (row.status === "Partly matched")
+              return `${document}: ${row.note?.replace(/^Matched:.*?\. /, "") ?? `${row.label} only partly matched.`}`;
+            if (row.status === "Different")
+              return `${row.label}: scanned ${row.scanned}; ${document} has ${row.sap}.`;
+            return `${row.label} ${row.scanned}: not verified against ${document}${row.sap === "0" ? " (SAP stores 0)" : ""}.`;
+          }),
+      ]),
+    ),
+  ];
   return (
-    <section className="border-t border-[#ece6dc] pt-2">
-      <div className="mb-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px]">
-        <h3 className="font-semibold text-[#111827]">How this matched</h3>
-        <span className="text-[#6b5d50]">{itemIdentificationLabel(line)}</span>
-      </div>
-      <p className="mb-1 text-[10px] leading-4 text-[#6b5d50]">
-        {selected.length
-          ? `${locked ? "Saved selection" : line.manual ? "Reviewer selection" : "Automatic selection"} · ${line.kind === "service" ? "Supplier, item and PO reference checked; GRPO not required for services." : "Supplier and SAP item restrict the candidates; references and open quantity rank the GRPOs."}`
-          : "No base document selected. The candidate list below explains what was found or excluded."}
-      </p>
-      {!selected.length ? (
-        <p className="text-[11px] leading-4 text-[#6b5d50]">
-          Scanned packet PO references:{" "}
-          {invoice.poReferences.join(", ") || "Not recorded"}
-          {line.po?.docNum != null
-            ? ` · SAP PO ${line.po.docNum} found; no GRPO selected.`
-            : ""}
-        </p>
+    <section>
+      {notices.length ? (
+        <ul
+          aria-label="Reference checks to note"
+          className="mb-2 space-y-1 border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]"
+        >
+          {notices.map((notice) => (
+            <li key={notice}>{notice}</li>
+          ))}
+        </ul>
       ) : null}
-      {selected.map((candidate) => (
-        <div key={candidate.key} className="mt-2">
-          <p className="mb-1 text-[11px] font-medium text-[#3d3530]">
-            {candidate.kind} {candidate.docNum}, line {candidate.lineNum + 1}
-            {candidate.kind === "GRPO"
-              ? candidate.purchaseOrder
-                ? ` → PO ${candidate.purchaseOrder.docNum ?? `Entry ${candidate.purchaseOrder.docEntry}`}${candidate.purchaseOrder.lineNum != null ? `, line ${candidate.purchaseOrder.lineNum + 1}` : " (line not recorded)"}`
-                : " → PO link not recorded in check"
-              : ""}
+      <details className="text-[11px]">
+        <summary className="w-fit cursor-pointer py-1 font-medium text-[#6b4a33]">
+          Matching evidence
+        </summary>
+        <div className="mt-2 border-t border-[#ece6dc] pt-2">
+          {invoice.source ? (
+            <p className="mb-2 text-[11px] text-[#6b5d50]">
+              Scanned invoice:{" "}
+              {[invoice.source.fileName, invoice.source.pageLabel]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          ) : null}
+          {selected.length ? (
+            <dl className="mb-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+              {[
+                ...(!service
+                  ? [
+                      ["GRPO Quantity received", balances.received],
+                      ...(line.po?.qty != null
+                        ? [["PO Quantity", line.po.qty]]
+                        : []),
+                    ]
+                  : []),
+                [
+                  locked
+                    ? "Open at saved check"
+                    : service
+                      ? "PO Open Amount"
+                      : "GRPO Open Qty.",
+                  balances.available,
+                ],
+                [locked ? "Used in draft" : "Allocated", balances.used],
+                [
+                  locked
+                    ? "Remaining at saved check"
+                    : "Remaining after allocation",
+                  balances.remaining,
+                ],
+              ].map(([label, value]) => (
+                <div key={label}>
+                  <dt className="text-[#6b5d50]">{label}</dt>
+                  <dd className="mt-0.5 font-medium text-[#111827]">
+                    {amount(value as number)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+          <div className="mb-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px]">
+            <h3 className="font-semibold text-[#111827]">How this matched</h3>
+            <span className="text-[#6b5d50]">
+              {itemIdentificationLabel(line)}
+            </span>
+          </div>
+          <p className="mb-1 text-[10px] leading-4 text-[#6b5d50]">
+            {selected.length
+              ? `${locked ? "Saved selection" : line.manual ? "Reviewer selection" : "Automatic selection"} · ${line.kind === "service" ? "Supplier, item and PO reference checked; GRPO not required for services." : "Supplier and SAP item restrict the candidates; references and open quantity rank the GRPOs."}`
+              : "No base document selected. The candidate list below explains what was found or excluded."}
           </p>
-          <CandidateEvidence invoice={invoice} candidate={candidate} />
+          {!selected.length ? (
+            <p className="text-[11px] leading-4 text-[#6b5d50]">
+              Scanned packet PO references:{" "}
+              {invoice.poReferences.join(", ") || "Not recorded"}
+              {line.po?.docNum != null
+                ? ` · SAP PO ${line.po.docNum} found; no GRPO selected.`
+                : ""}
+            </p>
+          ) : null}
+          {selected.map((candidate) => (
+            <div key={candidate.key} className="mt-2">
+              <p className="mb-1 text-[11px] font-medium text-[#3d3530]">
+                {candidate.kind} {candidate.docNum}, line{" "}
+                {candidate.lineNum + 1}
+                {candidate.kind === "GRPO"
+                  ? candidate.purchaseOrder
+                    ? ` → PO ${candidate.purchaseOrder.docNum ?? `Entry ${candidate.purchaseOrder.docEntry}`}${candidate.purchaseOrder.lineNum != null ? `, line ${candidate.purchaseOrder.lineNum + 1}` : " (line not recorded)"}`
+                    : " → PO link not recorded in check"
+                  : ""}
+              </p>
+              <CandidateEvidence invoice={invoice} candidate={candidate} />
+            </div>
+          ))}
         </div>
-      ))}
+      </details>
     </section>
   );
 }

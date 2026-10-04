@@ -39,7 +39,6 @@ import { CheckBlock } from "./sap-match/CheckBlock";
 import { FinalPostSection } from "./sap-match/FinalPostSection";
 import { PostedInvoice } from "./sap-match/PostedInvoice";
 import { sapMatchPresentation, sapMessage } from "@/lib/sap-match/terminology";
-import { inr } from "./sap-match/format";
 import { MatchLineCard } from "./sap-match/MatchLineCard";
 import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
@@ -497,10 +496,17 @@ function Matched({
     ],
   );
   const locked = Boolean(ap);
-  const unchecked = result.checks.filter((check) => check.sev === "unchecked");
-  const accepted = result.checks.filter(
-    (check) => check.decision && !check.open,
+  const unchecked = result.checks.filter(
+    (check) => check.sev === "unchecked" && check.lineIndex === null,
   );
+  const uncheckedNames: Record<string, string> = {
+    branch: "Branch",
+    period: "Posting Period",
+    tax: "GST type",
+    total: "Invoice total",
+  };
+  const uncheckedLabel = (check: MatchCheck) =>
+    uncheckedNames[check.id] ?? check.title.split(" (")[0];
   const meta = STATUS[locked ? "ready" : result.status];
   const openCount = result.open.length;
 
@@ -561,6 +567,62 @@ function Matched({
   const vendorLabel = data.vendor
     ? `${data.vendor.cardName} (${data.vendor.cardCode})`
     : (invoice.vendorName ?? "vendor");
+  const draftActions = !ap ? (
+    <div className="space-y-2">
+      {draftMessage ? (
+        <div
+          className={`rounded-lg border px-3 py-2 text-[11px] ${draftMessage.failed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}
+        >
+          {sapMessage(draftMessage.text)}
+        </div>
+      ) : null}
+      {!data.postable ? (
+        <p className="text-[11px] text-[#8a7f72]">
+          Approve this case before creating an A/P Invoice Draft.
+        </p>
+      ) : result.status === "ready" ? (
+        confirmingDraft ? (
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span>
+              Create an A/P Invoice Draft in SAP Test? No invoice will be
+              posted.
+            </span>
+            <Button size="sm" disabled={creating} onClick={onCreateDraft}>
+              {creating ? (
+                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="mr-1.5 h-3 w-3" />
+              )}
+              Confirm draft
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={creating}
+              onClick={() => onConfirmDraft(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white shadow-sm hover:bg-[#3b271a]"
+            disabled={!canCreate || busy}
+            onClick={() => onConfirmDraft(true)}
+          >
+            <Send className="mr-1.5 h-3 w-3" />
+            Create A/P Invoice Draft in SAP Test
+          </Button>
+        )
+      ) : (
+        <p className="text-[11px] text-[#8a7f72]">
+          The draft can be created once every item above is settled. It is
+          checked against SAP again at that moment.
+        </p>
+      )}
+    </div>
+  ) : null;
   const first = result.open[0];
 
   return (
@@ -570,7 +632,7 @@ function Matched({
         className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${ap ? "border-[#c4dfcf] bg-[#f1f8f4]" : meta.banner}`}
       >
         <meta.Icon className="h-5 w-5 shrink-0 text-[#3d3530]" />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 basis-[calc(100%-2rem)] flex-1 sm:basis-auto">
           <div className="flex flex-wrap items-center gap-2">
             <div className="text-[13px] font-semibold text-[#111827]">
               {ap
@@ -581,32 +643,26 @@ function Matched({
                   ? "Ready to create A/P Invoice Draft"
                   : (first?.title ?? result.summary)}
             </div>
-            <StatusPill
-              status={locked ? "ready" : result.status}
-              label={
-                ap
-                  ? ap.status === "posted"
-                    ? "Posted"
-                    : "A/P Invoice Draft"
-                  : undefined
-              }
-            />
+            {locked || result.status !== "ready" ? (
+              <StatusPill
+                status={locked ? "ready" : result.status}
+                label={
+                  ap
+                    ? ap.status === "posted"
+                      ? "Posted"
+                      : "A/P Invoice Draft"
+                    : undefined
+                }
+              />
+            ) : null}
           </div>
-          <p className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
+          <p className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
             {locked
               ? `Comparison saved at draft creation · ${matchTimestamp(data.draftDetails?.recordedAt)}`
-              : `Last SAP check: ${matchTimestamp(result.checkedAt ?? data.matchJob?.finishedAt)}`}{" "}
-            · {passed.length} matched
-            {accepted.length
-              ? ` · ${accepted.length} accepted by reviewer`
-              : ""}
-            {unchecked.length ? ` · ${unchecked.length} not checked` : ""}
+              : `Last SAP check: ${matchTimestamp(result.checkedAt ?? data.matchJob?.finishedAt)}`}
           </p>
           <div className="mt-0.5 text-[11px] leading-4 text-[#6b5d50]">
             {vendorLabel} · Vendor Ref. No. {invoice.invoiceNumber}
-            {result.payload
-              ? ` · ${inr(result.payload.bookedTaxable)} before tax`
-              : ""}
             {!ap && result.status !== "ready" && openCount > 1
               ? ` · ${openCount - 1} more thing${openCount > 2 ? "s" : ""} below`
               : ""}
@@ -637,35 +693,49 @@ function Matched({
         </p>
       ) : null}
 
-      <SupplierEvidence
-        invoice={invoice}
-        vendor={data.vendor}
-        result={result}
-      />
+      <details className="text-[11px]">
+        <summary className="w-fit cursor-pointer py-1 font-medium text-[#6b4a33]">
+          Supplier and search details
+        </summary>
+        <div className="mt-2 space-y-2">
+          <SupplierEvidence
+            invoice={invoice}
+            vendor={data.vendor}
+            result={result}
+          />
 
-      {result.method !== "2-way" && result.receiptSearch ? (
-        <p className="text-[10px] leading-4 text-[#6b5d50]">
-          SAP Service Layer ·{" "}
-          {result.receiptSearch.method === "identifier"
-            ? result.receiptSearch.field
-              ? `GRPO search by ${result.receiptSearch.field} ${result.receiptSearch.value}`
-              : "GRPO search by packet references"
-            : `Open GRPO search for supplier ${data.vendor?.cardCode ?? ""}`}{" "}
-          · {result.receiptSearch.documentsRead} document
-          {result.receiptSearch.documentsRead === 1 ? "" : "s"} returned
-          {result.receiptSearch.documentsRead >= result.receiptSearch.limit
-            ? ` (search limit ${result.receiptSearch.limit} reached)`
-            : ""}
-          .{" "}
-          {result.receiptSearch.method === "identifier"
-            ? "Candidates come from the first successful reference search, not all SAP GRPOs."
-            : "Only this supplier’s open GRPOs were searched."}
-        </p>
-      ) : null}
+          {result.method !== "2-way" && result.receiptSearch ? (
+            <p className="text-[10px] leading-4 text-[#6b5d50]">
+              SAP Service Layer ·{" "}
+              {result.receiptSearch.method === "identifier"
+                ? result.receiptSearch.field
+                  ? `GRPO search by ${result.receiptSearch.field} ${result.receiptSearch.value}`
+                  : "GRPO search by packet references"
+                : `Open GRPO search for supplier ${data.vendor?.cardCode ?? ""}`}{" "}
+              · {result.receiptSearch.documentsRead} document
+              {result.receiptSearch.documentsRead === 1 ? "" : "s"} returned
+              {result.receiptSearch.documentsRead >= result.receiptSearch.limit
+                ? ` (search limit ${result.receiptSearch.limit} reached)`
+                : ""}
+              .{" "}
+              {result.receiptSearch.method === "identifier"
+                ? "Candidates come from the first successful reference search, not all SAP GRPOs."
+                : "Only this supplier’s open GRPOs were searched."}
+            </p>
+          ) : null}
+        </div>
+      </details>
 
       {unchecked.length ? (
-        <div className="border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]">
-          <p className="font-medium">Not checked ({unchecked.length})</p>
+        <details className="border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]">
+          <summary className="cursor-pointer font-medium">
+            Not verified: {unchecked.map(uncheckedLabel).join(" · ")}
+            {!locked && result.status === "ready" ? (
+              <span className="mt-0.5 block font-normal">
+                Draft creation is allowed with these checks unverified.
+              </span>
+            ) : null}
+          </summary>
           <ul className="mt-1 space-y-0.5">
             {unchecked.map((check) => (
               <li key={check.id}>
@@ -674,7 +744,7 @@ function Matched({
               </li>
             ))}
           </ul>
-        </div>
+        </details>
       ) : null}
 
       {actionError ? (
@@ -743,9 +813,9 @@ function Matched({
         lines={result.lines}
         vendorLabel={vendorLabel}
         saved={locked}
+        actions={draftActions}
       />
 
-      {/* Draft and final posting */}
       {ap ? (
         <FinalPostSection
           caseId={caseId}
@@ -753,62 +823,9 @@ function Matched({
           documentNumber={ap.sap_docnum!}
           onChanged={onRefresh}
         />
-      ) : (
-        <div className="space-y-2">
-          {draftMessage ? (
-            <div
-              className={`rounded-lg border px-3 py-2 text-[11px] ${draftMessage.failed ? "border-[#fecaca] bg-[#fef2f2] text-[#b91c1c]" : "border-[#c3dfcb] bg-[#ebf5ee] text-[#1b4332]"}`}
-            >
-              {sapMessage(draftMessage.text)}
-            </div>
-          ) : null}
-          {!data.postable ? (
-            <p className="text-[11px] text-[#8a7f72]">
-              Approve this case before creating an A/P Invoice Draft.
-            </p>
-          ) : result.status === "ready" ? (
-            confirmingDraft ? (
-              <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span>
-                  Create an A/P Invoice Draft in SAP Test? No invoice will be
-                  posted.
-                </span>
-                <Button size="sm" disabled={creating} onClick={onCreateDraft}>
-                  {creating ? (
-                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                  ) : (
-                    <Send className="mr-1.5 h-3 w-3" />
-                  )}
-                  Confirm draft
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={creating}
-                  onClick={() => onConfirmDraft(false)}
-                >
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <Button
-                size="sm"
-                className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white shadow-sm hover:bg-[#3b271a]"
-                disabled={!canCreate || busy}
-                onClick={() => onConfirmDraft(true)}
-              >
-                <Send className="mr-1.5 h-3 w-3" />
-                Create A/P Invoice Draft in SAP Test
-              </Button>
-            )
-          ) : (
-            <p className="text-[11px] text-[#8a7f72]">
-              The draft can be created once every item above is settled. It is
-              checked against SAP again at that moment.
-            </p>
-          )}
-        </div>
-      )}
+      ) : !result.payload ? (
+        draftActions
+      ) : null}
 
       {passed.length ? (
         <div>

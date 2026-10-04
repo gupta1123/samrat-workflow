@@ -41,6 +41,7 @@ function Row({
   orderNote,
   billedNote,
   receivedNote,
+  hideReceipt = false,
 }: {
   label: string;
   order: string;
@@ -50,6 +51,7 @@ function Row({
   orderNote?: string;
   billedNote?: string;
   receivedNote?: string;
+  hideReceipt?: boolean;
 }) {
   return (
     <tr className="border-t border-[#f0ece4]">
@@ -57,21 +59,23 @@ function Row({
       <td className="py-2 pr-3 tabular-nums text-[#111827]">
         {order}
         {orderNote ? (
-          <div className="mt-0.5 text-[9px] text-[#6b5d50]">{orderNote}</div>
+          <div className="mt-0.5 text-[11px] text-[#6b5d50]">{orderNote}</div>
         ) : null}
       </td>
-      <td className="py-2 pr-3 tabular-nums text-[#111827]">
-        {received}
-        {receivedNote ? (
-          <div className="mt-0.5 text-[10px] text-[#6b5d50]">
-            {receivedNote}
-          </div>
-        ) : null}
-      </td>
+      {!hideReceipt ? (
+        <td className="py-2 pr-3 tabular-nums text-[#111827]">
+          {received}
+          {receivedNote ? (
+            <div className="mt-0.5 text-[10px] text-[#6b5d50]">
+              {receivedNote}
+            </div>
+          ) : null}
+        </td>
+      ) : null}
       <td className={`py-2 tabular-nums font-semibold ${TONE_TEXT[tone]}`}>
         {billed}
         {billedNote ? (
-          <div className="mt-0.5 text-[9px] font-normal text-[#6b5d50]">
+          <div className="mt-0.5 text-[11px] font-normal text-[#6b5d50]">
             {billedNote}
           </div>
         ) : null}
@@ -91,13 +95,13 @@ function SourceHeader({
 }) {
   return (
     <th scope="col" className="w-[29%] pb-2 pr-3 align-top font-semibold">
-      <div className="text-[10px] uppercase tracking-wide">{title}</div>
-      <div className="mt-1 text-[9px] font-normal normal-case tracking-normal">
+      <div className="text-[11px]">{title}</div>
+      <div className="mt-1 text-[11px] font-normal normal-case tracking-normal">
         {reference}
       </div>
       {detail ? (
         <div
-          className="mt-0.5 max-w-[210px] truncate text-[9px] font-normal normal-case tracking-normal"
+          className="mt-0.5 max-w-[210px] truncate text-[11px] font-normal normal-case tracking-normal"
           title={detail}
         >
           {detail}
@@ -167,7 +171,9 @@ export function MatchLineCard({
         : hasChecked
           ? unchecked.length
             ? "Checks incomplete"
-            : "Line checks complete"
+            : checks.some((check) => check.decision)
+              ? "Reviewed"
+              : "Matched"
           : selected.length
             ? "GRPO selected"
             : "Awaiting match";
@@ -186,9 +192,6 @@ export function MatchLineCard({
   const poNumber =
     line.po?.docNum ??
     selected.find((candidate) => candidate.kind === "PO")?.docNum;
-  const invoiceSource = [invoice.source?.fileName, invoice.source?.pageLabel]
-    .filter(Boolean)
-    .join(" · ");
   const grpoRateFallback = line.po?.rateSource === "grpo";
   const grpoRates = [
     ...new Set(
@@ -199,6 +202,7 @@ export function MatchLineCard({
         .map((candidate) => inr(candidate.price)),
     ),
   ];
+  const invoicePrice = `${inr(line.invoiceRate)}${rateDelta !== null && Math.abs(rateDelta) > 0.005 ? ` (${rateDelta > 0 ? "+" : "−"}${inr(Math.abs(rateDelta))})` : ""}`;
 
   return (
     <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
@@ -244,13 +248,97 @@ export function MatchLineCard({
           />
         ) : (
           <>
-            <p className="text-[11px] text-[#3d3530]">
-              {service
-                ? `${inr(line.allocatedQty)} allocated of ${inr(line.invoiceAmount)} billed`
-                : `${quantity(line.allocatedQty)} allocated of ${quantity(line.invoiceQty)} billed`}
-            </p>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[520px] text-[11px]">
+            <div className="sm:hidden">
+              <table className="w-full table-fixed text-left text-[11px]">
+                <thead className="text-[#6b5d50]">
+                  <tr>
+                    <th scope="col" className="w-[22%] pb-2 font-medium">
+                      <span className="sr-only">Field</span>
+                    </th>
+                    <th
+                      scope="col"
+                      className="w-[39%] pb-2 pr-2 align-top font-semibold text-[#111827]"
+                    >
+                      Scanned Invoice (PDF)
+                    </th>
+                    <th
+                      scope="col"
+                      className="pb-2 align-top font-semibold text-[#111827]"
+                    >
+                      SAP
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="tabular-nums">
+                  <tr className="border-t border-[#f0ece4] align-top">
+                    <th
+                      scope="row"
+                      className="py-2 pr-2 font-normal text-[#6b5d50]"
+                    >
+                      {service ? "Amount" : "Quantity"}
+                    </th>
+                    <td
+                      className={`py-2 pr-2 font-semibold ${TONE_TEXT[toneOf(checks, [service ? `amt-${line.index}` : `qty-${line.index}`, `rcpt-${line.index}`])]}`}
+                    >
+                      {service
+                        ? inr(line.invoiceAmount)
+                        : quantity(line.invoiceQty)}
+                    </td>
+                    <td className="py-2 text-[#111827]">
+                      {selected.length
+                        ? service
+                          ? inr(selected[0].open)
+                          : quantity(balances.available)
+                        : "No selection"}
+                      <span className="mt-0.5 block text-[#6b5d50]">
+                        {service
+                          ? "PO Open Amount"
+                          : locked
+                            ? "GRPO Open Qty. at saved check"
+                            : "GRPO Open Qty."}
+                      </span>
+                    </td>
+                  </tr>
+                  {!service ? (
+                    <tr className="border-t border-[#f0ece4] align-top">
+                      <th
+                        scope="row"
+                        className="py-2 pr-2 font-normal text-[#6b5d50]"
+                      >
+                        Unit Price
+                      </th>
+                      <td
+                        className={`py-2 pr-2 font-semibold ${TONE_TEXT[toneOf(checks, [`rate-${line.index}`])]}`}
+                      >
+                        {invoicePrice}
+                      </td>
+                      <td className="py-2 text-[#111827]">
+                        {inr(line.po?.rate ?? null)}
+                        <span className="mt-0.5 block text-[#6b5d50]">
+                          {grpoRateFallback
+                            ? "GRPO price; PO price unavailable"
+                            : line.po?.rateSource === "po"
+                              ? "PO Unit Price"
+                              : "Price source not recorded"}
+                        </span>
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+              <p className="mt-1 text-[11px] text-[#6b5d50]">
+                {poNumber != null ? `SAP PO ${poNumber}` : "No SAP PO linked"}
+                {!service
+                  ? grpoNumbers.length
+                    ? ` · GRPO ${grpoNumbers.join(", ")}`
+                    : " · No GRPO selected"
+                  : " · Service; GRPO not required"}
+              </p>
+            </div>
+            <div className="hidden overflow-x-auto sm:block">
+              <table
+                className={`w-full ${service ? "min-w-[360px]" : "min-w-[460px]"} text-[11px]`}
+              >
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wider text-[#6b5d50]">
                     <th scope="col" className="w-20 pb-1 font-semibold">
@@ -264,20 +352,23 @@ export function MatchLineCard({
                           : "No SAP PO linked"
                       }
                     />
+                    {!service ? (
+                      <SourceHeader
+                        title={locked ? "SAP GRPO at saved check" : "SAP GRPO"}
+                        reference={
+                          service
+                            ? "Not required for services"
+                            : grpoNumbers.length
+                              ? `GRPO No. ${grpoNumbers.join(", ")}`
+                              : "No GRPO selected"
+                        }
+                      />
+                    ) : null}
                     <SourceHeader
-                      title="SAP Goods Receipt PO (GRPO)"
+                      title="Scanned Invoice (PDF)"
                       reference={
-                        service
-                          ? "Not required for services"
-                          : grpoNumbers.length
-                            ? `GRPO No. ${grpoNumbers.join(", ")}`
-                            : "No GRPO selected"
+                        invoice.source?.pageLabel ?? "Supplier invoice"
                       }
-                    />
-                    <SourceHeader
-                      title="Scanned Supplier Invoice"
-                      reference={`Invoice No. ${invoice.invoiceNumber}`}
-                      detail={invoiceSource || undefined}
                     />
                   </tr>
                 </thead>
@@ -289,6 +380,7 @@ export function MatchLineCard({
                         selected[0] ? `${inr(selected[0].open)} left` : "—"
                       }
                       received="Not needed"
+                      hideReceipt
                       billed={inr(line.invoiceAmount)}
                       tone={toneOf(checks, [
                         `amt-${line.index}`,
@@ -302,7 +394,7 @@ export function MatchLineCard({
                         order={quantity(line.po?.qty ?? null)}
                         received={
                           selected.length
-                            ? `${quantity(balances.received)} received${selected.length > 1 ? ` (${selected.length} GRPO lines)` : ""}`
+                            ? `${quantity(balances.available)} open`
                             : "No selection"
                         }
                         billed={quantity(line.invoiceQty)}
@@ -326,7 +418,7 @@ export function MatchLineCard({
                               : undefined
                         }
                         received={grpoRates.join(" / ") || "—"}
-                        billed={`${inr(line.invoiceRate)}${rateDelta !== null && Math.abs(rateDelta) > 0.005 ? ` (${rateDelta > 0 ? "+" : "−"}${inr(Math.abs(rateDelta))})` : ""}`}
+                        billed={invoicePrice}
                         tone={toneOf(checks, [`rate-${line.index}`])}
                         billedNote={
                           grpoRateFallback
@@ -340,29 +432,24 @@ export function MatchLineCard({
               </table>
             </div>
 
-            {!service && selected.length ? (
-              <dl className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-[#f0ece4] pt-2 text-[10px] sm:grid-cols-3">
-                {[
-                  [
-                    locked ? "Open at saved check" : "Available to invoice",
-                    balances.available,
-                  ],
-                  [locked ? "Used in draft" : "Used now", balances.used],
-                  [
-                    locked
-                      ? "Remaining at saved check"
-                      : "Remaining after allocation",
-                    balances.remaining,
-                  ],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <dt className="text-[#6b5d50]">{label}</dt>
-                    <dd className="mt-0.5 text-[11px] font-medium tabular-nums text-[#111827]">
-                      {quantity(value as number)}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+            {!service &&
+            selected.length &&
+            !checks.some(
+              (check) =>
+                check.open &&
+                (check.id === `qty-${line.index}` ||
+                  check.id.startsWith(`part-${line.index}-`)),
+            ) &&
+            (balances.remaining > 0.0005 ||
+              Math.abs(balances.used - (line.invoiceQty ?? 0)) > 0.0005) ? (
+              <p className="text-[11px] text-[#6b5d50]">
+                {locked ? "Used in draft" : "Allocated"}:{" "}
+                {quantity(balances.used)} ·{" "}
+                {locked
+                  ? "Remaining at saved check"
+                  : "Remaining GRPO Open Qty."}
+                : {quantity(balances.remaining)}
+              </p>
             ) : null}
 
             {!locked
@@ -396,13 +483,13 @@ export function MatchLineCard({
                     />
                   ))}
 
-            <MatchingEvidence invoice={invoice} line={line} locked={locked} />
-
             {unchecked.length ? (
               <p className="text-[11px] text-[#6b5d50]">
                 Not checked: {unchecked.map((check) => check.title).join("; ")}
               </p>
             ) : null}
+
+            <MatchingEvidence invoice={invoice} line={line} locked={locked} />
 
             {line.candidates.length ? (
               <ReceiptCandidatesPanel

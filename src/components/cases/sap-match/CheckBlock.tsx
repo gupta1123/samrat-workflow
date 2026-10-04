@@ -116,6 +116,54 @@ export function CheckBlock({
     );
   }
 
+  const singleOption = check.options?.length === 1 ? check.options[0] : null;
+  if (!check.decision && !locked && singleOption && !singleOption.needsReason) {
+    return (
+      <div className={`rounded-lg border px-3 py-2 ${tone.box}`}>
+        <div className="flex flex-wrap items-start gap-2">
+          <tone.Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone.icon}`} />
+          <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-auto">
+            <p className="text-[12px] font-semibold text-[#111827]">
+              {check.ask ?? check.title}
+            </p>
+            {check.help ? (
+              <p className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
+                {check.help}
+              </p>
+            ) : null}
+            {check.waitNote ? (
+              <p className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
+                {check.waitNote}
+              </p>
+            ) : null}
+            {singleOption.lines.length ? (
+              <details className="mt-1 text-[11px] text-[#6b5d50]">
+                <summary className="w-fit cursor-pointer py-1">
+                  Decision details
+                </summary>
+                <ul className="mt-1 space-y-0.5">
+                  {singleOption.lines.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </div>
+          <Button
+            size="sm"
+            variant={singleOption.recommended ? "default" : "outline"}
+            className="h-7 px-2.5 text-[11px]"
+            disabled={busy}
+            onClick={() => onChoose(singleOption.choice, "")}
+          >
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            {singleOption.title}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`rounded-lg border px-4 py-3 ${tone.box}`}>
       <div className="flex items-start gap-2.5">

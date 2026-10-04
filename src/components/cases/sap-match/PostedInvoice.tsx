@@ -186,89 +186,94 @@ export function PostedInvoice({
       ) : null}
 
       {match ? (
-        <>
-          <div>
-            <h3 className="text-[12px] font-semibold text-[#111827]">
-              Comparison saved before posting
-            </h3>
-            <p className="mt-1 text-[11px] text-[#8a7f72]">
-              The match used to create the draft. Its GRPO quantities describe
-              that saved check.
-            </p>
-          </div>
-          <SupplierEvidence
-            invoice={match.invoice}
-            vendor={match.vendor}
-            result={match.result}
-          />
-          {match.result.lines.map((line) => (
-            <MatchLineCard
-              key={line.index}
-              caseId={caseId}
+        <details className="text-[11px]">
+          <summary className="cursor-pointer py-1 font-medium text-[#6b4a33]">
+            Comparison saved before posting
+          </summary>
+          <div className="mt-2 space-y-3">
+            <div>
+              <h3 className="text-[12px] font-semibold text-[#111827]">
+                Comparison saved before posting
+              </h3>
+              <p className="mt-1 text-[11px] text-[#8a7f72]">
+                The match used to create the draft. Its GRPO quantities describe
+                that saved check.
+              </p>
+            </div>
+            <SupplierEvidence
               invoice={match.invoice}
-              line={line}
-              checks={match.result.checks.filter(
-                (check) => check.lineIndex === line.index,
-              )}
-              locked
-              busy={false}
-              vendorFound={Boolean(match.vendor)}
-              onChoose={readOnly}
-              onUndo={readOnly}
-              onAllocate={readOnly}
-              onResetAllocation={readOnly}
-              onLink={readOnly}
+              vendor={match.vendor}
+              result={match.result}
             />
-          ))}
-          <WhatGoesToSap
-            result={match.result}
-            lines={match.result.lines}
-            vendorLabel={
-              match.vendor
-                ? `${match.vendor.cardName} (${match.vendor.cardCode})`
-                : "Vendor"
-            }
-            saved
-          />
-          <details className="rounded-xl border border-[#e0d8cc] bg-white px-4 py-3 text-[11px]">
-            <summary className="cursor-pointer font-medium text-[#6b4a33]">
-              Saved checks and decisions ({match.result.checks.length})
-            </summary>
-            <ul className="mt-3 space-y-2">
-              {match.result.checks.map((check) => (
-                <li
-                  key={check.id}
-                  className="flex items-start gap-2 text-[#3d3530]"
-                >
-                  {check.sev === "unchecked" ? (
-                    <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6b5d50]" />
-                  ) : (
-                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2c6a4f]" />
-                  )}
-                  <div>
-                    <span className="mr-1.5 text-[10px] font-medium">
-                      {check.sev === "unchecked"
-                        ? "Not checked"
-                        : check.decision
-                          ? "Accepted by reviewer"
-                          : "Matched"}{" "}
-                      ·
-                    </span>
-                    {check.title}
-                    {check.decision ? (
-                      <p className="mt-0.5 text-[10px] text-[#8a7f72]">
-                        {check.decision.choice}
-                        {check.decision.reason
-                          ? ` · ${check.decision.reason}`
-                          : ""}
-                      </p>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </details>
-        </>
+            {match.result.lines.map((line) => (
+              <MatchLineCard
+                key={line.index}
+                caseId={caseId}
+                invoice={match.invoice}
+                line={line}
+                checks={match.result.checks.filter(
+                  (check) => check.lineIndex === line.index,
+                )}
+                locked
+                busy={false}
+                vendorFound={Boolean(match.vendor)}
+                onChoose={readOnly}
+                onUndo={readOnly}
+                onAllocate={readOnly}
+                onResetAllocation={readOnly}
+                onLink={readOnly}
+              />
+            ))}
+            <WhatGoesToSap
+              result={match.result}
+              lines={match.result.lines}
+              vendorLabel={
+                match.vendor
+                  ? `${match.vendor.cardName} (${match.vendor.cardCode})`
+                  : "Vendor"
+              }
+              saved
+            />
+            <details className="rounded-xl border border-[#e0d8cc] bg-white px-4 py-3 text-[11px]">
+              <summary className="cursor-pointer font-medium text-[#6b4a33]">
+                Saved checks and decisions ({match.result.checks.length})
+              </summary>
+              <ul className="mt-3 space-y-2">
+                {match.result.checks.map((check) => (
+                  <li
+                    key={check.id}
+                    className="flex items-start gap-2 text-[#3d3530]"
+                  >
+                    {check.sev === "unchecked" ? (
+                      <Minus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#6b5d50]" />
+                    ) : (
+                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2c6a4f]" />
+                    )}
+                    <div>
+                      <span className="mr-1.5 text-[10px] font-medium">
+                        {check.sev === "unchecked"
+                          ? "Not checked"
+                          : check.decision
+                            ? "Accepted by reviewer"
+                            : "Matched"}{" "}
+                        ·
+                      </span>
+                      {check.title}
+                      {check.decision ? (
+                        <p className="mt-0.5 text-[10px] text-[#8a7f72]">
+                          {check.decision.choice}
+                          {check.decision.reason
+                            ? ` · ${check.decision.reason}`
+                            : ""}
+                        </p>
+                      ) : null}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
+        </details>
       ) : (
         <div className="rounded-xl border border-[#e0d8cc] bg-[#fbfaf8] px-4 py-3 text-[11px] leading-4 text-[#6b5d50]">
           The original match comparison was not saved for this older posting.
