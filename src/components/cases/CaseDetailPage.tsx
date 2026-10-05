@@ -64,6 +64,7 @@ import { normalizeUploadFiles } from "@/lib/client-image-upload";
 import { getAnalysisIntegrityApprovalBlockReason } from "@/lib/analysis-integrity";
 import { getSavedCaseInvoiceApprovalBlockReason } from "@/lib/invoice-approval";
 import { getCaseDisplayStatus } from "@/lib/case-status";
+import { getCaseInvoiceTotal } from "@/lib/case-invoice-total";
 import { getPersistedCaseIssues } from "@/lib/case-issues";
 import { DOCUMENT_READABILITY_FIELD } from "@/lib/document-readability";
 import { getDocumentIssueCount } from "@/lib/document-review-status";
@@ -2625,22 +2626,12 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
   const buyerFacingDocumentIds = new Set(
     sellerChainRoleMeta?.primaryDocumentIds ?? [],
   );
-  const buyerFacingDisplayDocuments = displayDocuments.filter((document) =>
-    [document.id, document.clientDocumentId]
-      .filter((value): value is string => Boolean(value))
-      .some((value) => buyerFacingDocumentIds.has(value)),
-  );
-  const headerAmountDocuments = buyerFacingDisplayDocuments.length
-    ? buyerFacingDisplayDocuments
-    : displayDocuments;
   const packetPageCount = displayDocuments.reduce(
     (total, document) => total + Math.max(1, document.pageCount || 1),
     0,
   );
   const headerInvoiceAmount = formatMoney(
-    headerAmountDocuments
-      .map((document) => getInvoiceAmount(document))
-      .find((value): value is number => value !== null),
+    getCaseInvoiceTotal(displayDocuments, buyerFacingDocumentIds),
   );
   const currentDocumentIndex = activeDocument
     ? getDocumentIndexDetails(activeDocument)
