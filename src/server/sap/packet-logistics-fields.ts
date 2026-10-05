@@ -1,3 +1,5 @@
+import { sapInvoiceDate } from "./dates";
+
 type SapField = Record<string, unknown>;
 
 export type PacketLogisticsDocument = {
@@ -113,15 +115,14 @@ function identity(value: string): string {
 function useful(value: unknown): boolean {
   if (typeof value === "number") return Number.isFinite(value) && value !== 0;
   const valueText = text(value);
-  return Boolean(valueText) &&
-    !["-", "0", "NA", "N/A", "NONE", "NULL"].includes(identity(valueText));
+  return (
+    Boolean(valueText) &&
+    !["-", "0", "NA", "N/A", "NONE", "NULL"].includes(identity(valueText))
+  );
 }
 
 function dateValue(value: unknown): string | null {
-  const valueText = text(value);
-  if (!valueText || Number.isNaN(Date.parse(valueText))) return null;
-  const iso = new Date(valueText).toISOString();
-  return iso.slice(0, 10);
+  return sapInvoiceDate(value);
 }
 
 function weightTonnes(value: unknown): number | null {
@@ -170,10 +171,13 @@ function distinctCandidates(
   }
   return [
     ...new Map(
-      values.map((value) => [
-        typeof value === "number" ? String(value) : identity(value),
-        value,
-      ] as const),
+      values.map(
+        (value) =>
+          [
+            typeof value === "number" ? String(value) : identity(value),
+            value,
+          ] as const,
+      ),
     ).values(),
   ];
 }
@@ -192,7 +196,10 @@ function validValues(field: SapField): Array<{ value: string; label: string }> {
   });
 }
 
-function sapValue(field: SapField, candidate: string | number): string | number | null {
+function sapValue(
+  field: SapField,
+  candidate: string | number,
+): string | number | null {
   const options = validValues(field);
   if (options.length === 0) return candidate;
   const candidateIdentity = identity(String(candidate));
@@ -204,7 +211,15 @@ function sapValue(field: SapField, candidate: string | number): string | number 
   return matches.length === 1 ? matches[0]!.value : null;
 }
 
-function sameValue(left: unknown, right: string | number): boolean {
+function sameValue(
+  left: unknown,
+  right: string | number,
+  kind?: CandidateKind,
+): boolean {
+  if (kind === "date") {
+    const expected = dateValue(right);
+    return expected !== null && dateValue(left) === expected;
+  }
   if (typeof right === "number") {
     const parsed = Number(left);
     return Number.isFinite(parsed) && Math.abs(parsed - right) <= 0.000001;
@@ -233,7 +248,9 @@ export async function packetLogisticsFieldUpdates(input: {
         if (documentType !== "Invoice" && documentType !== "Tax Invoice") {
           return [];
         }
-        const invoiceNumber = text(record(document.extracted_fields).invoiceNumber);
+        const invoiceNumber = text(
+          record(document.extracted_fields).invoiceNumber,
+        );
         return invoiceNumber ? [identity(invoiceNumber)] : [];
       }),
     ),
@@ -264,7 +281,7 @@ export async function packetLogisticsFieldUpdates(input: {
       const value = sapValue(field, candidate);
       if (value === null) return [];
       const propertyName = `U_${fieldName}`;
-      if (sameValue(input.draft[propertyName], value)) return [];
+      if (sameValue(input.draft[propertyName], value, rule.kind)) return [];
       return [{ description: rule.description, propertyName, value }];
     });
   });
@@ -283,6 +300,10 @@ export function packetLogisticsFieldsMatch(
   updates: PacketLogisticsUpdate[],
 ): boolean {
   return updates.every((update) =>
-    sameValue(document[update.propertyName], update.value),
+    sameValue(
+      document[update.propertyName],
+      update.value,
+      RULES.find((rule) => rule.description === update.description)?.kind,
+    ),
   );
 }

@@ -195,3 +195,66 @@ test("saved SAP logistics values are verified after the draft update", () => {
     false,
   );
 });
+
+test("LR dates preserve the packet's calendar day and skip matching SAP timestamps", async () => {
+  for (const documentDate of [
+    "17 Jun 2026",
+    "17/06/2026",
+    "2026-06-17T00:00:00+05:30",
+  ]) {
+    const input = {
+      invoiceNumber: "INV-100",
+      getUserFields,
+      documents: [
+        {
+          document_type: "Lorry Receipt",
+          extracted_fields: { documentDate },
+        },
+      ],
+    };
+    const updates = await packetLogisticsFieldUpdates({ ...input, draft: {} });
+    assert.equal(
+      packetLogisticsUpdatePayload(updates).U_DYNAMIC_LR_DATE,
+      "2026-06-17",
+    );
+    assert.equal(
+      packetLogisticsFieldsMatch(
+        { U_DYNAMIC_LR_DATE: "2026-06-17T00:00:00Z" },
+        updates,
+      ),
+      true,
+    );
+    assert.deepEqual(
+      await packetLogisticsFieldUpdates({
+        ...input,
+        draft: {
+          U_DYNAMIC_LR_DATE: "2026-06-17T00:00:00Z",
+        },
+      }),
+      [],
+    );
+  }
+});
+
+test("LR date verification rejects different days and invalid dates without normalizing text references", () => {
+  const updates = [
+    { description: "LR Date", propertyName: "U_LRDT", value: "2026-06-17" },
+  ];
+  assert.equal(
+    packetLogisticsFieldsMatch({ U_LRDT: "2026-06-16T00:00:00Z" }, updates),
+    false,
+  );
+  assert.equal(packetLogisticsFieldsMatch({ U_LRDT: null }, updates), false);
+  assert.equal(
+    packetLogisticsFieldsMatch({ U_LRDT: "2026-02-31T00:00:00Z" }, [
+      { description: "LR Date", propertyName: "U_LRDT", value: "2026-02-31" },
+    ]),
+    false,
+  );
+  assert.equal(
+    packetLogisticsFieldsMatch({ U_LRNO: "2026-06-17T00:00:00Z" }, [
+      { description: "LR No", propertyName: "U_LRNO", value: "2026-06-17" },
+    ]),
+    false,
+  );
+});
