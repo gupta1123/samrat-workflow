@@ -122,14 +122,16 @@ export function SupplierEvidence({
         "saved-mapping": "Reused a saved supplier mapping",
         reviewer: "Supplier selected by reviewer for this packet",
       }[identification.method];
-  const gstins = identification?.sapGstins ?? [];
-  const sameGstin = Boolean(
-    invoice.vendorGstin &&
-    gstins.some(
-      (gstin) =>
-        gstin.toUpperCase() === invoice.vendorGstin?.trim().toUpperCase(),
+  const invoiceGstin = invoice.vendorGstin?.trim().toUpperCase() ?? "";
+  const gstins = [
+    ...new Set(
+      (identification?.sapGstins ?? [])
+        .map((gstin) => gstin.trim().toUpperCase())
+        .filter(Boolean),
     ),
-  );
+  ];
+  const sameGstin = Boolean(invoiceGstin && gstins.includes(invoiceGstin));
+  const otherGstins = gstins.filter((gstin) => gstin !== invoiceGstin);
   return (
     <section className="border-b border-[#e0d8cc] pb-2">
       <div className="mb-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px]">
@@ -154,24 +156,51 @@ export function SupplierEvidence({
           </span>
         </p>
       </div>
-      <p className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
-        GSTIN:{" "}
-        <span className="font-mono">
-          {invoice.vendorGstin ?? "Not recorded on invoice"}
-        </span>{" "}
-        → SAP:{" "}
-        <span className="font-mono">
-          {gstins.join(", ") || "Not recorded in check"}
-        </span>{" "}
-        ·{" "}
-        <span className={sameGstin ? color.Matched : color["Not checked"]}>
-          {sameGstin
-            ? "Matched"
-            : invoice.vendorGstin && gstins.length
-              ? "Different; supplier linked by another method"
-              : "Not checked"}
-        </span>
+      <p
+        className={`mt-1 text-[10px] leading-4 ${sameGstin ? color.Matched : color["Not checked"]}`}
+      >
+        {!invoiceGstin ? (
+          "Supplier GSTIN was not extracted from the scanned invoice."
+        ) : (
+          <>
+            Invoice GSTIN <span className="font-mono">{invoiceGstin}</span>{" "}
+            {sameGstin ? (
+              <>
+                matches{" "}
+                {vendor ? (
+                  <>
+                    SAP supplier{" "}
+                    <span className="font-mono">{vendor.cardCode}</span>
+                  </>
+                ) : (
+                  "the SAP Business Partner's address records"
+                )}
+                .
+              </>
+            ) : gstins.length ? (
+              "was not found in this SAP supplier's address records. Supplier linked by another method."
+            ) : (
+              "— SAP GSTINs were not recorded in this check."
+            )}
+          </>
+        )}
       </p>
+      {otherGstins.length ? (
+        <details className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
+          <summary className="cursor-pointer">
+            {sameGstin ? "Other SAP GSTINs" : "SAP GSTINs"} (
+            {otherGstins.length})
+          </summary>
+          <p className="mt-1">
+            Unique GSTINs from this Business Partner&apos;s SAP address records.
+          </p>
+          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
+            {otherGstins.map((gstin) => (
+              <li key={gstin}>{gstin}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </section>
   );
 }
