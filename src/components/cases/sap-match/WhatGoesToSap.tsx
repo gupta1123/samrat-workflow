@@ -5,6 +5,8 @@ import { formatDate, inr, qty } from "./format";
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
 import { useState, type ReactNode } from "react";
 import { DraftHeaderFields } from "./DraftHeaderFields";
+import type { PostedSapDetails } from "@/lib/sap-posted-details";
+import { SavedPostingCard } from "./SavedPostingPreview";
 
 // The exact document that will be created in SAP, before anything is created.
 export function WhatGoesToSap({
@@ -13,6 +15,7 @@ export function WhatGoesToSap({
   lines,
   vendorLabel,
   saved = false,
+  savedDetails,
   actions,
 }: {
   caseId?: string;
@@ -20,9 +23,12 @@ export function WhatGoesToSap({
   lines: LineResult[];
   vendorLabel: string;
   saved?: boolean;
+  savedDetails?: PostedSapDetails;
   actions?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
+  if (saved && caseId && savedDetails)
+    return <SavedPostingCard caseId={caseId} details={savedDetails} />;
   const plan = result.payload;
   if (!plan) return null;
   const priceOf = (baseEntry: number, baseLine: number) =>

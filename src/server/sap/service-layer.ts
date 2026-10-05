@@ -187,6 +187,7 @@ export async function withTestServiceLayer<T>(
       payload: Record<string, unknown>,
     ) => Promise<SapDraftResponse>;
     getDraft: (docEntry: number) => Promise<SapDraftResponse>;
+    getPurchaseInvoice: (docEntry: number) => Promise<Record<string, unknown>>;
     updateDraft: (
       docEntry: number,
       payload: Record<string, unknown>,
@@ -769,6 +770,10 @@ export async function withTestServiceLayer<T>(
       async getDraft(docEntry) {
         const { body } = await request(`/Drafts(${docEntry})`);
         return body as SapDraftResponse;
+      },
+      async getPurchaseInvoice(docEntry) {
+        const { body } = await request(`/PurchaseInvoices(${docEntry})`);
+        return body;
       },
       async updateDraft(docEntry, payload) {
         await request(`/Drafts(${docEntry})`, {

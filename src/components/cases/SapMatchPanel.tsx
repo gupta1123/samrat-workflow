@@ -44,6 +44,7 @@ import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
 import { DraftHeaderFields } from "./sap-match/DraftHeaderFields";
 import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
+import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 
 const STATUS: Record<
   MatchStatus,
@@ -286,6 +287,7 @@ export function SapMatchPanel({
                 .join(", ")}
             </p>
           ) : null}
+          <SavedPostingCard caseId={caseId} details={data.draftDetails} />
           <FinalPostSection
             caseId={caseId}
             status="prepared"
@@ -801,6 +803,7 @@ function Matched({
         lines={result.lines}
         vendorLabel={vendorLabel}
         saved={locked}
+        savedDetails={data.draftDetails}
         actions={draftActions}
       />
 

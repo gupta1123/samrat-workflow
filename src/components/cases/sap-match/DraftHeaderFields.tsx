@@ -8,6 +8,7 @@ import type {
   DraftFieldChoices,
   DraftHeaderPreview,
 } from "@/lib/sap-draft-fields";
+import { PostingFieldGrid } from "./PostingFieldGrid";
 
 /** Only fetch SAP field definitions when the user opens the posting review. */
 export function DraftHeaderFields({
@@ -60,18 +61,30 @@ export function DraftHeaderFields({
         </p>
       ) : (
         <>
-          <dl className="grid grid-cols-[minmax(120px,1fr)_minmax(120px,2fr)] gap-x-3 gap-y-1">
-            {preview.fields
-              .filter((field) => !["U_TRSPRT", "U_MTRFORM"].includes(field.key))
-              .map((field) => (
-                <div key={field.key} className="contents">
-                  <dt className="text-[#8a7f72]">{field.label}</dt>
-                  <dd title={field.source}>
-                    {field.value ?? "Not recorded in PDF"}
-                  </dd>
-                </div>
-              ))}
-          </dl>
+          <div className="space-y-2">
+            {confirming ? (
+              <PostingFieldGrid
+                fields={preview.fields.filter((field) =>
+                  ["U_TATAINV", "U_TATAINVDT"].includes(field.key),
+                )}
+              />
+            ) : null}
+            <h3 className="text-[11px] font-semibold text-[#111827]">
+              Transport & weights
+            </h3>
+            <PostingFieldGrid
+              fields={preview.fields.filter(
+                (field) =>
+                  ![
+                    "U_TATAINV",
+                    "U_TATAINVDT",
+                    "U_TRSPRT",
+                    "U_MTRFORM",
+                  ].includes(field.key),
+              )}
+            />
+          </div>
+          {/* Choices are editable only in the explicit creation confirmation. */}
           {confirming ? (
             <div className="grid gap-2 sm:grid-cols-2">
               {(["transporter", "materialForm"] as const).map((key) => (
@@ -106,18 +119,11 @@ export function DraftHeaderFields({
               ))}
             </div>
           ) : (
-            <dl className="grid grid-cols-[minmax(120px,1fr)_minmax(120px,2fr)] gap-x-3 gap-y-1">
-              {preview.fields
-                .filter((field) =>
-                  ["U_TRSPRT", "U_MTRFORM"].includes(field.key),
-                )
-                .map((field) => (
-                  <div key={field.key} className="contents">
-                    <dt className="text-[#8a7f72]">{field.label}</dt>
-                    <dd>{field.value ?? "Select before creating draft"}</dd>
-                  </div>
-                ))}
-            </dl>
+            <PostingFieldGrid
+              fields={preview.fields.filter((field) =>
+                ["U_TRSPRT", "U_MTRFORM"].includes(field.key),
+              )}
+            />
           )}
           {preview.warnings.map((warning) => (
             <p key={warning} className="text-[#9a5a0a]">

@@ -1,4 +1,6 @@
 import type { SapMatchAvailable } from "./sap-match-client";
+import type { DraftHeaderPreview } from "./sap-draft-fields";
+import type { SapDocumentSnapshot } from "./sap-posting-preview";
 
 export type SavedSapMatch = Pick<
   SapMatchAvailable,
@@ -27,6 +29,10 @@ export type PostedSapDetails = {
   match: SavedSapMatch | null;
   history: Array<{ at: string; title: string }>;
   nextCaseId: string | null;
+  draftDocNum?: string | null;
+  headerFields?: DraftHeaderPreview["fields"];
+  sapSnapshot?: SapDocumentSnapshot | null;
+  submittedPayload?: Record<string, unknown> | null;
 };
 
 function record(value: unknown): Record<string, unknown> {
@@ -164,6 +170,10 @@ export function postedSapDetails(
     sap_ap_invoice_linked: "Existing A/P Invoice linked",
   };
   const match = savedMatch(payload.matchSnapshot, invoiceNumber, vendorCode);
+  const header = record(payload.draftHeaderFields);
+  const evidence = Array.isArray(payload.draftHeaderEvidence)
+    ? payload.draftHeaderEvidence
+    : [];
   return {
     invoiceNumber,
     vendorCode,
@@ -171,8 +181,9 @@ export function postedSapDetails(
     postingDate: text(summary.postingDate) ?? text(payload.postingDate),
     invoiceDate: text(summary.invoiceDate) ?? text(payload.invoiceDate),
     recordedAt: posting.updated_at ?? null,
-    draftNumber: text(response.DraftDocEntry),
-    materialForm: text(response.MaterialForm),
+    draftNumber: text(response.DraftDocEntry) ?? text(response.DocEntry),
+    draftDocNum: text(response.DocNum),
+    materialForm: text(response.MaterialForm) ?? text(header.U_MTRFORM),
     currency: text(summary.currency),
     total: number(summary.total),
     netPayable: number(summary.netPayable),
@@ -192,5 +203,26 @@ export function postedSapDetails(
       .filter((event) => typeof actions[event.action] === "string")
       .map((event) => ({ at: event.created_at, title: actions[event.action] })),
     nextCaseId,
+    headerFields: evidence.flatMap((field) => {
+      const row = record(field);
+      const key = text(row.key),
+        label = text(row.label);
+      return key && label
+        ? [
+            {
+              key,
+              label,
+              value: text(key in header ? header[key] : row.value),
+              source: text(row.source) ?? "Saved",
+            },
+          ]
+        : [];
+    }),
+    sapSnapshot: record(response.SapDocumentSnapshot).document
+      ? (response.SapDocumentSnapshot as SapDocumentSnapshot)
+      : null,
+    submittedPayload: Object.keys(record(payload.submittedPayload)).length
+      ? record(payload.submittedPayload)
+      : null,
   };
 }

@@ -242,7 +242,10 @@ export async function createMatchedDraft(
     usedHistoricalPostingDate = true;
   }
 
-  const payload = { ...params.payload, DocDate: postingDate };
+  let payload: Record<string, unknown> = {
+    ...params.payload,
+    DocDate: postingDate,
+  };
   let series: number | null = null;
   let created;
   try {
@@ -261,7 +264,8 @@ export async function createMatchedDraft(
       );
     }
     try {
-      created = await client.createDraft({ ...payload, Series: series });
+      payload = { ...payload, Series: series };
+      created = await client.createDraft(payload);
     } catch (retryError) {
       if (/10000521|define the numbering series/i.test(String(retryError))) {
         throw new MatchDraftError(
@@ -271,5 +275,11 @@ export async function createMatchedDraft(
       throw retryError;
     }
   }
-  return { created, postingDate, usedHistoricalPostingDate, series };
+  return {
+    created,
+    postingDate,
+    usedHistoricalPostingDate,
+    series,
+    submittedPayload: payload,
+  };
 }

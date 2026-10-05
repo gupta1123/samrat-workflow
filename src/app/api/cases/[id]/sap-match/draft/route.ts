@@ -17,6 +17,7 @@ import {
 import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import { saveSapMatch } from "@/lib/sap-posted-details";
+import { sapDocumentSnapshot } from "@/lib/sap-posting-preview";
 import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
 import {
   buildMatchedDraftPayload,
@@ -352,11 +353,13 @@ export async function POST(request: Request, context: Context) {
           freightExcluded: plan.freightExcluded,
           draftHeaderFields: header.values,
           draftHeaderEvidence: header.preview.fields,
+          submittedPayload: created.submittedPayload,
         },
         response: {
           DocEntry: docEntry,
           DocNum: created.created.DocNum,
           CardCode: created.created.CardCode ?? plan.cardCode,
+          SapDocumentSnapshot: sapDocumentSnapshot(created.created),
         },
         error: null,
       },

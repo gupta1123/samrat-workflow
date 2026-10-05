@@ -13,6 +13,7 @@ import { withTestServiceLayer } from "@/server/sap/service-layer";
 import { sapMaterialFormPolicy } from "@/lib/sap-material-form";
 import { DRAFT_FIELD_NAMES } from "@/server/sap/draft-fields";
 import { postingLineSnapshot } from "@/lib/sap-posted-details";
+import { sapDocumentSnapshot } from "@/lib/sap-posting-preview";
 import {
   resolveSapTransporter,
   sapTransportFieldUpdates,
@@ -704,6 +705,7 @@ async function handle(
           alreadyPosted: false,
           invoice,
           draft: summary,
+          sapSnapshot: sapDocumentSnapshot(draft),
           materialForm: materialFormState,
           serviceResult,
         };
@@ -769,6 +771,8 @@ async function handle(
             currency: result.invoice?.DocCurrency,
             lines: postingLineSnapshot(result.invoice?.DocumentLines),
           },
+          SapDocumentSnapshot:
+            record(result).sapSnapshot ?? previousResponse.SapDocumentSnapshot,
         },
         error: null,
       })

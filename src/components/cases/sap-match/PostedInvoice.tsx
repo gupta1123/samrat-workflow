@@ -5,15 +5,11 @@ import { Check, CheckCircle2, FileText, ArrowRight, Minus } from "lucide-react";
 import type { PostedSapDetails } from "@/lib/sap-posted-details";
 import { MatchLineCard } from "./MatchLineCard";
 import { WhatGoesToSap } from "./WhatGoesToSap";
-import { formatDate, qty } from "./format";
-import { SAP_TERMS, sapMatchPresentation } from "@/lib/sap-match/terminology";
+import { SavedPostingCard } from "./SavedPostingPreview";
+import { sapMatchPresentation } from "@/lib/sap-match/terminology";
 import { truthfulChecks } from "@/lib/sap-match/evidence";
 import { SupplierEvidence } from "./MatchingEvidence";
 
-function money(value: number | null, currency: string | null) {
-  if (value === null) return "—";
-  return `${currency === "INR" ? "₹" : currency ? `${currency} ` : ""}${new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 }).format(value)}`;
-}
 function timestamp(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
@@ -96,93 +92,7 @@ export function PostedInvoice({
       </section>
 
       {details ? (
-        <section className="rounded-xl border border-[#e0d8cc] bg-white px-4 py-3">
-          <h3 className="text-[12px] font-semibold text-[#111827]">
-            Posting details
-          </h3>
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-[11px] sm:grid-cols-3">
-            {[
-              [SAP_TERMS.postingDate, formatDate(details.postingDate)],
-              [SAP_TERMS.documentDate, formatDate(details.invoiceDate)],
-              ["Draft Entry No.", details.draftNumber ?? "—"],
-              ["Material form", details.materialForm ?? "—"],
-              ["Document Total", money(details.total, details.currency)],
-              ["Net payable", money(details.netPayable, details.currency)],
-            ].map(([label, value]) => (
-              <div key={label}>
-                <dt className="text-[#8a7f72]">{label}</dt>
-                <dd className="mt-0.5 font-medium tabular-nums text-[#111827]">
-                  {value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          {details.bases.length ? (
-            <div className="mt-3 border-t border-[#f0ece4] pt-3 text-[11px] text-[#3d3530]">
-              Base Document References:{" "}
-              {details.bases
-                .map(
-                  (base) =>
-                    `${base.kind === "GRPO" ? SAP_TERMS.grpo : "PO"} ${base.number}`,
-                )
-                .join(", ")}
-              .
-            </div>
-          ) : null}
-          <p className="mt-2 text-[10px] leading-4 text-[#8a7f72]">
-            These are saved posting records. GRPO closure, payment settlement
-            and current stock are not checked here.
-          </p>
-          {details.recordedAt ? (
-            <p className="mt-1 text-[10px] text-[#8a7f72]">
-              Last recorded in this app: {timestamp(details.recordedAt)}
-            </p>
-          ) : null}
-        </section>
-      ) : null}
-
-      {details?.lines.length ? (
-        <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white px-4 py-3">
-          <h3 className="text-[12px] font-semibold text-[#111827]">
-            Posted invoice lines
-          </h3>
-          <div className="mt-2 overflow-x-auto">
-            <table className="w-full min-w-[420px] text-left text-[11px]">
-              <thead className="border-b border-[#e0d8cc] text-[#8a7f72]">
-                <tr>
-                  <th className="py-2 font-medium">Item</th>
-                  <th className="py-2 text-right font-medium">Quantity</th>
-                  <th className="py-2 text-right font-medium">Unit Price</th>
-                  <th className="py-2 text-right font-medium">Before tax</th>
-                </tr>
-              </thead>
-              <tbody>
-                {details.lines.map((line, index) => (
-                  <tr
-                    key={index}
-                    className="border-b border-[#f0ece4] last:border-0"
-                  >
-                    <td className="py-2">
-                      {line.description ?? line.itemCode ?? "Service"}
-                      <div className="font-mono text-[10px] text-[#8a7f72]">
-                        {line.itemCode}
-                      </div>
-                    </td>
-                    <td className="py-2 text-right tabular-nums">
-                      {qty(line.quantity)}
-                    </td>
-                    <td className="py-2 text-right tabular-nums">
-                      {money(line.rate, details.currency)}
-                    </td>
-                    <td className="py-2 text-right tabular-nums">
-                      {money(line.amount, details.currency)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        <SavedPostingCard caseId={caseId} details={details} posted />
       ) : null}
 
       {match ? (

@@ -50,9 +50,8 @@ test("posted UI keeps comparison and preview but exposes no financial or match-e
     "Posting Date",
     "Document Date",
     "Vendor Ref. No.",
-    "Draft Entry No.",
+    "Posted invoice details",
     "Saved A/P Invoice Draft Preview",
-    "Posted invoice lines",
     "View source documents",
   ])
     assert.ok(html.includes(text), text);
