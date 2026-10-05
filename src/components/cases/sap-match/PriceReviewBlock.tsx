@@ -35,6 +35,13 @@ export function PriceReviewBlock({
   const returnOption = check.options?.find(
     (option) => option.effect === "return",
   );
+  const source = details.comparisonSource.replace(/^SAP /, "");
+  const title =
+    source === "PO" || source === "GRPO"
+      ? details.direction === "higher"
+        ? `Price exceeds ${source} limit`
+        : `Price below ${source} tolerance`
+      : "Price outside allowed limit";
 
   return (
     <section
@@ -44,28 +51,23 @@ export function PriceReviewBlock({
       <div className="flex items-start gap-2">
         <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#9a5a0a]" />
         <div className="min-w-0 flex-1">
-          <h4 className="text-[11px] font-semibold text-[#111827]">
-            Price difference needs review
-          </h4>
-          <p className="mt-1 text-[11px] leading-4 text-[#3d3530]">
-            Scanned invoice is{" "}
-            <strong>
-              {inr(details.difference)}
-              {details.unit ? `/${details.unit}` : ""} {details.direction}
-            </strong>{" "}
-            than the {details.comparisonSource}
-          </p>
-          <p className="mt-0.5 text-[10px] leading-4 text-[#6b5d50]">
-            {details.percent.toFixed(2)}% difference · Allowed difference:{" "}
-            {details.tolerancePct}%
-          </p>
+          <h4 className="text-[11px] font-semibold text-[#111827]">{title}</h4>
           {details.valueDifference != null ? (
-            <p className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
-              {details.partialAllocation ? "Allocated value" : "Invoice value"}{" "}
-              is ₹{money.format(details.valueDifference)} {details.direction}{" "}
-              before tax
+            <p className="mt-1 text-[11px] leading-4 text-[#3d3530]">
+              <strong className="tabular-nums">
+                {details.direction === "higher" ? "+" : "−"}₹
+                {money.format(details.valueDifference)}
+              </strong>{" "}
+              before tax{details.partialAllocation ? " · allocated quantity" : ""}
             </p>
           ) : null}
+          <p className="mt-0.5 text-[10px] leading-4 text-[#6b5d50]">
+            {inr(details.difference)}
+            {details.unit ? `/${details.unit}` : ""} {details.direction} ·{" "}
+            {details.percent.toFixed(2)}%{" "}
+            {details.direction === "higher" ? "above" : "below"} {source} · Allowed:{" "}
+            {details.tolerancePct}%
+          </p>
 
           {!locked && !accepting ? (
             <div className="mt-2 flex flex-wrap gap-2">
@@ -78,7 +80,7 @@ export function PriceReviewBlock({
                   disabled={busy}
                   onClick={() => setAccepting(true)}
                 >
-                  Use scanned invoice price
+                  Accept invoice price
                 </Button>
               ) : null}
               {returnOption ? (
@@ -88,9 +90,10 @@ export function PriceReviewBlock({
                   size="sm"
                   className="h-7 px-2.5 text-[11px]"
                   disabled={busy}
+                  title="Marks this case for supplier correction. Contact the supplier separately; no notification is sent."
                   onClick={() => onChoose(returnOption.choice, "")}
                 >
-                  Return for correction
+                  Mark for correction
                 </Button>
               ) : null}
             </div>

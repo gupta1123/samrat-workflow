@@ -12,6 +12,7 @@ import { ReceiptCandidatesPanel } from "./ReceiptCandidatesPanel";
 import { priceReviewDetails } from "@/lib/sap-match/price-review";
 import { quantityBalances } from "@/lib/sap-match/evidence";
 import { MatchingEvidence } from "./MatchingEvidence";
+import { SupplierOrdersPanel } from "./SupplierOrdersPanel";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -491,19 +492,24 @@ export function MatchLineCard({
 
             <MatchingEvidence invoice={invoice} line={line} locked={locked} />
 
-            {line.candidates.length ? (
-              <ReceiptCandidatesPanel
-                caseId={caseId}
-                invoice={invoice}
-                line={line}
-                title={title}
-                unit={unit}
-                locked={locked}
-                busy={busy}
-                onAllocate={onAllocate}
-                onResetAllocation={onResetAllocation}
-              />
-            ) : null}
+            <div className="flex flex-wrap gap-2">
+              {line.candidates.length ? (
+                <ReceiptCandidatesPanel
+                  caseId={caseId}
+                  invoice={invoice}
+                  line={line}
+                  title={title}
+                  unit={unit}
+                  locked={locked}
+                  busy={busy}
+                  onAllocate={onAllocate}
+                  onResetAllocation={onResetAllocation}
+                />
+              ) : null}
+              {vendorFound && line.kind === "material" ? (
+                <SupplierOrdersPanel caseId={caseId} line={line} />
+              ) : null}
+            </div>
           </>
         )}
       </div>

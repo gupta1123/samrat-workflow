@@ -330,8 +330,8 @@ function stateCode(gstin: string | null) {
 
 const RETURN_OPTION: CheckOption = {
   choice: "return",
-  title: "Return to vendor",
-  lines: ["Ask the vendor for a corrected invoice"],
+  title: "Mark for supplier correction",
+  lines: ["Contact the supplier separately; no notification is sent."],
   effect: "return",
 };
 
@@ -787,7 +787,7 @@ function summarize(status: MatchStatus, open: MatchCheck[]) {
     case "ready":
       return "Ready to create A/P Invoice Draft";
     case "returned":
-      return "Sent back to the vendor for correction";
+      return "Marked for supplier correction";
     case "closed":
       return "Closed as duplicate";
     default:

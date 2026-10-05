@@ -32,6 +32,12 @@ export function sapMessage(
     text = text.split(value).join(`\u0000${index}\u0000`);
   });
   const phrases: Array<[string, string]> = [
+    ["Sent back to the vendor for correction", "Marked for supplier correction"],
+    ["Return to vendor", "Mark for supplier correction"],
+    [
+      "Ask the vendor for a corrected invoice",
+      "Contact the supplier separately; no notification is sent.",
+    ],
     [
       "Posting it again would pay the vendor twice.",
       "Posting again would create a duplicate A/P Invoice.",

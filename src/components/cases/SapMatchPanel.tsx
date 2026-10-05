@@ -75,10 +75,10 @@ const STATUS: Record<
     Icon: Clock,
   },
   returned: {
-    label: "Returned",
+    label: "Correction needed",
     pill: "bg-[#f0ede8] text-[#5c5650]",
     banner: "border-[#dcd5cb] bg-[#f6f3ee]",
-    Icon: Send,
+    Icon: AlertTriangle,
   },
   closed: {
     label: "Closed",

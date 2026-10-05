@@ -84,7 +84,7 @@ function EvidenceTable({
           ))}
         </tbody>
       </table>
-      {rows.some((row) => row.source) ? (
+      {!compact && rows.some((row) => row.source) ? (
         <details className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
           <summary className="cursor-pointer">
             Scanned reference sources
