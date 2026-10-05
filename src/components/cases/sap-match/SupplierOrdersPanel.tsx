@@ -8,7 +8,9 @@ import type { LineResult } from "@/lib/sap-match/types";
 import type {
   SupplierOrder,
   SupplierOrdersResponse,
+  SupplierInvoiceReferencesResponse,
 } from "@/lib/sap-match/supplier-orders";
+import { supplierOrderMatchesInvoice } from "@/lib/sap-match/supplier-orders";
 import {
   Dialog,
   DialogClose,
@@ -23,11 +25,22 @@ import { formatDate, inr, qty } from "./format";
 function OrderCard({
   order,
   line,
+  loadingInvoices,
+  invoiceNumber,
 }: {
   order: SupplierOrder;
   line: LineResult;
+  loadingInvoices: boolean;
+  invoiceNumber: string;
 }) {
   const selected = order.selectedFor.includes(line.index);
+  const [showAllInvoices, setShowAllInvoices] = useState(false);
+  const matchesInvoice = supplierOrderMatchesInvoice(order, invoiceNumber);
+  const invoiceNumbers = [...(order.invoiceNumbers ?? [])].sort(
+    (a, b) =>
+      Number(b.trim().toUpperCase() === invoiceNumber.trim().toUpperCase()) -
+      Number(a.trim().toUpperCase() === invoiceNumber.trim().toUpperCase()),
+  );
   return (
     <li
       className={`rounded-md border px-3 py-2 ${selected ? "border-[#8bb59b] bg-[#f3f9f5]" : "border-[#e0d8cc] bg-white"}`}
@@ -43,6 +56,11 @@ function OrderCard({
           </span>
         ) : null}
       </div>
+      {selected && !loadingInvoices && !matchesInvoice ? (
+        <p className="mt-0.5 text-[10px] text-[#9a5a0a]">
+          Invoice-number link not verified
+        </p>
+      ) : null}
       <p className="mt-0.5 text-[10px] leading-4 text-[#6b5d50]">
         {[
           selected ? order.source : null,
@@ -53,6 +71,41 @@ function OrderCard({
           .filter(Boolean)
           .join(" · ")}
       </p>
+      <div className="mt-1 text-[10px] leading-4 text-[#3d3530]">
+        <span className="text-[#6b5d50]">Supplier invoice nos. </span>
+        {invoiceNumbers.length ? (
+          <>
+            <span className="break-words tabular-nums">
+              {(showAllInvoices
+                ? invoiceNumbers
+                : invoiceNumbers.slice(0, 2)
+              ).join(", ")}
+            </span>
+            {invoiceNumbers.length > 2 ? (
+              <button
+                type="button"
+                className="ml-1 font-medium text-[#5d422e] underline"
+                onClick={() => setShowAllInvoices((value) => !value)}
+                aria-expanded={showAllInvoices}
+              >
+                {showAllInvoices
+                  ? "Show fewer"
+                  : `+${invoiceNumbers.length - 2} more`}
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <span>
+            {loadingInvoices && order.source === "SAP Purchase Orders"
+              ? "Loading…"
+              : order.invoiceLookup === "complete"
+                ? "None recorded"
+                : order.invoiceLookup === "partial"
+                  ? "Not available in loaded data"
+                  : "Unavailable"}
+          </span>
+        )}
+      </div>
       {order.lines.length ? (
         <table className="mt-1.5 w-full table-fixed text-left text-[10px] leading-4">
           <thead className="text-[#6b5d50]">
@@ -100,15 +153,26 @@ function OrderCard({
   );
 }
 
-function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
+function OrderList({
+  caseId,
+  line,
+  invoiceNumber,
+}: {
+  caseId: string;
+  line: LineResult;
+  invoiceNumber: string;
+}) {
   const [data, setData] = useState<SupplierOrdersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState("");
+  const [loadingInvoices, setLoadingInvoices] = useState(true);
+  const [showOtherOrders, setShowOtherOrders] = useState(false);
   useEffect(() => {
     let active = true;
     setError(null);
     setData(null);
+    setLoadingInvoices(true);
     void (async () => {
       try {
         const response = await apiFetch(
@@ -122,7 +186,52 @@ function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
               ? body.error
               : "Could not load supplier POs.",
           );
-        if (active) setData(body as SupplierOrdersResponse);
+        if (!active) return;
+        setData(body as SupplierOrdersResponse);
+        // Load historical invoice references separately so POs stay usable immediately.
+        try {
+          const references = await apiFetch(
+            `/api/cases/${encodeURIComponent(caseId)}/sap-match/purchase-orders?invoiceReferences=1`,
+            { cache: "no-store" },
+          );
+          if (!references.ok)
+            throw new Error("Invoice references unavailable.");
+          const details =
+            (await references.json()) as SupplierInvoiceReferencesResponse;
+          if (active)
+            setData(
+              (previous) =>
+                previous && {
+                  ...previous,
+                  warnings: [...previous.warnings, ...details.warnings],
+                  orders: previous.orders.map((order) =>
+                    order.source === "SAP Purchase Orders"
+                      ? {
+                          ...order,
+                          invoiceNumbers: order.entry
+                            ? (details.invoicesByPo[order.entry] ?? [])
+                            : [],
+                          invoiceLookup: details.lookup,
+                        }
+                      : order,
+                  ),
+                },
+            );
+        } catch {
+          if (active)
+            setData(
+              (previous) =>
+                previous && {
+                  ...previous,
+                  warnings: [
+                    ...previous.warnings,
+                    "Supplier invoice references unavailable.",
+                  ],
+                },
+            );
+        } finally {
+          if (active) setLoadingInvoices(false);
+        }
       } catch (error) {
         if (active)
           setError(
@@ -163,6 +272,7 @@ function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
     [
       order.number,
       order.reference,
+      ...(order.invoiceNumbers ?? []),
       ...order.lines.flatMap((item) => [item.item, item.description]),
     ]
       .join(" ")
@@ -172,18 +282,36 @@ function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
   const selected = orders.filter((order) =>
     order.selectedFor.includes(line.index),
   );
-  const other = orders.filter(
-    (order) => !order.selectedFor.includes(line.index),
+  const linked = orders.filter(
+    (order) =>
+      !order.selectedFor.includes(line.index) &&
+      supplierOrderMatchesInvoice(order, invoiceNumber),
   );
+  const other = orders.filter(
+    (order) =>
+      !order.selectedFor.includes(line.index) &&
+      !supplierOrderMatchesInvoice(order, invoiceNumber),
+  );
+  const otherCount = data.orders.filter(
+    (order) =>
+      !order.selectedFor.includes(line.index) &&
+      !supplierOrderMatchesInvoice(order, invoiceNumber),
+  ).length;
+  const relatedCount = data.orders.length - otherCount;
   const groups = [
     { label: "Used for this match", orders: selected },
+    { label: "Linked to this invoice", orders: linked },
     {
       label: "Other SAP Purchase Orders",
-      orders: other.filter((order) => order.source === "SAP Purchase Orders"),
+      orders: showOtherOrders
+        ? other.filter((order) => order.source === "SAP Purchase Orders")
+        : [],
     },
     {
       label: "Open PO report",
-      orders: other.filter((order) => order.source === "Open PO report"),
+      orders: showOtherOrders
+        ? other.filter((order) => order.source === "Open PO report")
+        : [],
     },
   ];
   const hasSelected = data.orders.some((order) =>
@@ -197,13 +325,23 @@ function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
           <span className="text-[#6b5d50]">({data.vendor.cardCode})</span>
         </p>
         <p className="mt-0.5 text-[10px] text-[#6b5d50]">
-          Current open POs + linked match POs · {data.orders.length} entries
+          Scanned invoice {invoiceNumber || "number unavailable"} ·{" "}
+          {relatedCount} related {relatedCount === 1 ? "PO" : "POs"}
         </p>
+        <label className="mt-2 flex items-center gap-1.5 text-[10px] text-[#5d422e]">
+          <input
+            type="checkbox"
+            checked={showOtherOrders}
+            onChange={(event) => setShowOtherOrders(event.target.checked)}
+            className="h-3 w-3 accent-[#2d6a4f]"
+          />
+          Show other POs{!loadingInvoices ? ` (${otherCount})` : ""}
+        </label>
         <label className="mt-2 flex items-center gap-2 rounded-md border border-[#d4c9bc] bg-white px-2 py-1.5">
           <Search className="h-3 w-3 text-[#6b5d50]" />
           <input
             aria-label="Search supplier POs"
-            placeholder="PO number or item"
+            placeholder="PO, invoice number or item"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className="min-w-0 flex-1 bg-transparent text-[11px] outline-none"
@@ -211,6 +349,11 @@ function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
         </label>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {loadingInvoices ? (
+          <p role="status" className="mb-2 text-[10px] text-[#6b5d50]">
+            Checking invoice-linked POs…
+          </p>
+        ) : null}
         {data.warnings.map((warning) => (
           <p
             key={warning}
@@ -235,16 +378,26 @@ function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
               </h3>
               <ul className="space-y-1.5">
                 {group.orders.map((order) => (
-                  <OrderCard key={order.id} order={order} line={line} />
+                  <OrderCard
+                    key={order.id}
+                    order={order}
+                    line={line}
+                    loadingInvoices={loadingInvoices}
+                    invoiceNumber={invoiceNumber}
+                  />
                 ))}
               </ul>
             </section>
           ))}
-        {!orders.length ? (
+        {!groups.some((group) => group.orders.length) ? (
           <p className="text-[11px] text-[#6b5d50]">
             {query
-              ? "No POs match this search."
-              : "No supplier POs returned by SAP."}
+              ? "No visible POs match this search."
+              : loadingInvoices
+                ? ""
+                : !invoiceNumber.trim()
+                  ? "Invoice number unavailable. Use Show other POs to browse."
+                  : "No invoice-linked POs found in the loaded SAP data. Use Show other POs to browse the rest."}
           </p>
         ) : null}
       </div>
@@ -255,9 +408,11 @@ function OrderList({ caseId, line }: { caseId: string; line: LineResult }) {
 export function SupplierOrdersPanel({
   caseId,
   line,
+  invoiceNumber,
 }: {
   caseId: string;
   line: LineResult;
+  invoiceNumber: string;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -287,7 +442,13 @@ export function SupplierOrdersPanel({
               <span className="sr-only">Close supplier POs</span>
             </DialogClose>
           </header>
-          {open ? <OrderList caseId={caseId} line={line} /> : null}
+          {open ? (
+            <OrderList
+              caseId={caseId}
+              line={line}
+              invoiceNumber={invoiceNumber}
+            />
+          ) : null}
         </DialogContent>
       </DialogPortal>
     </Dialog>

@@ -19,7 +19,7 @@ const jwt =
     .map((value) => Buffer.from(JSON.stringify(value)).toString("base64url"))
     .join(".") + ".dGVzdA";
 
-function setup(t: TestContext, owns = true) {
+function setup(t: TestContext, owns = true, service = false) {
   const env: Record<string, string | undefined> = {
     SUPABASE_INTERNAL_URL: "https://db.example.invalid",
     SUPABASE_PUBLISHABLE_KEY: "test-key",
@@ -28,7 +28,12 @@ function setup(t: TestContext, owns = true) {
     SAP_TEST_BASE_URL: "https://sap.example.invalid",
     SAP_TEST_USERNAME: "test",
     SAP_TEST_PASSWORD: "test",
-    SAP_SL_TEST_BASE_URL: undefined,
+    SAP_SL_TEST_BASE_URL: service
+      ? "https://sl.example.invalid/b1s/v1"
+      : undefined,
+    SAP_SL_TEST_COMPANY_DB: service ? "test" : undefined,
+    SAP_SL_TEST_USERNAME: service ? "test" : undefined,
+    SAP_SL_TEST_PASSWORD: service ? "test" : undefined,
     QUOTAGUARDSTATIC_URL: undefined,
   };
   const before = Object.fromEntries(
@@ -81,9 +86,9 @@ function setup(t: TestContext, owns = true) {
   });
   return { agent, reads };
 }
-function request() {
+function request(references = false) {
   return new Request(
-    `https://app.example.invalid/api/cases/${id}/sap-match/purchase-orders?cardCode=OTHER`,
+    `https://app.example.invalid/api/cases/${id}/sap-match/purchase-orders?cardCode=OTHER${references ? "&invoiceReferences=1" : ""}`,
     { headers: { authorization: `Bearer ${jwt}` } },
   );
 }
@@ -125,4 +130,159 @@ test("an unowned case cannot read match data or supplier POs", async (t) => {
   const response = await GET(request(), { params: Promise.resolve({ id }) });
   assert.equal(response.status, 404);
   assert.deepEqual(reads, ["/rest/v1/packet_cases"]);
+});
+
+test("invoice reference GET uses the owned supplier and follows closed GRPO and AP base links", async (t) => {
+  const { agent } = setup(t, true, true);
+  const pool = agent.get("https://sl.example.invalid");
+  pool
+    .intercept({ path: "/b1s/v1/Login", method: "POST" })
+    .reply(200, { SessionId: "test-session" });
+  pool.intercept({ path: "/b1s/v1/Logout", method: "POST" }).reply(200, {});
+  pool
+    .intercept({
+      path: (path) =>
+        path.startsWith("/b1s/v1/$crossjoin(PurchaseDeliveryNotes,"),
+      method: "GET",
+    })
+    .reply(200, (options) => {
+      const url = new URL(options.path, "https://sl.example.invalid");
+      assert.match(
+        url.searchParams.get("$filter") ?? "",
+        /CardCode eq 'TSPL001'/,
+      );
+      assert.doesNotMatch(
+        url.searchParams.get("$filter") ?? "",
+        /DocumentStatus/,
+      );
+      return {
+        value:
+          url.searchParams.get("$skip") === "0"
+            ? [
+                {
+                  PurchaseDeliveryNotes: {
+                    CardCode: "TSPL001",
+                    Cancelled: "tNO",
+                    DocEntry: 99,
+                    NumAtCard: "INV-1",
+                  },
+                  "PurchaseDeliveryNotes/DocumentLines": {
+                    LineNum: 0,
+                    BaseType: 22,
+                    BaseEntry: 12,
+                  },
+                },
+              ]
+            : [],
+      };
+    })
+    .persist();
+  pool
+    .intercept({
+      path: (path) => path.startsWith("/b1s/v1/$crossjoin(PurchaseInvoices,"),
+      method: "GET",
+    })
+    .reply(200, (options) => {
+      const url = new URL(options.path, "https://sl.example.invalid");
+      return {
+        value:
+          url.searchParams.get("$skip") === "0"
+            ? [
+                {
+                  PurchaseInvoices: {
+                    DocEntry: 999,
+                    CardCode: "TSPL001",
+                    Cancelled: "tNO",
+                    NumAtCard: "INV-2",
+                  },
+                  "PurchaseInvoices/DocumentLines": {
+                    LineNum: 0,
+                    BaseType: 20,
+                    BaseEntry: 99,
+                    BaseLine: 0,
+                  },
+                },
+              ]
+            : [],
+      };
+    })
+    .persist();
+  const response = await GET(request(true), {
+    params: Promise.resolve({ id }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.invoicesByPo, { "12": ["INV-1", "INV-2"] });
+  assert.equal(body.lookup, "complete");
+  assert.deepEqual(body.warnings, []);
+  agent.assertNoPendingInterceptors();
+});
+
+test("invoice reference GET rejects unowned cases before any SAP read", async (t) => {
+  const { reads } = setup(t, false);
+  const response = await GET(request(true), {
+    params: Promise.resolve({ id }),
+  });
+  assert.equal(response.status, 404);
+  assert.deepEqual(reads, ["/rest/v1/packet_cases"]);
+});
+
+test("a failed continuation preserves retrieved invoice links and marks history partial", async (t) => {
+  const { agent } = setup(t, true, true);
+  const pool = agent.get("https://sl.example.invalid");
+  pool
+    .intercept({ path: "/b1s/v1/Login", method: "POST" })
+    .reply(200, { SessionId: "test-session" });
+  pool.intercept({ path: "/b1s/v1/Logout", method: "POST" }).reply(200, {});
+  pool
+    .intercept({
+      path: (path) =>
+        path.includes("$crossjoin(PurchaseDeliveryNotes,") &&
+        new URL(path, "https://sl.example.invalid").searchParams.get(
+          "$skip",
+        ) === "0",
+      method: "GET",
+    })
+    .reply(200, {
+      value: [
+        {
+          PurchaseDeliveryNotes: {
+            DocEntry: 99,
+            CardCode: "TSPL001",
+            Cancelled: "N",
+            NumAtCard: "INV-1",
+          },
+          "PurchaseDeliveryNotes/DocumentLines": {
+            LineNum: 0,
+            BaseType: 22,
+            BaseEntry: 12,
+          },
+        },
+      ],
+    });
+  pool
+    .intercept({
+      path: (path) =>
+        path.includes("$crossjoin(PurchaseDeliveryNotes,") &&
+        new URL(path, "https://sl.example.invalid").searchParams.get(
+          "$skip",
+        ) === "1",
+      method: "GET",
+    })
+    .reply(500, {});
+  pool
+    .intercept({
+      path: (path) => path.includes("$crossjoin(PurchaseInvoices,"),
+      method: "GET",
+    })
+    .reply(200, { value: [] });
+  const response = await GET(request(true), {
+    params: Promise.resolve({ id }),
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(body.invoicesByPo, { "12": ["INV-1"] });
+  assert.equal(body.lookup, "partial");
+  assert.match(body.warnings[0], /history partially loaded/);
+  agent.assertNoPendingInterceptors();
 });

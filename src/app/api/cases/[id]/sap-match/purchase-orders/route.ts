@@ -13,6 +13,8 @@ import { withTestServiceLayer } from "@/server/sap/service-layer";
 import {
   selectedOrderEntries,
   supplierOrders,
+  supplierInvoiceNumbers,
+  type SupplierInvoiceReferencesResponse,
   type SupplierOrdersResponse,
 } from "@/lib/sap-match/supplier-orders";
 
@@ -48,6 +50,48 @@ export async function GET(
         409,
       );
     const { vendor, result } = match;
+    if (new URL(request.url).searchParams.get("invoiceReferences") === "1") {
+      try {
+        return await withTestServiceLayer(async (client) => {
+          const [receipts, invoices] = await Promise.allSettled([
+            client.listSupplierInvoiceDocuments(vendor.cardCode, "grpo"),
+            client.listSupplierInvoiceDocuments(vendor.cardCode, "ap-invoice"),
+          ]);
+          const warnings: string[] = [];
+          for (const [label, read] of [
+            ["GRPO", receipts],
+            ["A/P invoice", invoices],
+          ] as const) {
+            if (read.status === "rejected")
+              warnings.push(`${label} invoice references unavailable.`);
+            else if (!read.value.complete)
+              warnings.push(
+                `${label} invoice history partially loaded; older references may be missing.`,
+              );
+          }
+          const response: SupplierInvoiceReferencesResponse = {
+            invoicesByPo: supplierInvoiceNumbers(
+              vendor.cardCode,
+              receipts.status === "fulfilled" ? receipts.value.rows : [],
+              invoices.status === "fulfilled" ? invoices.value.rows : [],
+            ),
+            lookup:
+              receipts.status === "rejected" && invoices.status === "rejected"
+                ? "unavailable"
+                : warnings.length
+                  ? "partial"
+                  : "complete",
+            warnings,
+          };
+          return response;
+        });
+      } catch {
+        throw new ApiError(
+          "Supplier invoice references unavailable. Try again.",
+          502,
+        );
+      }
+    }
     const entries = selectedOrderEntries(result.lines);
     const reads = await Promise.allSettled([
       withTestServiceLayer(async (client) => {

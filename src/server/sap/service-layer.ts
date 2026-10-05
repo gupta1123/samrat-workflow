@@ -134,6 +134,10 @@ export async function withTestServiceLayer<T>(
     listRecentInvoicesForVendor: (
       cardCode: string,
     ) => Promise<Record<string, unknown>[]>;
+    listSupplierInvoiceDocuments: (
+      cardCode: string,
+      kind: "grpo" | "ap-invoice",
+    ) => Promise<{ rows: SapMatchDocument[]; complete: boolean }>;
     findDraft: (comment: string) => Promise<SapDraftResponse | null>;
     listSuppliers: () => Promise<SapSupplierRow[]>;
     searchSuppliers: (query: string) => Promise<SapSupplierRow[]>;
@@ -214,9 +218,13 @@ export async function withTestServiceLayer<T>(
 ): Promise<T> {
   const config = testConfig();
   let cookie = "";
-  async function request(path: string, init: RequestInit = {}) {
+  async function request(
+    path: string,
+    init: RequestInit = {},
+    timeoutMs = 30_000,
+  ) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await sapFetch(`${config.baseUrl}${path}`, {
         ...init,
@@ -452,6 +460,64 @@ export async function withTestServiceLayer<T>(
         return Array.isArray(body.value)
           ? (body.value as Record<string, unknown>[])
           : [];
+      },
+      async listSupplierInvoiceDocuments(cardCode, kind) {
+        const entity =
+          kind === "grpo" ? "PurchaseDeliveryNotes" : "PurchaseInvoices";
+        // Closed receipts/invoices still carry the historical PO relationship.
+        const filter = encodeURIComponent(
+          `${entity}/DocEntry eq ${entity}/DocumentLines/DocEntry and ${entity}/CardCode eq '${cardCode.replaceAll("'", "''")}' and ${entity}/Cancelled eq 'tNO'`,
+        );
+        const collected: Record<string, unknown>[] = [];
+        const started = Date.now();
+        const documents = (
+          rows: Record<string, unknown>[],
+        ): SapMatchDocument[] => {
+          const grouped = new Map<number, SapMatchDocument>();
+          for (const row of rows) {
+            const header = row[entity] as SapMatchDocument | undefined;
+            const line = row[`${entity}/DocumentLines`] as
+              Record<string, unknown> | undefined;
+            if (!header || !Number.isInteger(header.DocEntry) || !line)
+              throw new Error(
+                "SAP invoice reference query returned an unexpected response.",
+              );
+            const previous = grouped.get(header.DocEntry!);
+            if (previous) previous.DocumentLines!.push(line);
+            else
+              grouped.set(header.DocEntry!, {
+                ...header,
+                DocumentLines: [line],
+              });
+          }
+          return [...grouped.values()];
+        };
+        try {
+          const rows = await readODataCollection<Record<string, unknown>>({
+            // Read just invoice references and base links, not every document-line field.
+            initialPath: `/$crossjoin(${entity},${entity}/DocumentLines)?$expand=${entity}($select=DocEntry,CardCode,NumAtCard,U_TATAINV,Cancelled),${entity}/DocumentLines($select=LineNum,BaseType,BaseEntry,BaseLine)&$filter=${filter}&$orderby=${entity}/DocEntry%20desc,${entity}/DocumentLines/LineNum%20asc`,
+            baseUrl: config.baseUrl,
+            max: 5000,
+            read: async (nextPath) => {
+              const remaining = 20_000 - (Date.now() - started);
+              if (remaining <= 0)
+                throw new Error("Invoice reference read time limit reached.");
+              const { body } = await request(
+                nextPath,
+                { headers: { Prefer: "odata.maxpagesize=100" } },
+                Math.min(10_000, remaining),
+              );
+              if (Array.isArray(body.value))
+                collected.push(...(body.value as Record<string, unknown>[]));
+              return body;
+            },
+          });
+          return { rows: documents(rows), complete: rows.length < 5000 };
+        } catch (error) {
+          if (!collected.length) throw error;
+          // Keep already retrieved exact links, but never describe this as complete history.
+          return { rows: documents(collected), complete: false };
+        }
       },
       async findDraft(comment) {
         const filter = encodeURIComponent(

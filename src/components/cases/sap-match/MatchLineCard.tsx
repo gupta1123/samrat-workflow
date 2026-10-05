@@ -507,7 +507,11 @@ export function MatchLineCard({
                 />
               ) : null}
               {vendorFound && line.kind === "material" ? (
-                <SupplierOrdersPanel caseId={caseId} line={line} />
+                <SupplierOrdersPanel
+                  caseId={caseId}
+                  line={line}
+                  invoiceNumber={invoice.invoiceNumber}
+                />
               ) : null}
             </div>
           </>
