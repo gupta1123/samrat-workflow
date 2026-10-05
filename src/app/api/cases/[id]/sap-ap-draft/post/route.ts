@@ -11,6 +11,7 @@ import { reconcileSapDraftTotal } from "@/server/sap/draft-total";
 import { invoiceMoneyPreview } from "@/server/sap/preview";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 import { sapMaterialFormPolicy } from "@/lib/sap-material-form";
+import { DRAFT_FIELD_NAMES } from "@/server/sap/draft-fields";
 import { postingLineSnapshot } from "@/lib/sap-posted-details";
 import {
   resolveSapTransporter,
@@ -249,7 +250,8 @@ async function handle(
       for (const candidate of payload.baseDocuments) {
         const base = record(candidate);
         const entry = positiveInteger(base.docEntry);
-        if (entry) allowedBases.push({ type: base.kind === "PO" ? 22 : 20, entry });
+        if (entry)
+          allowedBases.push({ type: base.kind === "PO" ? 22 : 20, entry });
       }
     }
     if (!allowedBases.length && expectedBaseEntry) {
@@ -532,7 +534,13 @@ async function handle(
           const learnedUpdates = learnVendorInvoiceFieldUpdates({
             draft: record(draft),
             historicalInvoices,
-          });
+          }).filter(
+            (update) =>
+              !(payload.matched && payload.draftHeaderFields) ||
+              !DRAFT_FIELD_NAMES.includes(
+                update.propertyName.replace(/^U_/, ""),
+              ),
+          );
           if (learnedUpdates.length > 0) {
             await client.updateDraft(
               draftDocEntry,
@@ -555,13 +563,24 @@ async function handle(
             invoiceNumber: expectedInvoiceNumber,
             getUserFields: client.getUserFields,
           });
-          if (logisticsUpdates.length > 0) {
+          const exactLogisticsUpdates =
+            payload.matched && payload.draftHeaderFields
+              ? logisticsUpdates.filter(
+                  (update) =>
+                    !DRAFT_FIELD_NAMES.includes(
+                      update.propertyName.replace(/^U_/, ""),
+                    ),
+                )
+              : logisticsUpdates;
+          if (exactLogisticsUpdates.length > 0) {
             await client.updateDraft(
               draftDocEntry,
-              packetLogisticsUpdatePayload(logisticsUpdates),
+              packetLogisticsUpdatePayload(exactLogisticsUpdates),
             );
             draft = await client.getDraft(draftDocEntry);
-            if (!packetLogisticsFieldsMatch(record(draft), logisticsUpdates)) {
+            if (
+              !packetLogisticsFieldsMatch(record(draft), exactLogisticsUpdates)
+            ) {
               throw new ApiError(
                 "SAP Test did not save the packet's verified logistics details. No final invoice was posted.",
                 502,

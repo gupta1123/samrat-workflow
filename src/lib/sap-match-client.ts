@@ -2,6 +2,7 @@
 
 import { apiFetch } from "@/lib/api-client";
 import type { PostedSapDetails } from "./sap-posted-details";
+import type { DraftFieldChoices, DraftHeaderPreview } from "./sap-draft-fields";
 import type {
   MatchInvoice,
   MatchResult,
@@ -119,13 +120,28 @@ export async function postSapMatchAction(
   };
 }
 
-export async function createMatchedSapDraft(caseId: string) {
+export async function fetchDraftHeaderPreview(
+  caseId: string,
+): Promise<DraftHeaderPreview> {
+  const response = await apiFetch(
+    `/api/cases/${encodeURIComponent(caseId)}/sap-match/draft`,
+  );
+  const body = await readJson(response);
+  if (!response.ok || !body.preview)
+    throw new Error(errorText(body, "Could not load the draft fields."));
+  return body.preview as DraftHeaderPreview;
+}
+
+export async function createMatchedSapDraft(
+  caseId: string,
+  choices: DraftFieldChoices = {},
+) {
   const response = await apiFetch(
     `/api/cases/${encodeURIComponent(caseId)}/sap-match/draft`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(choices),
     },
   );
   const body = await readJson(response);

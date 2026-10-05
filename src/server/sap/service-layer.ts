@@ -200,6 +200,10 @@ export async function withTestServiceLayer<T>(
       tableName: string,
       description: string,
     ) => Promise<Record<string, unknown>[]>;
+    getUserFieldsByNames: (
+      tableName: string,
+      names: string[],
+    ) => Promise<Record<string, unknown>[]>;
     listInspectorDocuments: (
       dataset: SapInspectorServiceLayerDataset,
       max: number,
@@ -806,6 +810,17 @@ export async function withTestServiceLayer<T>(
         return Array.isArray(body.value)
           ? (body.value as Record<string, unknown>[])
           : [];
+      },
+      async getUserFieldsByNames(tableName, names) {
+        const safeNames = names.filter((name) =>
+          /^[A-Za-z_][A-Za-z0-9_]*$/.test(name),
+        );
+        if (!safeNames.length) return [];
+        const filter = `TableName eq '${tableName.replaceAll("'", "''")}' and (${safeNames.map((name) => `Name eq '${name}'`).join(" or ")})`;
+        return pageAll<Record<string, unknown>>(
+          `/UserFieldsMD?$filter=${encodeURIComponent(filter)}`,
+          safeNames.length * 2,
+        );
       },
       async listInspectorDocuments(dataset, max, additionalHeaderFields = []) {
         const entity =

@@ -3,11 +3,19 @@ import { NextResponse } from "next/server";
 import {
   ApiError,
   dbCheck,
+  jsonBody,
   ownedCase,
   uuid,
   withUser,
 } from "@/server/api/helpers";
 import { readSapEnvironment } from "@/server/sap/config";
+import { authoritativeOutlierDocumentIds } from "@/server/sap/match-data";
+import {
+  buildDraftHeaderFields,
+  DRAFT_FIELD_NAMES,
+} from "@/server/sap/draft-fields";
+import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
+import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import { saveSapMatch } from "@/lib/sap-posted-details";
 import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
 import {
@@ -22,6 +30,78 @@ import {
 
 type Context = { params: Promise<{ id: string }> };
 
+async function loadHeader(
+  db: Parameters<Parameters<typeof withUser>[1]>[0],
+  client: Parameters<Parameters<typeof withTestServiceLayer>[0]>[0],
+  caseId: string,
+  match: Extract<
+    NonNullable<Awaited<ReturnType<typeof readSapMatchJob>>>["result"],
+    { available: true }
+  >,
+  choices: DraftFieldChoices = {},
+) {
+  const [documents, mismatches, metadata] = await Promise.all([
+    db
+      .from("packet_documents")
+      .select("client_document_id, document_type, extracted_fields")
+      .eq("case_id", caseId)
+      .order("created_at"),
+    db
+      .from("packet_mismatches")
+      .select("field_name, values_json, resolution_status")
+      .eq("case_id", caseId)
+      .eq("field_name", UNRELATED_DOCUMENT_FIELD),
+    client.getUserFieldsByNames("OPCH", DRAFT_FIELD_NAMES),
+  ]);
+  dbCheck(documents.error);
+  dbCheck(mismatches.error);
+  const excluded = authoritativeOutlierDocumentIds(mismatches.data ?? []);
+  try {
+    return buildDraftHeaderFields({
+      invoice: match.invoice,
+      documents: (documents.data ?? []).filter(
+        (doc) => !excluded.has(doc.client_document_id),
+      ),
+      metadata,
+      choices,
+      service: match.result.method === "2-way",
+    });
+  } catch (error) {
+    throw new ApiError(
+      error instanceof Error
+        ? error.message
+        : "Could not prepare draft fields.",
+      409,
+    );
+  }
+}
+
+/** Read-only preview; available before approval so the user can review PDF gaps. */
+export async function GET(request: Request, context: Context) {
+  return withUser(request, async (db, user) => {
+    if (readSapEnvironment() !== "test")
+      throw new ApiError("Draft creation is enabled only for SAP Test.", 409);
+    const { id } = await context.params;
+    await ownedCase(db, user, id);
+    const job = await readSapMatchJob(db, user, id);
+    if (
+      job?.status !== "succeeded" ||
+      !job.result?.available ||
+      !job.result.result.payload
+    ) {
+      throw new ApiError(
+        "Wait for the SAP match to finish before reviewing draft fields.",
+        409,
+      );
+    }
+    const match = job.result;
+    const header = await withTestServiceLayer((client) =>
+      loadHeader(db, client, id, match),
+    );
+    return { ok: true, preview: header.preview };
+  });
+}
+
 function freightExpenseCode(): number | null {
   const value = Number((process.env.SAP_FREIGHT_EXPENSE_CODE ?? "").trim());
   return Number.isInteger(value) && value > 0 ? value : null;
@@ -32,13 +112,27 @@ function freightExpenseCode(): number | null {
 export async function POST(request: Request, context: Context) {
   return withUser(request, async (db, user) => {
     if (readSapEnvironment() !== "test") {
-      throw new ApiError("AP Invoice Draft creation is enabled only for the SAP Test company.", 409);
+      throw new ApiError(
+        "AP Invoice Draft creation is enabled only for the SAP Test company.",
+        409,
+      );
     }
     const { id } = await context.params;
     const row = await ownedCase(db, user, id);
     if (row.status !== "accepted") {
       throw new ApiError("Approve the case before creating an SAP draft.", 409);
     }
+    const body = (await jsonBody(request)) as DraftFieldChoices;
+    const choices: DraftFieldChoices = {
+      materialForm:
+        typeof body?.materialForm === "string"
+          ? body.materialForm.trim()
+          : undefined,
+      transporter:
+        typeof body?.transporter === "string"
+          ? body.transporter.trim()
+          : undefined,
+    };
 
     const existing = await db
       .from("sap_postings")
@@ -49,7 +143,10 @@ export async function POST(request: Request, context: Context) {
       .eq("sap_env", "test")
       .maybeSingle();
     dbCheck(existing.error);
-    if (existing.data?.sap_docnum && (existing.data.status === "prepared" || existing.data.status === "posted")) {
+    if (
+      existing.data?.sap_docnum &&
+      (existing.data.status === "prepared" || existing.data.status === "posted")
+    ) {
       return {
         ok: true,
         alreadyCreated: true,
@@ -63,7 +160,11 @@ export async function POST(request: Request, context: Context) {
     }
 
     let matchJob = await readSapMatchJob(db, user, id);
-    if (!matchJob || matchJob.status === "failed" || matchJob.status === "cancelled") {
+    if (
+      !matchJob ||
+      matchJob.status === "failed" ||
+      matchJob.status === "cancelled"
+    ) {
       matchJob = await enqueueSapMatch(db, user, id, true);
     }
     if (matchJob.status !== "succeeded" || !matchJob.result) {
@@ -86,18 +187,46 @@ export async function POST(request: Request, context: Context) {
             409,
           );
         }
+        const header = await loadHeader(db, client, id, match, choices);
+        if (
+          !header.preview.materialForm.selectedValue ||
+          !header.preview.transporter.selectedValue
+        ) {
+          throw new ApiError(
+            "Select Material Form and Transporter from the SAP choices before creating a draft.",
+            409,
+          );
+        }
+        if (
+          match.result.method !== "2-way" &&
+          match.invoice.lines.some((line) => line.rate === null)
+        ) {
+          throw new ApiError(
+            "Every goods invoice line needs a unit price from the PDF before creating a draft.",
+            409,
+          );
+        }
 
         // The background result may be a few seconds old. Duplicate status and
         // every selected base document are re-read immediately before the write.
-        const posted = await client.findInvoiceByReference(plan.cardCode, plan.numAtCard);
+        const posted = await client.findInvoiceByReference(
+          plan.cardCode,
+          plan.numAtCard,
+        );
         if (posted) {
           throw new ApiError(
             `This vendor invoice is already in SAP as A/P invoice ${posted.DocNum ?? posted.DocEntry ?? "?"}.`,
             409,
           );
         }
-        const otherDraft = await client.findDraftByVendorReference(plan.cardCode, plan.numAtCard);
-        if (otherDraft && !String(otherDraft.Comments ?? "").startsWith(`Samrat case ${id}`)) {
+        const otherDraft = await client.findDraftByVendorReference(
+          plan.cardCode,
+          plan.numAtCard,
+        );
+        if (
+          otherDraft &&
+          !String(otherDraft.Comments ?? "").startsWith(`Samrat case ${id}`)
+        ) {
           throw new ApiError(
             `This vendor invoice is already in SAP as draft ${otherDraft.DocNum ?? otherDraft.DocEntry ?? "?"}.`,
             409,
@@ -109,7 +238,9 @@ export async function POST(request: Request, context: Context) {
         for (const base of match.result.baseDocuments) {
           const document = (base.kind === "GRPO"
             ? await client.getGrpo(base.docEntry)
-            : await client.getPurchaseOrder(base.docEntry)) as unknown as SapMatchDocument;
+            : await client.getPurchaseOrder(
+                base.docEntry,
+              )) as unknown as SapMatchDocument;
           if (
             document.DocEntry !== base.docEntry ||
             document.DocNum !== base.docNum ||
@@ -122,7 +253,10 @@ export async function POST(request: Request, context: Context) {
               409,
             );
           }
-          bases.set(`${base.kind === "GRPO" ? 20 : 22}:${base.docEntry}`, document);
+          bases.set(
+            `${base.kind === "GRPO" ? 20 : 22}:${base.docEntry}`,
+            document,
+          );
         }
 
         const { payload, currency } = buildMatchedDraftPayload({
@@ -130,9 +264,14 @@ export async function POST(request: Request, context: Context) {
           plan,
           bases,
           freightExpenseCode: freightExpenseCode(),
+          invoiceRates: match.invoice.lines.map((line) => line.rate),
         });
+        Object.assign(payload, header.values);
         if (match.invoice.currency && match.invoice.currency !== currency) {
-          throw new ApiError("The vendor invoice currency differs from the selected SAP documents.", 409);
+          throw new ApiError(
+            "The vendor invoice currency differs from the selected SAP documents.",
+            409,
+          );
         }
 
         const first = [...bases.values()][0] as SapMatchDocument & {
@@ -146,11 +285,12 @@ export async function POST(request: Request, context: Context) {
           taxDate: plan.taxDate,
           baseDocument: first,
         });
-        return { match, plan, created };
+        return { match, plan, created, header };
       });
     } catch (error) {
       if (error instanceof ApiError) throw error;
-      if (error instanceof MatchDraftError) throw new ApiError(error.message, 409);
+      if (error instanceof MatchDraftError)
+        throw new ApiError(error.message, 409);
       console.error("SAP Test matched AP draft creation failed", {
         caseId: id,
         error: error instanceof Error ? error.message : String(error),
@@ -158,19 +298,23 @@ export async function POST(request: Request, context: Context) {
       return NextResponse.json(
         {
           ok: false,
-          error: error instanceof Error ? error.message : "SAP Test draft creation failed.",
+          error:
+            error instanceof Error
+              ? error.message
+              : "SAP Test draft creation failed.",
         },
         { status: 502 },
       );
     }
 
-    const { match, plan, created } = outcome;
+    const { match, plan, created, header } = outcome;
     const docEntry = created.created.DocEntry;
     if (!Number.isInteger(docEntry) || !docEntry) {
       return NextResponse.json(
         {
           ok: false,
-          error: "SAP may have created the draft but did not return its entry number. Check SAP before retrying.",
+          error:
+            "SAP may have created the draft but did not return its entry number. Check SAP before retrying.",
         },
         { status: 502 },
       );
@@ -191,7 +335,9 @@ export async function POST(request: Request, context: Context) {
           matched: true,
           matchSnapshot: saveSapMatch(match, created.postingDate),
           method: match.result.method,
-          baseKind: match.result.baseDocuments.some((doc) => doc.kind === "PO") ? "PO" : "GRPO",
+          baseKind: match.result.baseDocuments.some((doc) => doc.kind === "PO")
+            ? "PO"
+            : "GRPO",
           baseDocNum: first.docNum,
           baseDocEntry: first.docEntry,
           baseDocuments: match.result.baseDocuments,
@@ -204,6 +350,8 @@ export async function POST(request: Request, context: Context) {
           lines: plan.lines,
           freightExpense: plan.freightExpense,
           freightExcluded: plan.freightExcluded,
+          draftHeaderFields: header.values,
+          draftHeaderEvidence: header.preview.fields,
         },
         response: {
           DocEntry: docEntry,
@@ -226,9 +374,12 @@ export async function POST(request: Request, context: Context) {
         baseDocuments: match.result.baseDocuments,
         decisions: match.state.decisions,
         allocations: match.state.allocations,
+        draftHeaderFields: header.values,
+        draftHeaderEvidence: header.preview.fields,
       },
     });
-    if (event.error) console.error("Could not record SAP draft event:", event.error.message);
+    if (event.error)
+      console.error("Could not record SAP draft event:", event.error.message);
 
     return {
       ok: true,

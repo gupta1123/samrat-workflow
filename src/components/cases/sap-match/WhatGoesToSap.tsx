@@ -3,22 +3,26 @@
 import type { LineResult, MatchResult } from "@/lib/sap-match/types";
 import { formatDate, inr, qty } from "./format";
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { DraftHeaderFields } from "./DraftHeaderFields";
 
 // The exact document that will be created in SAP, before anything is created.
 export function WhatGoesToSap({
+  caseId,
   result,
   lines,
   vendorLabel,
   saved = false,
   actions,
 }: {
+  caseId?: string;
   result: MatchResult;
   lines: LineResult[];
   vendorLabel: string;
   saved?: boolean;
   actions?: ReactNode;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const plan = result.payload;
   if (!plan) return null;
   const priceOf = (baseEntry: number, baseLine: number) =>
@@ -54,7 +58,10 @@ export function WhatGoesToSap({
         </div>
         {actions}
       </div>
-      <details className="border-t border-[#ece6dc]">
+      <details
+        className="border-t border-[#ece6dc]"
+        onToggle={(event) => setExpanded(event.currentTarget.open)}
+      >
         <summary className="cursor-pointer px-4 py-2 text-[11px] font-medium text-[#6b4a33]">
           {saved
             ? "Saved A/P Invoice Draft Preview"
@@ -88,6 +95,11 @@ export function WhatGoesToSap({
             </dd>
           </dl>
         </header>
+        {caseId && expanded && !saved ? (
+          <div className="border-t border-[#ece6dc] px-4 py-3">
+            <DraftHeaderFields caseId={caseId} />
+          </div>
+        ) : null}
         <div className="overflow-x-auto px-4">
           <table className="w-full min-w-[520px] text-[11px]">
             <thead>

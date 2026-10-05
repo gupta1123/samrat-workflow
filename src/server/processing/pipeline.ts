@@ -493,6 +493,7 @@ const FIELD_MAPPINGS: Partial<Record<FieldKey, string[]>> = {
   toPayAmount: ["toPayAmount", "toPay", "ttbAmount"],
   itemDescription: ["itemDescription", "description", "productDescription"],
   materialGrade: ["materialGrade", "grade", "steelGrade"],
+  materialForm: ["materialForm", "materialType"],
   itemQuantity: ["itemQuantity", "quantity", "qty"],
   unit: ["unit", "uom"],
   hsnSac: ["hsnSac", "hsn", "sac", "hsnCode"],

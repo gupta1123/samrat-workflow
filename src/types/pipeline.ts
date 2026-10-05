@@ -68,6 +68,7 @@ export type FieldKey =
   | "toPayAmount"
   | "itemDescription"
   | "materialGrade"
+  | "materialForm"
   | "itemQuantity"
   | "unit"
   | "hsnSac"

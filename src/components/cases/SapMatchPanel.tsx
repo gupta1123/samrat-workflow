@@ -42,6 +42,8 @@ import { sapMatchPresentation, sapMessage } from "@/lib/sap-match/terminology";
 import { MatchLineCard } from "./sap-match/MatchLineCard";
 import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
+import { DraftHeaderFields } from "./sap-match/DraftHeaderFields";
+import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 
 const STATUS: Record<
   MatchStatus,
@@ -186,10 +188,10 @@ export function SapMatchPanel({
     });
   }
 
-  async function createDraft() {
+  async function createDraft(choices: DraftFieldChoices) {
     setCreating(true);
     setDraftMessage(null);
-    const result = await createMatchedSapDraft(caseId);
+    const result = await createMatchedSapDraft(caseId, choices);
     setDraftMessage({ text: result.message, failed: !result.ok });
     setCreating(false);
     setConfirmingDraft(false);
@@ -417,7 +419,7 @@ export function SapMatchPanel({
       showPassed={showPassed}
       onTogglePassed={() => setShowPassed((current) => !current)}
       onConfirmDraft={(value) => setConfirmingDraft(value)}
-      onCreateDraft={() => void createDraft()}
+      onCreateDraft={(choices) => void createDraft(choices)}
       onRefresh={() => void recheck()}
       onChoose={choose}
       onUndo={(check) => void act({ action: "undo", checkId: check.id })}
@@ -477,7 +479,7 @@ function Matched({
   showPassed: boolean;
   onTogglePassed: () => void;
   onConfirmDraft: (value: boolean) => void;
-  onCreateDraft: () => void;
+  onCreateDraft: (choices: DraftFieldChoices) => void;
   onRefresh: () => void;
   onChoose: (check: MatchCheck, choice: string, reason: string) => void;
   onUndo: (check: MatchCheck) => void;
@@ -582,28 +584,13 @@ function Matched({
         </p>
       ) : result.status === "ready" ? (
         confirmingDraft ? (
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
-            <span>
-              Create an A/P Invoice Draft in SAP Test? No invoice will be
-              posted.
-            </span>
-            <Button size="sm" disabled={creating} onClick={onCreateDraft}>
-              {creating ? (
-                <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-              ) : (
-                <Send className="mr-1.5 h-3 w-3" />
-              )}
-              Confirm draft
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={creating}
-              onClick={() => onConfirmDraft(false)}
-            >
-              Cancel
-            </Button>
-          </div>
+          <DraftHeaderFields
+            caseId={caseId}
+            confirming
+            busy={creating}
+            onConfirm={onCreateDraft}
+            onCancel={() => onConfirmDraft(false)}
+          />
         ) : (
           <Button
             size="sm"
@@ -809,6 +796,7 @@ function Matched({
       ))}
 
       <WhatGoesToSap
+        caseId={caseId}
         result={result}
         lines={result.lines}
         vendorLabel={vendorLabel}
