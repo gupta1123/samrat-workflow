@@ -58,15 +58,6 @@ function CandidateCard({
   const rejected = Boolean(candidate.rejected);
   const amount = (value: number) =>
     service ? inr(value) : `${qty(value)}${unit ? ` ${unit}` : ""}`;
-  const reason =
-    candidate.good.find(
-      (reason) => reason.includes("invoice") || reason.includes("reference"),
-    ) ||
-    candidate.good.find(
-      (reason) => reason.includes("truck") || reason.includes("Vehicle"),
-    ) ||
-    candidate.good[0] ||
-    candidate.note;
   return (
     <li
       className={`rounded-md border px-3 py-2 ${rejected ? "border-[#e0d8cc] bg-[#f6f3ee]" : chosen ? "border-[#8bb59b] bg-[#f3f9f5]" : "border-[#e0d8cc] bg-white"}`}
@@ -110,11 +101,6 @@ function CandidateCard({
                   {error}
                 </p>
               ) : null}
-              {reason ? (
-                <p className="mt-0.5 text-[10px] leading-4 text-[#3b614c]">
-                  {reason}
-                </p>
-              ) : null}
               {candidate.bad.length ? (
                 <p className="mt-0.5 text-[10px] leading-4 text-[#855009]">
                   Also review: {candidate.bad.join("; ")}
@@ -125,11 +111,6 @@ function CandidateCard({
         </div>
         {!rejected ? (
           <div className="w-24 shrink-0 text-right">
-            {!service ? (
-              <p className="text-[10px] leading-4 text-[#6b5d50]">
-                Received: {amount(candidate.quantity)}
-              </p>
-            ) : null}
             <p className="text-[10px] leading-4 text-[#6b5d50]">
               <span
                 title={
@@ -196,16 +177,18 @@ function CandidateCard({
             Matching details
           </summary>
           <div className="mt-1 space-y-0.5 border-t border-[#e0d8cc] pt-1 leading-4">
+            {!service ? (
+              <p>Received Qty.: {amount(candidate.quantity)}</p>
+            ) : null}
             <CandidateEvidence
               invoice={invoice}
               candidate={candidate}
               compact
             />
-            {candidate.note ? <p>{candidate.note}</p> : null}
-            <p>
-              Search ranking score: {candidate.score}. This orders the returned
-              candidates; it is not a percentage of checks passed.
-            </p>
+            {candidate.note &&
+            !/^Based On Purchase Orders\b/i.test(candidate.note.trim()) ? (
+              <p>{candidate.note}</p>
+            ) : null}
           </div>
         </details>
       ) : null}
@@ -327,7 +310,7 @@ export function ReceiptCandidatesPanel({
           type="button"
           className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[#d4c9bc] bg-[#fcfbf9] px-2.5 py-1 text-[11px] font-medium text-[#5d422e] hover:bg-[#f0ece4] focus-visible:outline-2 focus-visible:outline-[#2d6a4f]"
         >
-          View {label} ({line.candidates.length})
+          {label} considered ({line.candidates.length})
           <ChevronRight className="h-3 w-3" />
         </button>
       </DialogTrigger>
@@ -336,10 +319,10 @@ export function ReceiptCandidatesPanel({
         <DialogContent className="fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-[480px] flex-col border-l border-[#e0d8cc] bg-[#faf8f4] shadow-2xl outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right motion-reduce:animate-none">
           <header className="shrink-0 border-b border-[#e0d8cc] bg-white px-4 py-3">
             <DialogTitle className="pr-9 text-[13px] font-semibold text-[#111827]">
-              {service ? "Purchase Orders" : SAP_TERMS.goodsReceiptPos}
+              {label} considered ({line.candidates.length})
             </DialogTitle>
             <DialogDescription className="mt-0.5 pr-8 text-[11px] leading-4 text-[#6b5d50]">
-              Line {line.index + 1} · {title}
+              Invoice line {line.index + 1} · {title}
               {line.itemCode ? ` · ${line.itemCode}` : ""}
             </DialogDescription>
             <DialogClose className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-[#6b5d50] hover:bg-[#f0ece4] focus-visible:outline-2 focus-visible:outline-[#2d6a4f]">
@@ -381,38 +364,40 @@ export function ReceiptCandidatesPanel({
                 </div>
               ))}
             </dl>
-            <p
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              className={`mt-1.5 text-[10px] leading-4 ${hasErrors || !matched || overPo ? "text-[#855009]" : "text-[#24583e]"}`}
-            >
-              {locked
-                ? "Read-only · balances and quantities from the saved comparison, not current SAP balances."
-                : hasErrors
-                  ? "Correct the highlighted quantities before applying."
-                  : overPo
-                    ? "This bill exceeds the PO balance. Applying will require review."
-                    : matched
-                      ? `Allocated ${service ? "Amount" : "Qty."} matches Invoice ${service ? "Amount" : "Qty."}`
-                      : selection.remaining == null
-                        ? `Vendor Invoice ${service ? "amount" : "quantity"} is unavailable. Review the invoice.`
-                        : selection.remaining < 0
-                          ? `${format(-selection.remaining)} above Invoice ${service ? "Amount" : "Qty."}. Applying will require review.`
-                          : `${format(selection.remaining)} still to allocate. Applying will require review.`}
-              {!locked && selection.dirty
-                ? " Changes are not applied yet."
-                : ""}
-            </p>
+            {locked || hasErrors || !matched || overPo || selection.dirty ? (
+              <p
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className={`mt-1.5 text-[10px] leading-4 ${hasErrors || !matched || overPo ? "text-[#855009]" : "text-[#24583e]"}`}
+              >
+                {locked
+                  ? "Read-only · balances and quantities from the saved comparison, not current SAP balances."
+                  : hasErrors
+                    ? "Correct the highlighted quantities before applying."
+                    : overPo
+                      ? "This bill exceeds the PO balance. Applying will require review."
+                      : matched
+                        ? ""
+                        : selection.remaining == null
+                          ? `Vendor Invoice ${service ? "amount" : "quantity"} is unavailable. Review the invoice.`
+                          : selection.remaining < 0
+                            ? `${format(-selection.remaining)} above Invoice ${service ? "Amount" : "Qty."}. Applying will require review.`
+                            : `${format(selection.remaining)} still to allocate. Applying will require review.`}
+                {!locked && selection.dirty
+                  ? " Changes are not applied yet."
+                  : ""}
+              </p>
+            ) : null}
             {line.candidates.length > 6 ? (
               <div className="relative mt-2">
                 <Search className="pointer-events-none absolute left-2.5 top-2 h-3 w-3 text-[#6b5d50]" />
                 <input
-                  aria-label={`Search ${label}`}
+                  aria-label={`Search considered ${label}`}
                   placeholder={
                     service
-                      ? "Search PO No. or Posting Date"
-                      : "Search GRPO No., PO No. or Vehicle No."
+                      ? "Filter by PO No. or Posting Date"
+                      : "Filter by GRPO No., PO No. or Vehicle No."
                   }
                   className="h-7 w-full rounded-md border border-[#d4c9bc] bg-white pl-7 pr-2 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-[#2d6a4f]"
                   value={search}
@@ -424,10 +409,12 @@ export function ReceiptCandidatesPanel({
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3">
             {selected.filter(matches).length ? (
               <section>
-                {groupTitle(
-                  selection.dirty ? "Currently applied" : "Selected",
-                  selected,
-                )}
+                {line.candidates.length > 1 || selection.dirty
+                  ? groupTitle(
+                      selection.dirty ? "Currently applied" : "Selected",
+                      selected,
+                    )
+                  : null}
                 {renderCandidates(selected)}
               </section>
             ) : null}

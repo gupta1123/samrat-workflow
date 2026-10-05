@@ -67,7 +67,7 @@ function EvidenceTable({
                   {row.sap}
                 </td>
                 <td className={`py-1.5 font-medium ${color[row.status]}`}>
-                  {row.status}
+                  {row.status === "Not checked" ? "Unverified" : row.status}
                 </td>
               </tr>
               {row.note ? (
