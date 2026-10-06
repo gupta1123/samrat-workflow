@@ -253,33 +253,50 @@ export function ItemMatchingEvidence({
       <p className="mt-1 font-medium text-[#6b4a33]">
         {line.itemCode ? itemIdentificationLabel(line) : "Item not linked"}
       </p>
-      <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <div>
-          <dt className="text-[#6b5d50]">Scanned invoice item</dt>
-          <dd className="mt-0.5 break-words text-[#111827]">
-            <span className="font-mono">
-              {source?.vendorItemCode || "Code not printed / extracted"}
-            </span>
-            <span className="mt-0.5 block">
+      <table
+        className="mt-2 w-full table-fixed text-left"
+        aria-label="Invoice and SAP item comparison"
+      >
+        <thead>
+          <tr className="border-b border-[#e0d8cc] text-[#6b5d50]">
+            <th scope="col" className="py-2 pr-3 font-medium">
+              From the invoice
+            </th>
+            <th scope="col" className="py-2 font-medium">
+              From SAP
+            </th>
+          </tr>
+        </thead>
+        <tbody className="text-[#111827]">
+          <tr>
+            <td className="break-words py-2 pr-3 align-top">
+              <span className="text-[#6b5d50]">Code: </span>
+              <span className="font-mono">
+                {source?.vendorItemCode || "Not printed / extracted"}
+              </span>
+            </td>
+            <td className="break-words py-2 align-top">
+              <span className="text-[#6b5d50]">Code: </span>
+              <span className="font-mono">
+                {line.itemCode || "No item selected"}
+              </span>
+            </td>
+          </tr>
+          <tr className="border-t border-[#ece6dc]">
+            <td className="break-words py-2 pr-3 align-top">
+              <span className="text-[#6b5d50]">Name: </span>
               {source?.description || "Description not recorded"}
-            </span>
-          </dd>
-        </div>
-        <div>
-          <dt className="text-[#6b5d50]">SAP Item Master</dt>
-          <dd className="mt-0.5 break-words text-[#111827]">
-            <span className="font-mono">
-              {line.itemCode || "No item selected"}
-            </span>
-            <span className="mt-0.5 block">
+            </td>
+            <td className="break-words py-2 align-top">
+              <span className="text-[#6b5d50]">Name: </span>
               {line.itemName ||
                 (line.itemCode
                   ? "Name not recorded"
                   : "Link an item to continue")}
-            </span>
-          </dd>
-        </div>
-      </dl>
+            </td>
+          </tr>
+        </tbody>
+      </table>
       <p className="mt-2 text-[#6b5d50]">{explanation}</p>
       {invoice.source ? (
         <p className="mt-1 text-[10px] text-[#6b5d50]">
