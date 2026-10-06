@@ -183,7 +183,10 @@ test("clean match: one truck, one receipt is ready and builds a linked payload",
 test("a GRPO price fallback is identified even when the PO line still exists", () => {
   const source = receipt(4412, truck);
   source.po.price = null;
-  const result = evaluateMatch({ invoice: invoice(), context: context([source]) });
+  const result = evaluateMatch({
+    invoice: invoice(),
+    context: context([source]),
+  });
   assert.equal(result.lines[0].po?.qty, source.po.quantity);
   assert.equal(result.lines[0].po?.rate, source.receipt.price);
   assert.equal(result.lines[0].po?.rateSource, "grpo");
@@ -370,7 +373,10 @@ test("a printed invoice rate is not replaced by an inferred amount-per-quantity 
   const result = evaluateMatch({ invoice: inv, context: ctx });
   const rate = result.checks.find((check) => check.id === "rate-0")!;
   assert.equal(rate.title, "Rate is ₹6,132 below the PO");
-  assert.equal(rate.options?.find(option => option.effect === "return")?.recommended, undefined);
+  assert.equal(
+    rate.options?.find((option) => option.effect === "return")?.recommended,
+    undefined,
+  );
   assert.match(rate.help ?? "", /charged ₹58,308/);
   assert.equal(result.status, "review");
   assert.equal(result.payload?.lines[0].unitPrice, 58308);
@@ -475,6 +481,70 @@ test("one invoice, two trucks: quantity is split across two receipts", () => {
   assert.deepEqual(
     result.payload!.lines.map((l) => l.baseEntry).sort(),
     [8000 + 4431, 8000 + 4433].sort(),
+  );
+});
+
+test("one GRPO open balance cannot be reused by separate invoice lines", () => {
+  const shared = receipt(4501, {
+    ...truck,
+    quantity: 100,
+    openQty: 100,
+    poQty: 120,
+  });
+  const remainder = receipt(4502, {
+    ...truck,
+    quantity: 20,
+    openQty: 20,
+    poQty: 120,
+  });
+  const result = evaluateMatch({
+    invoice: invoice({
+      freightAmount: 0,
+      taxableTotal: 120 * 68000,
+      lines: [
+        {
+          index: 0,
+          vendorItemCode: "3434405",
+          description: "Binding wire lot A",
+          hsnSac: "72171020",
+          quantity: 60,
+          unit: "MT",
+          rate: 68000,
+          amount: 60 * 68000,
+        },
+        {
+          index: 1,
+          vendorItemCode: "3434405",
+          description: "Binding wire lot B",
+          hsnSac: "72171020",
+          quantity: 60,
+          unit: "MT",
+          rate: 68000,
+          amount: 60 * 68000,
+        },
+      ],
+    }),
+    context: context([shared, remainder]),
+  });
+
+  const planned = result.payload?.lines ?? [];
+  assert.equal(
+    planned
+      .filter((line) => line.baseEntry === shared.receipt.docEntry)
+      .reduce((total, line) => total + line.quantity, 0),
+    100,
+  );
+  assert.equal(
+    planned
+      .filter((line) => line.baseEntry === remainder.receipt.docEntry)
+      .reduce((total, line) => total + line.quantity, 0),
+    20,
+  );
+  assert.equal(
+    result.lines[1].candidates.find(
+      (candidate) => candidate.docEntry === shared.receipt.docEntry,
+    )?.open,
+    40,
   );
 });
 

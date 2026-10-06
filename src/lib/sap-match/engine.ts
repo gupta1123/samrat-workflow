@@ -351,6 +351,14 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
   const checks = new Checks(state);
   const lineResults: LineResult[] = [];
   const planned: PlannedDocumentLine[] = [];
+  // One GRPO line is one finite SAP balance for the whole vendor invoice. Keep
+  // a shared balance so two scanned invoice lines cannot both spend it.
+  const remainingReceiptQty = new Map(
+    context.receipts.map((receipt) => [
+      receiptKey(receipt),
+      r3(receipt.openQty),
+    ]),
+  );
 
   // ---- Invoice-level checks ----
   if (context.existingInvoice) {
@@ -592,6 +600,7 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
         checks,
         planned,
         totalQty,
+        remainingReceiptQty,
       });
     }
   }
@@ -847,6 +856,7 @@ function evaluateMaterialLine(args: {
   checks: Checks;
   planned: PlannedDocumentLine[];
   totalQty: number;
+  remainingReceiptQty: Map<string, number>;
 }): number {
   const {
     ln,
@@ -859,6 +869,7 @@ function evaluateMaterialLine(args: {
     checks,
     planned,
     totalQty,
+    remainingReceiptQty,
   } = args;
   const i = ln.index;
   const vendor = context.vendor!;
@@ -870,14 +881,14 @@ function evaluateMaterialLine(args: {
         receipt.cardCode === vendor.cardCode && receipt.itemCode === itemCode,
     )
     .map((receipt) => {
-      const view = candidateView(
-        receiptKey(receipt),
-        "GRPO",
-        receipt,
-        r3(receipt.openQty),
-      );
+      const key = receiptKey(receipt);
+      const available = r3(remainingReceiptQty.get(key) ?? receipt.openQty);
+      const view = candidateView(key, "GRPO", receipt, available);
       if (view.open <= EPS) {
-        view.rejected = `Already billed${receipt.invoicedBy ? ` (${receipt.invoicedBy})` : ""}`;
+        view.rejected =
+          receipt.openQty > EPS
+            ? "Already allocated to another invoice line"
+            : `Already billed${receipt.invoicedBy ? ` (${receipt.invoicedBy})` : ""}`;
         return { view, receipt, truck: false };
       }
       const branch = context.branch;
@@ -933,6 +944,18 @@ function evaluateMaterialLine(args: {
   result.allocatedQty = r3(
     sum(selected.map((candidate) => candidate.view.allocated)),
   );
+  for (const candidate of selected) {
+    remainingReceiptQty.set(
+      candidate.view.key,
+      r3(
+        Math.max(
+          0,
+          (remainingReceiptQty.get(candidate.view.key) ??
+            candidate.receipt.openQty) - candidate.view.allocated,
+        ),
+      ),
+    );
+  }
 
   const vendorName = invoice.vendorName ?? "The vendor";
   const branchName = context.branch?.name ?? "this branch";

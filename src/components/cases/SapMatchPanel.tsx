@@ -697,9 +697,16 @@ function Matched({
             <p className="text-[10px] leading-4 text-[#6b5d50]">
               SAP Service Layer ·{" "}
               {result.receiptSearch.method === "identifier"
-                ? result.receiptSearch.field
-                  ? `GRPO search by ${result.receiptSearch.field} ${result.receiptSearch.value}`
-                  : "GRPO search by packet references"
+                ? result.receiptSearch.identifiers?.length
+                  ? `GRPO search by ${result.receiptSearch.identifiers
+                      .map(
+                        (identifier) =>
+                          `${identifier.field} ${identifier.value}`,
+                      )
+                      .join("; ")}`
+                  : result.receiptSearch.field
+                    ? `GRPO search by ${result.receiptSearch.field} ${result.receiptSearch.value}`
+                    : "GRPO search by packet references"
                 : `Open GRPO search for supplier ${data.vendor?.cardCode ?? ""}`}{" "}
               · {result.receiptSearch.documentsRead} document
               {result.receiptSearch.documentsRead === 1 ? "" : "s"} returned
@@ -708,7 +715,9 @@ function Matched({
                 : ""}
               .{" "}
               {result.receiptSearch.method === "identifier"
-                ? "Candidates come from the first successful reference search, not all SAP GRPOs."
+                ? result.receiptSearch.supplementedByVendor
+                  ? "Exact packet-reference matches are combined with this supplier’s complete open-GRPO list and de-duplicated by SAP document entry."
+                  : "Candidates combine every exact packet-reference search and are de-duplicated by SAP document entry."
                 : "Only this supplier’s open GRPOs were searched."}
             </p>
           ) : null}

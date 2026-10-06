@@ -281,6 +281,7 @@ test("matching records supplier identification, item mapping scope and the retur
         input.onSearch?.({
           field: "Invoice No.",
           value: "1444099137",
+          identifiers: [{ field: "Invoice No.", value: "1444099137" }],
           documentsRead: receipts.length,
           limit: 100,
         });
@@ -295,6 +296,10 @@ test("matching records supplier identification, item mapping scope and the retur
     "20AAACT2803M2ZO",
   ]);
   assert.equal(match.result.receiptSearch?.field, "Invoice No.");
+  assert.deepEqual(match.result.receiptSearch?.identifiers, [
+    { field: "Invoice No.", value: "1444099137" },
+  ]);
+  assert.equal(match.result.receiptSearch?.supplementedByVendor, true);
   assert.equal(match.result.receiptSearch?.documentsRead, 1);
   assert.equal(match.result.lines[0].itemCode, "BW-TW20-091");
   assert.equal(match.result.lines[0].itemIdentification?.scope, "supplier");
@@ -304,6 +309,38 @@ test("matching records supplier identification, item mapping scope and the retur
     "1444099137",
   );
   assert.ok(match.result.checkedAt);
+});
+
+test("an exact GRPO hit is supplemented with the supplier's other open GRPOs", async () => {
+  const client = sapClient();
+  const exact = await client.findOpenReceiptDocumentsForInvoice();
+  const second = {
+    ...exact[0],
+    DocEntry: 8420,
+    DocNum: 4420,
+    NumAtCard: null,
+    DocumentLines: exact[0].DocumentLines.map((line) => ({
+      ...line,
+      Quantity: 12,
+      RemainingOpenQuantity: 12,
+    })),
+  };
+  const match = await computeCaseMatch({
+    db: fakeDb(tables()) as never,
+    client: sapClient({
+      findOpenReceiptDocumentsForInvoice: async () => exact,
+      listOpenReceiptDocumentsForVendor: async () => [...exact, second],
+    }) as never,
+    caseRow: CASE,
+  });
+
+  assert.ok(match.available);
+  assert.deepEqual(
+    match.result.lines[0].candidates.map((candidate) => candidate.docEntry),
+    [8412, 8420],
+  );
+  assert.equal(match.result.receiptSearch?.supplementedByVendor, true);
+  assert.equal(match.result.receiptSearch?.documentsRead, 2);
 });
 
 test("an unlinked item blocks until it is linked", async () => {

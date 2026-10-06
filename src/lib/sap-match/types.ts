@@ -148,6 +148,10 @@ export type ReceiptSearch = {
   method: "identifier" | "vendor";
   field?: string;
   value?: string;
+  /** Every exact packet identifier that returned at least one open GRPO. */
+  identifiers?: Array<{ field: string; value: string }>;
+  /** Exact hits were supplemented with every open GRPO for the same SAP supplier. */
+  supplementedByVendor?: boolean;
   documentsRead: number;
   limit: number;
 };

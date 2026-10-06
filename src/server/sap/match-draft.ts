@@ -57,6 +57,7 @@ export function buildMatchedDraftPayload(params: {
     );
   }
   const isService = serviceLines.length > 0;
+  const reservedQuantities = new Map<string, number>();
 
   const documentLines = plan.lines.map((line) => {
     const base = bases.get(`${line.baseType}:${line.baseEntry}`);
@@ -90,11 +91,15 @@ export function buildMatchedDraftPayload(params: {
       };
     }
     const open = Number(baseLine.RemainingOpenQuantity);
-    if (!Number.isFinite(open) || line.quantity > open + 0.0005) {
+    const baseLineKey = `${line.baseType}:${line.baseEntry}:${line.baseLine}`;
+    const totalReserved =
+      (reservedQuantities.get(baseLineKey) ?? 0) + line.quantity;
+    if (!Number.isFinite(open) || totalReserved > open + 0.0005) {
       throw new MatchDraftError(
-        `SAP document ${line.baseDocNum} no longer has ${line.quantity} open. Refresh the match.`,
+        `SAP document ${line.baseDocNum} no longer has ${totalReserved} open across the selected invoice lines. Refresh the match.`,
       );
     }
+    reservedQuantities.set(baseLineKey, totalReserved);
     const unitPrice =
       line.unitPrice ??
       params.invoiceRates?.[line.invoiceLineIndex] ??

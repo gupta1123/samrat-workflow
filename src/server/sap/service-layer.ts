@@ -74,6 +74,40 @@ export type SapMatchDocument = Record<string, unknown> & {
   DocumentLines?: Array<Record<string, unknown>>;
 };
 
+type ExactReceiptMatch = {
+  identifier: { field: string; value: string };
+  documents: SapMatchDocument[];
+};
+
+/**
+ * One vendor invoice may cover several GRPOs, and each GRPO can carry a
+ * different exact packet identifier (for example, a different vehicle). Keep
+ * every document returned by an exact identifier query and de-duplicate the
+ * overlaps by SAP's immutable DocEntry.
+ */
+export function combineExactReceiptMatches(
+  matches: ExactReceiptMatch[],
+  limit = 100,
+) {
+  const documents = new Map<number, SapMatchDocument>();
+  const identifiers: ExactReceiptMatch["identifier"][] = [];
+  for (const match of matches) {
+    if (!match.documents.length) continue;
+    identifiers.push(match.identifier);
+    for (const document of match.documents) {
+      const docEntry = Number(document.DocEntry);
+      if (!Number.isInteger(docEntry) || documents.has(docEntry)) continue;
+      documents.set(docEntry, document);
+      if (documents.size >= limit) break;
+    }
+    if (documents.size >= limit) break;
+  }
+  return {
+    documents: [...documents.values()],
+    identifiers,
+  };
+}
+
 export type SapReadDocument = Omit<SapGrpo, "DocumentLines"> & {
   NumAtCard?: string | null;
   DocTotal?: number;
@@ -165,6 +199,7 @@ export async function withTestServiceLayer<T>(
       onSearch?: (search: {
         field: string;
         value: string;
+        identifiers: Array<{ field: string; value: string }>;
         documentsRead: number;
         limit: number;
       }) => void;
@@ -722,36 +757,56 @@ export async function withTestServiceLayer<T>(
           }
         }
         if (!identifiers.length) return [];
-        // Query identifiers independently in strength order. Besides returning
-        // as soon as an exact key succeeds, this makes optional SAP UDFs safe:
-        // one missing field cannot break NumAtCard or the other configured keys.
-        for (const identifier of identifiers) {
-          try {
-            const rows = await collectionOnce<SapMatchDocument>(
-              "/PurchaseDeliveryNotes?$filter=" +
-                encodeURIComponent(
-                  `CardCode eq '${literal(input.cardCode)}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO' and ${identifier.filter}`,
-                ) +
-                "&$orderby=DocEntry%20desc",
-              100,
-            );
-            if (rows.length) {
-              input.onSearch?.({
-                field: identifier.field,
-                value: identifier.value,
-                documentsRead: rows.length,
-                limit: 100,
-              });
-              return rows;
+        // Query every exact identifier. Different GRPOs belonging to one
+        // invoice often have different vehicle/LR/e-way references, so stopping
+        // after the first successful query hides valid base documents. The
+        // queries are independent and concurrent: an unavailable optional UDF
+        // cannot break the standard fields or make this slower one-by-one.
+        const matches = await Promise.all(
+          identifiers.map(async (identifier): Promise<ExactReceiptMatch> => {
+            try {
+              const documents = await collectionOnce<SapMatchDocument>(
+                "/PurchaseDeliveryNotes?$filter=" +
+                  encodeURIComponent(
+                    `CardCode eq '${literal(input.cardCode)}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO' and ${identifier.filter}`,
+                  ) +
+                  "&$orderby=DocEntry%20desc",
+                100,
+              );
+              return {
+                identifier: {
+                  field: identifier.field,
+                  value: identifier.value,
+                },
+                documents,
+              };
+            } catch (error) {
+              console.warn(
+                `Could not query SAP receipts by ${identifier.label}; continuing with the other exact identifiers.`,
+                error instanceof Error ? error.message : String(error),
+              );
+              return {
+                identifier: {
+                  field: identifier.field,
+                  value: identifier.value,
+                },
+                documents: [],
+              };
             }
-          } catch (error) {
-            console.warn(
-              `Could not query SAP receipts by ${identifier.label}; trying the next exact identifier.`,
-              error instanceof Error ? error.message : String(error),
-            );
-          }
+          }),
+        );
+        const combined = combineExactReceiptMatches(matches, 100);
+        const first = combined.identifiers[0];
+        if (combined.documents.length && first) {
+          input.onSearch?.({
+            field: first.field,
+            value: first.value,
+            identifiers: combined.identifiers,
+            documentsRead: combined.documents.length,
+            limit: 100,
+          });
         }
-        return [];
+        return combined.documents;
       },
       async listOpenPurchaseOrdersForVendor(cardCode) {
         return pageAll<SapMatchDocument>(

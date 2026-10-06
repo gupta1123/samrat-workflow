@@ -387,7 +387,12 @@ export async function computeCaseMatch(params: {
   let itemMap: Record<string, string> = {};
   let existingInvoice: MatchContext["existingInvoice"] = null;
   if (vendor) {
-    const [targetedReceipts, loadedItemMap] = await Promise.all([
+    const [
+      targetedReceipts,
+      vendorReceipts,
+      vendorPurchaseOrders,
+      loadedItemMap,
+    ] = await Promise.all([
       client.findOpenReceiptDocumentsForInvoice({
         cardCode: vendor.cardCode,
         invoiceNumber: invoice.invoiceNumber,
@@ -402,22 +407,39 @@ export async function computeCaseMatch(params: {
           receiptSearch = { method: "identifier", ...search };
         },
       }),
+      client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
+      client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
       loadItemMappings(db, vendor.cardCode),
     ]);
     itemMap = loadedItemMap.map;
     itemMappingScopes = loadedItemMap.scopes;
+    // Exact packet references rank the right receipts, but they are not
+    // guaranteed to have been copied onto every GRPO covered by a consolidated
+    // supplier invoice. Include the supplier's complete open set and de-dupe by
+    // SAP DocEntry so a second legitimate GRPO is never hidden.
+    receiptDocuments = [
+      ...new Map(
+        [...targetedReceipts, ...vendorReceipts].flatMap((document) =>
+          Number.isInteger(document.DocEntry)
+            ? [[Number(document.DocEntry), document] as const]
+            : [],
+        ),
+      ).values(),
+    ];
+    purchaseOrders = vendorPurchaseOrders;
     if (targetedReceipts.length) {
-      receiptDocuments = targetedReceipts;
       receiptSearch ??= {
         method: "identifier",
         documentsRead: targetedReceipts.length,
         limit: 100,
       };
+      receiptSearch = {
+        ...receiptSearch,
+        supplementedByVendor: true,
+        documentsRead: receiptDocuments.length,
+        limit: 1000,
+      };
     } else {
-      [receiptDocuments, purchaseOrders] = await Promise.all([
-        client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
-        client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
-      ]);
       receiptSearch = {
         method: "vendor",
         documentsRead: receiptDocuments.length,
