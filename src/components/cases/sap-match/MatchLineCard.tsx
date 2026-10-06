@@ -11,7 +11,7 @@ import { ItemLinker } from "./ItemLinker";
 import { ReceiptCandidatesPanel } from "./ReceiptCandidatesPanel";
 import { priceReviewDetails } from "@/lib/sap-match/price-review";
 import { quantityBalances } from "@/lib/sap-match/evidence";
-import { MatchingEvidence } from "./MatchingEvidence";
+import { ItemMatchingEvidence, MatchingEvidence } from "./MatchingEvidence";
 import { SupplierOrdersPanel } from "./SupplierOrdersPanel";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
@@ -239,6 +239,7 @@ export function MatchLineCard({
       </header>
 
       <div className="space-y-3 px-4 py-3">
+        <ItemMatchingEvidence invoice={invoice} line={line} />
         {unmapped && mapCheck ? (
           <ItemLinker
             caseId={caseId}

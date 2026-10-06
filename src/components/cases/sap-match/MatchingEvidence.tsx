@@ -223,6 +223,76 @@ export function CandidateEvidence({
   );
 }
 
+export function ItemMatchingEvidence({
+  invoice,
+  line,
+}: {
+  invoice: MatchInvoice;
+  line: LineResult;
+}) {
+  const source = invoice.lines.find((entry) => entry.index === line.index);
+  const identification = line.itemIdentification;
+  const explanation = !line.itemCode
+    ? "No SAP item has been linked yet. Any suggested item needs your confirmation before it can be used."
+    : identification?.method === "exact-code"
+      ? "The item code read from the invoice matches a code in SAP Item Master after ignoring formatting. The SAP name comes from Item Master; the invoice description is shown for comparison."
+      : identification?.method === "saved-mapping"
+        ? identification.scope === "supplier"
+          ? "A saved link for this supplier connects the invoice item to this SAP item. The SAP name comes from Item Master."
+          : identification.scope === "shared"
+            ? "A saved shared item link connects the invoice item to this SAP item. The SAP name comes from Item Master."
+            : "A saved item link connects the invoice item to this SAP item. Its scope was not recorded in this check. The SAP name comes from Item Master."
+        : "This saved check contains the SAP item, but does not record how it was identified. Re-check to record the matching method.";
+
+  return (
+    <section
+      aria-label="Item matching"
+      className="rounded-lg border border-[#e0d8cc] bg-[#faf8f4] p-3 text-[11px] leading-4"
+    >
+      <h3 className="font-semibold text-[#111827]">How the item matched</h3>
+      <p className="mt-1 font-medium text-[#6b4a33]">
+        {line.itemCode ? itemIdentificationLabel(line) : "Item not linked"}
+      </p>
+      <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div>
+          <dt className="text-[#6b5d50]">Scanned invoice item</dt>
+          <dd className="mt-0.5 break-words text-[#111827]">
+            <span className="font-mono">
+              {source?.vendorItemCode || "Code not printed / extracted"}
+            </span>
+            <span className="mt-0.5 block">
+              {source?.description || "Description not recorded"}
+            </span>
+          </dd>
+        </div>
+        <div>
+          <dt className="text-[#6b5d50]">SAP Item Master</dt>
+          <dd className="mt-0.5 break-words text-[#111827]">
+            <span className="font-mono">
+              {line.itemCode || "No item selected"}
+            </span>
+            <span className="mt-0.5 block">
+              {line.itemName ||
+                (line.itemCode
+                  ? "Name not recorded"
+                  : "Link an item to continue")}
+            </span>
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-[#6b5d50]">{explanation}</p>
+      {invoice.source ? (
+        <p className="mt-1 text-[10px] text-[#6b5d50]">
+          Invoice source:{" "}
+          {[invoice.source.fileName, invoice.source.pageLabel]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 export function MatchingEvidence({
   invoice,
   line,
