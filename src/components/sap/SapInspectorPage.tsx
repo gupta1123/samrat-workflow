@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/dashboard/AppShell";
 import { Button } from "@/components/ui/button";
 import { BusinessPartnersTab } from "./BusinessPartnersTab";
+import { ItemsInspectorTab } from "./ItemsInspectorTab";
 import { GrpoInspectorTab } from "./GrpoInspectorTab";
 import type {
   SapInspectorDataset,
@@ -35,13 +36,14 @@ type DatasetState =
 type RecordFilter = "all" | "open" | "issues";
 
 const PAGE_SIZE = 25;
-type InspectorTab = SapInspectorDataset | "business-partners";
+type InspectorTab = SapInspectorDataset | "business-partners" | "items";
 
 const TABS: Array<{
   id: InspectorTab;
   label: string;
   description: string;
 }> = [
+  { id: "items", label: "Items", description: "All SAP Item Master records" },
   {
     id: "business-partners",
     label: "Business Partners",
@@ -349,7 +351,7 @@ export function SapInspectorPage() {
   }, []);
 
   useEffect(() => {
-    if (initialized && activeTab !== "business-partners" && activeTab !== "grpo" && !states[activeTab]) void load(activeTab);
+    if (initialized && activeTab !== "items" && activeTab !== "business-partners" && activeTab !== "grpo" && !states[activeTab]) void load(activeTab);
   }, [activeTab, initialized, load, states]);
 
   useEffect(() => {
@@ -363,7 +365,7 @@ export function SapInspectorPage() {
     setExpanded(null);
   }, [activeTab, query, filter]);
 
-  const activeState = activeTab === "business-partners" ? null : states[activeTab];
+  const activeState = activeTab === "items" || activeTab === "business-partners" ? null : states[activeTab];
   const data = activeState?.status === "ready" ? activeState.data : null;
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase("en-IN");
@@ -413,7 +415,7 @@ export function SapInspectorPage() {
                 a packet cannot find or use that record.
               </p>
             </div>
-            {activeTab !== "business-partners" && activeTab !== "grpo" ? <div className="flex items-center gap-2">
+            {activeTab !== "items" && activeTab !== "business-partners" && activeTab !== "grpo" ? <div className="flex items-center gap-2">
               {data ? (
                 <div className="text-right text-[10px] leading-4 text-[#897f74]">
                   <div>{data.source}</div>
@@ -442,7 +444,7 @@ export function SapInspectorPage() {
           <div className="mt-6 overflow-x-auto border-b border-[#ddd5ca]">
             <div className="flex min-w-max gap-1" role="tablist" aria-label="SAP datasets">
               {TABS.map((item) => {
-                const state = item.id === "business-partners" ? null : states[item.id];
+                const state = item.id === "items" || item.id === "business-partners" ? null : states[item.id];
                 const count = state?.status === "ready" ? state.data.records.length : null;
                 const active = item.id === activeTab;
                 return (
@@ -475,7 +477,7 @@ export function SapInspectorPage() {
             </div>
           </div>
 
-          {activeTab === "business-partners" ? <BusinessPartnersTab /> : activeTab === "grpo" ? <GrpoInspectorTab renderDetails={record => <RecordDetails record={record} />} /> : <>
+          {activeTab === "items" ? <ItemsInspectorTab /> : activeTab === "business-partners" ? <BusinessPartnersTab /> : activeTab === "grpo" ? <GrpoInspectorTab renderDetails={record => <RecordDetails record={record} />} /> : <>
           <div className="mt-4">
             <h2 className="text-sm font-semibold">{tab.label}</h2>
             <p className="mt-0.5 text-xs text-[#81766b]">{tab.description}</p>

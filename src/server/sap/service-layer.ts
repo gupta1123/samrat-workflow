@@ -11,6 +11,7 @@ import type { SapWithholdingTaxRow } from "./draft-total";
 import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
 import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
 import { readODataCollection } from "./odata-pagination";
+import { itemsReadPath, type ItemsQuery } from "@/lib/sap-items-inspector";
 import {
   businessPartnerReadPath,
   type BusinessPartnerQuery,
@@ -179,6 +180,7 @@ export async function withTestServiceLayer<T>(
     listBusinessPartnersPage: (
       query: BusinessPartnerQuery,
     ) => Promise<Record<string, unknown>[]>;
+    listInspectorItemsPage: (query: ItemsQuery) => Promise<Record<string, unknown>[]>;
     listInspectorGrposPage: (
       query: GrpoInspectorQuery,
       fields: GrpoReferenceFields,
@@ -660,6 +662,9 @@ export async function withTestServiceLayer<T>(
           businessPartnerReadPath(query),
           query.limit + 1,
         );
+      },
+      async listInspectorItemsPage(query) {
+        return pageAll<Record<string, unknown>>(itemsReadPath(query), query.limit + 1);
       },
       async listInspectorGrposPage(query, fields) {
         return pageAll<Record<string, unknown>>(
