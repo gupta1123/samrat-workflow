@@ -15,6 +15,7 @@ buildSync({
     "src/components/cases/sap-match/MatchingEvidence.tsx",
     "src/components/cases/sap-match/WhatGoesToSap.tsx",
     "src/components/cases/sap-match/CheckBlock.tsx",
+    "src/components/cases/sap-match/MatchLineCard.tsx",
   ],
   outdir: outputDir,
   bundle: true,
@@ -31,6 +32,38 @@ const { WhatGoesToSap } = requireComponent(
   resolve(outputDir, "WhatGoesToSap.js"),
 );
 const { CheckBlock } = requireComponent(resolve(outputDir, "CheckBlock.js"));
+const { MatchLineCard } = requireComponent(
+  resolve(outputDir, "MatchLineCard.js"),
+);
+
+test("hidden field headers have a positioned cell on both responsive layouts", () => {
+  const html = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      caseId: "layout-test",
+      invoice: matchFixture.invoice,
+      line: matchFixture.result.lines[0],
+      checks: [],
+      locked: true,
+      busy: false,
+      vendorFound: true,
+      onChoose: () => {},
+      onUndo: () => {},
+      onAllocate: () => {},
+      onResetAllocation: () => {},
+      onLink: () => {},
+    }),
+  );
+  assert.ok(
+    html.includes(
+      '<th scope="col" class="relative w-[22%] pb-2 font-medium"><span class="sr-only">Field</span>',
+    ),
+  );
+  assert.ok(
+    html.includes(
+      '<th scope="col" class="relative w-20 pb-1 font-semibold"><span class="sr-only">Field</span>',
+    ),
+  );
+});
 
 test("one-choice quantity review uses a named action and keeps the remaining balance visible", () => {
   const html = renderToStaticMarkup(

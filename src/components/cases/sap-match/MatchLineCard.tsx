@@ -254,7 +254,7 @@ export function MatchLineCard({
               <table className="w-full table-fixed text-left text-[11px]">
                 <thead className="text-[#6b5d50]">
                   <tr>
-                    <th scope="col" className="w-[22%] pb-2 font-medium">
+                    <th scope="col" className="relative w-[22%] pb-2 font-medium">
                       <span className="sr-only">Field</span>
                     </th>
                     <th
@@ -343,7 +343,7 @@ export function MatchLineCard({
               >
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wider text-[#6b5d50]">
-                    <th scope="col" className="w-20 pb-1 font-semibold">
+                    <th scope="col" className="relative w-20 pb-1 font-semibold">
                       <span className="sr-only">Field</span>
                     </th>
                     <SourceHeader
