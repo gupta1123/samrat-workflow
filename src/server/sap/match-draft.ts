@@ -251,13 +251,19 @@ export async function createMatchedDraft(
     ...params.payload,
     DocDate: postingDate,
   };
-  let series: number | null = null;
+  let series: number | null =
+    typeof payload.Series === "number" ? payload.Series : null;
   let created;
   try {
     created = await client.createDraft(payload);
   } catch (error) {
     if (!/10000521|define the numbering series/i.test(String(error)))
       throw error;
+    if (series !== null) {
+      throw new MatchDraftError(
+        `SAP rejected Open Documents invoice series ${series} for posting date ${postingDate}. Ask the SAP team to correct its series or posting period; no alternative series was substituted.`,
+      );
+    }
     series = await client.resolveGstApInvoiceSeries(
       postingDate,
       baseDocument.BPL_IDAssignedToInvoice,

@@ -9,6 +9,8 @@ import {
   withUser,
 } from "@/server/api/helpers";
 import { readSapEnvironment } from "@/server/sap/config";
+import { fetchSapOpenGRPOs, fetchSapOpenPOs } from "@/server/sap/client";
+import { openDocumentDraftFields } from "@/server/sap/open-document-draft-fields";
 import { authoritativeOutlierDocumentIds } from "@/server/sap/match-data";
 import {
   buildDraftHeaderFields,
@@ -268,6 +270,15 @@ export async function POST(request: Request, context: Context) {
           invoiceRates: match.invoice.lines.map((line) => line.rate),
         });
         Object.assign(payload, header.values);
+        const [grpos, pos] = await Promise.all([
+          plan.lines.some((line) => line.baseType === 20)
+            ? fetchSapOpenGRPOs("test", true)
+            : Promise.resolve([]),
+          plan.lines.some((line) => line.baseType === 22)
+            ? fetchSapOpenPOs("test", true)
+            : Promise.resolve([]),
+        ]);
+        Object.assign(payload, openDocumentDraftFields(plan, { grpos, pos }));
         if (match.invoice.currency && match.invoice.currency !== currency) {
           throw new ApiError(
             "The vendor invoice currency differs from the selected SAP documents.",

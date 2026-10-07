@@ -26,11 +26,12 @@ function basicAuth(username: string, password: string): string {
 async function getRows(
   env: SapEnvironment,
   path: "OpenPO" | "OpenGRPO",
+  fresh = false,
 ): Promise<Record<string, unknown>[]> {
   const connection = readSapConnection(env);
   const cacheKey = `${env}:${path}`;
   const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.rows;
+  if (!fresh && cached && cached.expiresAt > Date.now()) return cached.rows;
 
   // The SAP gateway occasionally drops an otherwise valid read before it
   // returns a response. Retry that idempotent GET once, with an independent
@@ -76,12 +77,12 @@ async function getRows(
   throw new Error(`SAP ${path} could not be read.`);
 }
 
-export function fetchSapOpenPOs(env?: SapEnvironment) {
-  return getRows(env ?? readSapEnv(), "OpenPO");
+export function fetchSapOpenPOs(env?: SapEnvironment, fresh = false) {
+  return getRows(env ?? readSapEnv(), "OpenPO", fresh);
 }
 
-export function fetchSapOpenGRPOs(env?: SapEnvironment) {
-  return getRows(env ?? readSapEnv(), "OpenGRPO");
+export function fetchSapOpenGRPOs(env?: SapEnvironment, fresh = false) {
+  return getRows(env ?? readSapEnv(), "OpenGRPO", fresh);
 }
 
 function readSapEnv(): SapEnvironment {

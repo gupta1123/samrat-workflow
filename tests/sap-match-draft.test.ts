@@ -6,6 +6,7 @@ import {
   MatchDraftError,
 } from "../src/server/sap/match-draft";
 import type { PlannedPayload } from "../src/lib/sap-match/types";
+import { openDocumentDraftFields } from "../src/server/sap/open-document-draft-fields";
 
 const receipt = (entry: number, open = 40) => ({
   DocEntry: entry,
@@ -289,6 +290,114 @@ function fakeClient(
 }
 
 const base = { DocDate: "2026-06-13", Series: 5, BPL_IDAssignedToInvoice: 1 };
+
+const openRows = () =>
+  plan().lines.map((line) => ({
+    DocEntry: line.baseEntry,
+    "Line Num": line.baseLine,
+    "BP Code": plan().cardCode,
+    InvoiceSeriesCode: 2014,
+    AtcEntry: 240149,
+  }));
+
+test("draft series and attachment come from exact selected Open GRPO lines", () => {
+  assert.deepEqual(
+    openDocumentDraftFields(plan(), { grpos: openRows(), pos: [] }),
+    {
+      Series: 2014,
+      AttachmentEntry: 240149,
+    },
+  );
+});
+
+test("no attachment is fabricated when selected documents have none", () => {
+  assert.deepEqual(
+    openDocumentDraftFields(plan(), {
+      grpos: openRows().map((row) => ({ ...row, AtcEntry: null })),
+      pos: [],
+    }),
+    { Series: 2014 },
+  );
+});
+
+test("conflicting multi-GRPO attachments or series cannot silently pick the first", () => {
+  for (const field of ["AtcEntry", "InvoiceSeriesCode"] as const) {
+    const rows = openRows();
+    rows[1][field] += 1;
+    assert.throws(
+      () => openDocumentDraftFields(plan(), { grpos: rows, pos: [] }),
+      MatchDraftError,
+    );
+  }
+});
+
+test("missing rows, wrong supplier, wrong line and invalid series prevent a draft", () => {
+  for (const rows of [
+    [],
+    openRows().map((row) => ({ ...row, "BP Code": "OTHER" })),
+    openRows().map((row) => ({ ...row, "Line Num": 9 })),
+    openRows().map((row) => ({ ...row, InvoiceSeriesCode: null })),
+    openRows().map((row) => ({ ...row, AtcEntry: "invalid" })),
+  ]) {
+    assert.throws(
+      () => openDocumentDraftFields(plan(), { grpos: rows, pos: [] }),
+      MatchDraftError,
+    );
+  }
+});
+
+test("PO-based draft uses the Open PO line keys rather than GRPO rows", () => {
+  const selected = plan({ lines: [{ ...plan().lines[0], baseType: 22 }] });
+  assert.deepEqual(
+    openDocumentDraftFields(selected, {
+      grpos: [],
+      pos: [
+        {
+          DocEntry: selected.lines[0].baseEntry,
+          "PO Line Num": 0,
+          "BP Code": selected.cardCode,
+          InvoiceSeriesCode: "2017",
+          AtcEntry: "238646",
+        },
+      ],
+    }),
+    { Series: 2017, AttachmentEntry: 238646 },
+  );
+});
+
+test("endpoint series and attachment are sent in the first creation request", async () => {
+  const { client, calls } = fakeClient();
+  const result = await createMatchedDraft(client, {
+    payload: { Series: 2014, AttachmentEntry: 240149 },
+    currency: "INR",
+    postingDate: "2026-06-24",
+    taxDate: "2026-06-24",
+    baseDocument: base,
+  });
+  assert.equal(result.series, 2014);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].Series, 2014);
+  assert.equal(calls[0].AttachmentEntry, 240149);
+});
+
+test("a rejected endpoint series is not replaced by the old numbering fallback", async () => {
+  const { client, calls } = fakeClient();
+  client.createDraft = async (payload) => {
+    calls.push(payload);
+    throw new Error("10000521 define the numbering series");
+  };
+  await assert.rejects(
+    createMatchedDraft(client, {
+      payload: { Series: 2014 },
+      currency: "INR",
+      postingDate: "2026-06-24",
+      taxDate: "2026-06-24",
+      baseDocument: base,
+    }),
+    /no alternative series was substituted/,
+  );
+  assert.equal(calls.length, 1);
+});
 
 test("the draft is created on the requested posting date when rates exist", async () => {
   const { client, calls } = fakeClient();
