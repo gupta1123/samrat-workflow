@@ -77,6 +77,14 @@ export function buildMatchInvoice(input: {
   if (!invoiceNumber) return null;
 
   const rawLines = readStoredLineItems(primary.extracted_fields);
+  const coverage = record(fields.__tableCoverage);
+  const extractionIssue =
+    Object.keys(coverage).length > 0 &&
+    (coverage.status !== "complete" ||
+      !Array.isArray(coverage.rows) ||
+      coverage.rows.length !== rawLines.length)
+      ? "Invoice item extraction is incomplete or unverified. Review the invoice's original pages and analyze again before SAP matching."
+      : undefined;
   let freightFromLines = 0;
   const lines: MatchInvoiceLine[] = [];
   for (const item of rawLines) {
@@ -170,6 +178,7 @@ export function buildMatchInvoice(input: {
 
   return {
     invoiceNumber,
+    ...(extractionIssue ? { extractionIssue } : {}),
     referenceSources,
     source: {
       fileName: text(primary.source_file_name) || null,

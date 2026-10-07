@@ -251,6 +251,8 @@ const SOURCE_REVIEW_INSTRUCTION =
   "Every pageNumber is a supplied sourcePagePointers pointer such as p1, NOT an integer. The app binds it to the exact original page. Do not use local numbers or an extracted table's sourcePage. " +
   'The response structure is {"sourceVerdict":"verified|needs_review","fieldChecks":{"requestedField":"supported|unsupported"},"lineItemChecks":{"requestedProperty":"supported|unsupported"},"references":{"canonicalReferenceField":{"value":"literal printed value or null","sourceLabel":"literal label","valueKind":"reference|document_type|date|party|other|absent|unreadable","pageNumber":"supplied pointer","quote":"literal own-page label and value"}},"newReferences":[],"fieldChanges":[{"field":"canonical non-reference field","value":"source-based value","evidenceKind":"printed|visual_observation","pageNumber":"supplied pointer","quote":"literal own-page words"}],"removalEvidence":null,"structureChange":null,"pageQuality":[{"pageNumber":"supplied pointer","issues":[],"approvalSafe":true,"confidence":"high|medium|low","reason":"visual assessment"}],"reviewIssues":[],"reason":"source-based explanation"}. This is a shape guide, not findings: inspect the pixels to fill every nested evidence and quality property; never return empty evidence objects. references can be {} when no references exist. Empty arrays mean no entries, not one empty object. ' +
   "Check EVERY populated field and every populated line-item property, and inspect for omitted, explicitly labelled values. " +
+  "Independently inventory commercial goods/service rows from ALL original pages in tableCoverage, even when first-pass lineItems is empty. status complete requires one own-page quote per goods/service row in rows, in the same order as the final lineItems. Include a brief own-page evidence quote explaining the table assessment. Totals, taxes, delivery allocations, repeated copies and supporting references are not additional invoice products. not_present means the source truly has no commercial rows, not that extraction returned none. unreadable requires sourceVerdict needs_review. " +
+  "If any source row is missing, including an entirely omitted table, recover the COMPLETE source table in structureChange.lineItems with own-page evidence in this response. Never borrow products or quantities from another document. Confirm codes/descriptions, quantity, unit, unit price and amounts directly from the source; preserve absent fields as absent. " +
   "fieldChecks and lineItemChecks are OBJECTS keyed by the supplied fieldChecksInOrder and lineItemChecksInOrder names. Return every listed key exactly once with supported or unsupported; do not use positional arrays or review the corrected field set. " +
   "Supported means the field/property belongs to this source, including a misread value that you correct. Unsupported means the source never supplies that field/property. The app removes unsupported values directly from your votes; provide removalEvidence for those votes, not a second removal list. " +
   "A correct normalized representation is still supported: keep it when the printed content has the same meaning. Do not return changes merely to add commas/decimal zeroes, rearrange date formatting, or rewrap text; source review corrects actual wrong/missing values, not harmless presentation. Never remove a supported field just because its formatting differs. " +
@@ -291,6 +293,7 @@ const SOURCE_AUDIT_REPAIR_KEYS = [
   "sourceVerdict",
   "fieldChecks",
   "lineItemChecks",
+  "tableCoverage",
   "removalEvidence",
   "structureChange",
   "pageQuality",
@@ -300,7 +303,8 @@ const SOURCE_AUDIT_REPAIR_KEYS = [
 
 const SOURCE_AUDIT_REPAIR_INSTRUCTION =
   "You are repairing ONLY the source-audit consistency for one document after its full audit failed validation. " +
-  "Return exactly sourceVerdict, fieldChecks, lineItemChecks, removalEvidence, structureChange, pageQuality, reviewIssues and reason. Re-read the supplied original page images. " +
+  "Return exactly sourceVerdict, fieldChecks, lineItemChecks, tableCoverage, removalEvidence, structureChange, pageQuality, reviewIssues and reason. Re-read the supplied original page images. " +
+  "Independently inventory every commercial goods/service row in tableCoverage.rows with its own-page quote. Complete coverage must correspond one-to-one, in order, to the final saved rows; recover any missing rows in structureChange.lineItems from this source only. Do not count tax totals or delivery allocation subrows as additional invoice goods. not_present requires genuinely no commercial rows; unreadable requires sourceVerdict needs_review. Supply tableCoverage.evidence explaining the assessment. Never lower the inventory merely to fit an incomplete extraction. " +
   "Return one support vote for every supplied field and line-item property. A supported vote means the current value is visibly supported by this source. " +
   "An unsupported vote removes the current value and therefore requires a brief own-page removalEvidence quote showing why that value is not supported; if the source does not prove removal, mark it supported instead. " +
   "Keep structureChange null unless the document type or table truly needs a source-proved correction. Do not repeat a table merely to remove properties selected by unsupported votes. " +
@@ -344,7 +348,10 @@ function unverifiedSourceReview(document: CaseDoc, pages: ReviewSourcePage[]) {
   const reason =
     "Automated source verification returned an internally inconsistent result. The original extraction was preserved without applying any unverified correction.";
   return {
-    document,
+    document: {
+      ...document,
+      tableCoverage: { status: "unverified" as const, rows: [] },
+    },
     audit: {
       docId: document.id,
       status: "needs_review" as const,

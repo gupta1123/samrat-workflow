@@ -2533,6 +2533,7 @@ export type AuthoritativeDocumentAudit = {
   unsupportedLineItemProperties: ReviewLineItemProperty[];
   reason: string;
   referenceEvidence: ReferenceGrounding[];
+  tableCoverage?: CaseDoc["tableCoverage"];
   fieldEvidence?: Array<{
     field: FieldKey;
     value: string;
@@ -11391,6 +11392,7 @@ async function extractDataFromImagePages(params: {
               `Extract structured fields and visible text from procurement, logistics, transport, vehicle KYC, FASTag, quality certificate, and photo-evidence documents and return only JSON with keys "fields", "lineItems", and "visibleText". ` +
               `This document is a ${params.documentType}. Use only these field keys for this document type: ${allowedFieldKeysText}. ` +
               "visibleText must be a raw OCR-style transcription of the important visible text on the page. " +
+              "Read the whole commercial goods/service table independently of header fields. Every visible goods/service row must also be saved in lineItems, even if the page calls it Invoice goods rather than a table. Transcribing a row only in visibleText does not extract it. Delivery allocation subrows, totals and tax summaries are not extra invoice products. Never fill missing rows from another document. " +
               IMAGE_HANDWRITTEN_EXTRACTION_INSTRUCTION +
               AMOUNT_EXTRACTION_INSTRUCTION +
               CONSIGNEE_EXTRACTION_INSTRUCTION +
@@ -11556,6 +11558,7 @@ async function extractDataFromTextPages(params: {
           `Extract structured fields from procurement packet text and return only JSON with keys "fields", "lineItems", and "visibleText". ` +
           `This document is a ${params.documentType}. Use only these field keys for this document type: ${allowedFieldKeysText}. ` +
           TEXT_HANDWRITTEN_EXTRACTION_INSTRUCTION +
+          "Every visible commercial goods/service row must be saved in lineItems, not only visibleText. Read the entire table, independently of header extraction. Delivery allocations, totals and tax summaries are not additional invoice products. Never borrow another document's rows. " +
           AMOUNT_EXTRACTION_INSTRUCTION +
           CONSIGNEE_EXTRACTION_INSTRUCTION +
           DELIVERY_REFERENCE_EXTRACTION_INSTRUCTION +

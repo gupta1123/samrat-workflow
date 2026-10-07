@@ -50,6 +50,8 @@ export type MatchInvoiceLine = {
 
 export type MatchInvoice = {
   invoiceNumber: string;
+  /** Saved source review found an incomplete or unverified item table. */
+  extractionIssue?: string;
   /** The primary scanned invoice, when recorded in the saved packet. */
   source?: { fileName: string | null; pageLabel: string | null };
   referenceSources?: {

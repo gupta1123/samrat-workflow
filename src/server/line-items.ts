@@ -1826,7 +1826,10 @@ export function readStoredLineItems(extractedFields: unknown) {
 }
 
 export function serializeFieldsWithLineItems(
-  document: Pick<CaseDoc, "fields" | "lineItems" | "qualityIssues">,
+  document: Pick<
+    CaseDoc,
+    "fields" | "lineItems" | "qualityIssues" | "tableCoverage"
+  >,
 ) {
   const fields: Record<string, unknown> = { ...(document.fields ?? {}) };
   const lineItems = sanitizeLineItems(document.lineItems);
@@ -1837,6 +1840,9 @@ export function serializeFieldsWithLineItems(
   if (document.qualityIssues?.length) {
     fields[EXTRACTION_QUALITY_FIELD_KEY] = document.qualityIssues;
   }
+  if (document.tableCoverage) {
+    fields.__tableCoverage = document.tableCoverage;
+  }
 
   return fields;
 }
@@ -1845,5 +1851,6 @@ export function stripStoredLineItems(fields: Record<string, unknown>) {
   const rest = { ...fields };
   delete rest[LINE_ITEMS_FIELD_KEY];
   delete rest[EXTRACTION_QUALITY_FIELD_KEY];
+  delete rest.__tableCoverage;
   return rest as Partial<Record<FieldKey, string>>;
 }

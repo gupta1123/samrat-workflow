@@ -148,6 +148,11 @@ export interface CaseDoc {
   pages: number;
   fields: Partial<Record<FieldKey, string>>;
   lineItems?: CommercialLineItem[];
+  tableCoverage?: {
+    status: "complete" | "not_present" | "unreadable" | "unverified";
+    rows: Array<{ sourceFileName: string; pageNumber: number; quote: string }>;
+    evidence?: { sourceFileName: string; pageNumber: number; quote: string };
+  };
   qualityIssues?: ExtractionQualityIssue[];
   md: string;
   sourceFileName?: string;

@@ -125,6 +125,19 @@ export function buildSourceAuditSchema(
       sourceVerdict: { type: "string", enum: ["verified", "needs_review"] },
       fieldChecks: supportSchema(checklist.fieldSupport),
       lineItemChecks: supportSchema(checklist.lineItemPropertySupport),
+      tableCoverage: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: ["complete", "not_present", "unreadable"],
+          },
+          rows: { type: "array", items: ownEvidence },
+          evidence: ownEvidence,
+        },
+        required: ["status", "rows", "evidence"],
+        additionalProperties: false,
+      },
       references: {
         type: "object",
         properties: Object.fromEntries(
@@ -220,6 +233,7 @@ export function buildSourceAuditSchema(
       "sourceVerdict",
       "fieldChecks",
       "lineItemChecks",
+      "tableCoverage",
       "references",
       "newReferences",
       "fieldChanges",
@@ -266,6 +280,7 @@ const SOURCE_AUDIT_REPAIR_KEYS = [
   "sourceVerdict",
   "fieldChecks",
   "lineItemChecks",
+  "tableCoverage",
   "removalEvidence",
   "structureChange",
   "pageQuality",
@@ -322,6 +337,7 @@ export function parseCompactSourceAudit(
     "sourceVerdict",
     "fieldChecks",
     "lineItemChecks",
+    "tableCoverage",
     "references",
     "newReferences",
     "fieldChanges",
@@ -384,6 +400,7 @@ export function parseCompactSourceAudit(
     "fieldChanges",
     "removalEvidence",
     "structureChange",
+    "tableCoverage",
     "pageQuality",
     "reviewIssues",
   ])
@@ -694,6 +711,67 @@ export function parseCompactSourceAudit(
     document,
     pages,
   );
+  // Inventory the source independently of first-pass proposals. Empty support
+  // votes cannot prove that an empty table is complete. Validate AFTER applying
+  // source-backed corrections, so recovery happens in this same scoped call.
+  try {
+    const coverage = object(payload.tableCoverage);
+    if (
+      Object.keys(coverage).some(
+        (key) => !["status", "rows", "evidence"].includes(key),
+      ) ||
+      !["complete", "not_present", "unreadable"].includes(
+        String(coverage.status),
+      )
+    )
+      throw new Error("The source table coverage assessment is malformed.");
+    const evidence = bindEvidence(coverage.evidence, "Table coverage");
+    const rows = array(coverage.rows).map((row) =>
+      bindEvidence(row, "Visible item row"),
+    );
+    const savedRows = result.document.lineItems ?? [];
+    if (
+      coverage.status === "complete" &&
+      (!rows.length || rows.length !== savedRows.length)
+    )
+      throw new Error(
+        `Invoice/document extraction incomplete: the source contains ${rows.length} evidenced item rows but ${savedRows.length} rows survived validation. Recover every source row in structureChange.lineItems; do not use totals or receipt allocations as extra invoice products.`,
+      );
+    if (coverage.status === "not_present" && (rows.length || savedRows.length))
+      throw new Error(
+        "A source with item rows cannot be declared to have no commercial rows.",
+      );
+    if (
+      coverage.status === "unreadable" &&
+      payload.sourceVerdict !== "needs_review"
+    )
+      throw new Error(
+        "Unresolved item-table extraction must have sourceVerdict needs_review.",
+      );
+    if (
+      coverage.status === "complete" &&
+      savedRows.some(
+        (row, index) =>
+          ownDocumentPages(document, pages).length > 1 &&
+          row.sourcePage !== rows[index].pageNumber,
+      )
+    )
+      throw new Error(
+        "Each saved item row must belong to its corresponding source inventory page.",
+      );
+    const tableCoverage = {
+      status: coverage.status as "complete" | "not_present" | "unreadable",
+      rows,
+      evidence,
+    };
+    result.audit.tableCoverage = tableCoverage;
+    result.document = { ...result.document, tableCoverage };
+  } catch (error) {
+    throw new SourceReviewValidationError(
+      "source-audit",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   const ownPages = ownDocumentPages(document, pages);
   if (ownPages.length === 1 && result.document.lineItems?.length) {
     // Every accepted row of this scoped source belongs to its one original

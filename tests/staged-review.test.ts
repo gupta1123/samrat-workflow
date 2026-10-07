@@ -55,6 +55,17 @@ async function compact(document: CaseDoc) {
     lineItemChecks: Object.fromEntries(
       context.lineItemChecksInOrder.map((key) => [key, "supported"]),
     ),
+    tableCoverage: {
+      status: document.lineItems?.length ? "complete" : "not_present",
+      rows: (document.lineItems ?? []).map((item) => ({
+        pageNumber: "p1",
+        quote: item.description ?? item.itemCode ?? "Visible goods row",
+      })),
+      evidence: {
+        pageNumber: "p1",
+        quote: document.md || "Source page inspected",
+      },
+    },
     references: Object.fromEntries(
       context.referencesToReview.map((field) => [
         field,
@@ -147,6 +158,77 @@ function response(payload: unknown, finish_reason = "stop") {
     choices: [{ finish_reason, message: { content: JSON.stringify(payload) } }],
   });
 }
+
+test("an omitted invoice table routes to scoped audit recovery, not a blank successful result", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const payloads = await Promise.all(documents.map(compact));
+  const missingTable = {
+    ...payloads[0],
+    tableCoverage: {
+      status: "complete",
+      rows: [{ pageNumber: "p1", quote: "Steel 12 Nos" }],
+      evidence: { pageNumber: "p1", quote: "Goods: Steel 12 Nos" },
+    },
+  };
+  let repairCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review")
+        return response(
+          context.sourcePageNumbers[0] === 1 ? missingTable : payloads[1],
+        );
+      if (name === "source_audit_repair") {
+        repairCalls++;
+        assert.match(context.validationDefect, /extraction incomplete/);
+        const recovered = {
+          ...missingTable,
+          structureChange: {
+            lineItems: [
+              {
+                description: "Steel",
+                quantity: "12",
+                unit: "Nos",
+                rawText: "Steel 12 Nos",
+              },
+            ],
+            evidence: { pageNumber: "p1", quote: "Steel 12 Nos" },
+          },
+        };
+        return response(
+          Object.fromEntries(
+            body.response_format.json_schema.schema.required.map(
+              (key: string) => [key, recovered[key as keyof typeof recovered]],
+            ),
+          ),
+        );
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved conflict",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.equal(repairCalls, 1);
+  assert.equal(result.documents[0].lineItems?.[0].quantity, "12");
+  assert.equal(result.documents[0].tableCoverage?.status, "complete");
+});
 
 test("compact own-source ledger removes a category without inventing a blank invoice number", async () => {
   const { parseCompactSourceAudit } =
@@ -1461,6 +1543,7 @@ test("an inconsistent source audit is repaired from its own page without fabrica
               "sourceVerdict",
               "fieldChecks",
               "lineItemChecks",
+              "tableCoverage",
               "removalEvidence",
               "structureChange",
               "pageQuality",
@@ -1518,6 +1601,7 @@ test("an unrepairable source contract preserves extraction and completes with re
       "sourceVerdict",
       "fieldChecks",
       "lineItemChecks",
+      "tableCoverage",
       "removalEvidence",
       "structureChange",
       "pageQuality",

@@ -295,11 +295,12 @@ export async function computeCaseMatch(params: {
       reason: "This case has no numbered vendor invoice to match against SAP.",
     };
   }
-  if (!invoice.lines.length) {
+  if (invoice.extractionIssue || !invoice.lines.length) {
     return {
       available: false,
       reason:
-        "No invoice line items were extracted, so there is nothing to match. Analyze the case again.",
+        invoice.extractionIssue ??
+        "Invoice item extraction is incomplete: no product rows were saved. Review the invoice and analyze the case again before SAP matching.",
     };
   }
 
