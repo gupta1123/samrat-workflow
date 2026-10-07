@@ -17,6 +17,7 @@ import {
   summarizeCase,
 } from "./case-summary";
 import { buildMissingDocumentIssues } from "../lib/missing-documents";
+import { buildEWayBillValidityIssues } from "../lib/eway-bill-validity";
 import {
   getPersistedPacketFieldConfiguration,
   invalidateFieldSettings,
@@ -597,6 +598,7 @@ async function processJob(jobId: string) {
           filterIssues(reviewed.reviewIssues, x.docs),
           filterIssues(terms.mismatches, x.docs),
           buildMissingDocumentIssues(missingDocumentGroups),
+          buildEWayBillValidityIssues(x.docs),
           verifyWeightCalculationIntegrity(x.docs),
           duplicateInvoiceIssues,
         ),

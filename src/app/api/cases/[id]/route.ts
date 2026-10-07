@@ -12,6 +12,7 @@ import { groupDocumentsForVerification } from "@/server/services/verification";
 import type { CaseDoc } from "@/types/pipeline";
 import { caseFileContentUrl } from "@/server/case-files";
 import { getPersistedCaseIssueCount } from "@/lib/case-issues";
+import { refreshEWayBillValidityIssues } from "@/server/eway-bill-validity";
 type Context = { params: Promise<{ id: string }> };
 
 function record(value: unknown): Record<string, unknown> {
@@ -49,6 +50,7 @@ export async function GET(request: Request, context: Context) {
   return withUser(request, async (db, user) => {
     const { id } = await context.params;
     const row = await ownedCase(db, user, id);
+    await refreshEWayBillValidityIssues(db, row);
     const [files, documents, mismatches] = await Promise.all([
       db
         .from("packet_case_files")
@@ -203,6 +205,10 @@ export async function GET(request: Request, context: Context) {
 async function mutate(request: Request, context: Context, action: string) {
   return withUser(request, async (db, user) => {
     const { id } = await context.params;
+    if (action === "accept") {
+      const row = await ownedCase(db, user, id);
+      await refreshEWayBillValidityIssues(db, row);
+    }
     const { data, error } = await db.rpc("decide_case", {
       p_user: user,
       p_case: uuid(id),

@@ -4,6 +4,7 @@ import { EXTRACTION_VERIFICATION_FIELD } from "@/lib/extraction-verification";
 import { INVOICE_NUMBER_REQUIRED_FIELD } from "@/lib/invoice-approval";
 import { MISSING_DOCUMENTS_FIELD } from "@/lib/missing-documents";
 import { WEIGHT_CALCULATION_FIELD } from "@/lib/weight-calculation";
+import { EWAY_BILL_VALIDITY_FIELD } from "@/lib/eway-bill-validity";
 
 export function isAlwaysVisibleReviewIssue(fieldName: string) {
   return (
@@ -12,6 +13,7 @@ export function isAlwaysVisibleReviewIssue(fieldName: string) {
     fieldName === EXTRACTION_VERIFICATION_FIELD ||
     fieldName === INVOICE_NUMBER_REQUIRED_FIELD ||
     fieldName === MISSING_DOCUMENTS_FIELD ||
-    fieldName === WEIGHT_CALCULATION_FIELD
+    fieldName === WEIGHT_CALCULATION_FIELD ||
+    fieldName === EWAY_BILL_VALIDITY_FIELD
   );
 }

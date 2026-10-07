@@ -54,6 +54,7 @@ import { isLineItemMismatchField } from "@/lib/line-items";
 import { DUPLICATE_INVOICE_FIELD } from "@/lib/duplicate-invoice";
 import { MISSING_DOCUMENTS_FIELD } from "@/lib/missing-documents";
 import { WEIGHT_CALCULATION_FIELD } from "@/lib/weight-calculation";
+import { EWAY_BILL_VALIDITY_FIELD } from "@/lib/eway-bill-validity";
 import {
   createDraftCase,
   fetchCaseDetail,
@@ -85,6 +86,9 @@ function getReviewQuestion(
   mismatch: MismatchRecord,
   evidence: MismatchEvidence[],
 ) {
+  if (mismatch.fieldName === EWAY_BILL_VALIDITY_FIELD) {
+    return "Can this e-way bill validity warning be accepted?";
+  }
   if (mismatch.fieldName === INVOICE_NUMBER_REQUIRED_FIELD) {
     return "Does the buyer-facing invoice show its invoice number?";
   }
@@ -211,6 +215,8 @@ function getRelatedFacts(
 }
 
 function getIssueGroup(mismatch: MismatchRecord) {
+  if (mismatch.fieldName === EWAY_BILL_VALIDITY_FIELD)
+    return "Vehicle & logistics";
   if (isVerifiedCheck(mismatch)) return "Verified packet data";
   if (mismatch.fieldName === DOCUMENT_READABILITY_FIELD)
     return "Document quality";

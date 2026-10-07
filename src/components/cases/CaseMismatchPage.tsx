@@ -26,6 +26,7 @@ import { isLineItemMismatchField } from "@/lib/line-items";
 import { MISSING_DOCUMENTS_FIELD } from "@/lib/missing-documents";
 import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import { WEIGHT_CALCULATION_FIELD } from "@/lib/weight-calculation";
+import { EWAY_BILL_VALIDITY_FIELD } from "@/lib/eway-bill-validity";
 import {
   ArrowLeft,
   Check,
@@ -60,6 +61,7 @@ const LINE_ITEM_FIELD_LABELS: Record<string, string> = {
 };
 export const TERMS_COMPLIANCE_FIELD = "termsAndConditions";
 export function getFieldLabel(fieldName: string) {
+  if (fieldName === EWAY_BILL_VALIDITY_FIELD) return "E-Way Bill validity";
   if (fieldName === INVOICE_NUMBER_REQUIRED_FIELD) {
     return "Invoice number required";
   }
@@ -122,6 +124,8 @@ function displayValue(value: unknown) {
 }
 function getIssueDescription(fieldName: string) {
   switch (fieldName) {
+    case EWAY_BILL_VALIDITY_FIELD:
+      return "The e-way bill has expired or its validity date needs verification against today's date in India.";
     case DOCUMENT_READABILITY_FIELD:
       return "This page is unreadable, so it cannot be trusted for approval.";
     case EXTRACTION_VERIFICATION_FIELD:
@@ -400,6 +404,7 @@ function getGroupKeyForMismatch(
   if (isLineItemMismatchField(fieldName)) return LINE_ITEM_GROUP_KEY;
   if (fieldName === TERMS_COMPLIANCE_FIELD) return TERMS_GROUP_KEY;
   if (fieldName === WEIGHT_CALCULATION_FIELD) return "weight_quantity";
+  if (fieldName === EWAY_BILL_VALIDITY_FIELD) return "vehicle_logistics";
   const group = comparisonGroups.find(
     (entry) => entry.enabled !== false && entry.fields.includes(fieldName),
   );
@@ -621,6 +626,12 @@ function getReviewerHint(
   mismatch: MismatchRecord,
   evidence?: MismatchEvidence[],
 ) {
+  if (mismatch.fieldName === EWAY_BILL_VALIDITY_FIELD) {
+    return (
+      mismatch.analysis ??
+      "Review the e-way bill validity date, then accept the warning or reject it as disputed."
+    );
+  }
   if (mismatch.fieldName === UNRELATED_DOCUMENT_FIELD) {
     return "This document conflicts with the rest of the packet across multiple identifying fields. Remove or replace it, then run the analysis again.";
   }
