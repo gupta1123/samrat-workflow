@@ -11,6 +11,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { AppShell } from "@/components/dashboard/AppShell";
+import { getFriendlyAnalysisError } from "@/lib/analysis-progress";
 import { Button } from "@/components/ui/button";
 import { AnalysisOptionsDialog } from "./AnalysisOptionsDialog";
 import { AnalysisModeActions } from "./AnalysisModeActions";
@@ -158,9 +159,9 @@ export function WorkspacePage() {
       // Keep actions locked until navigation; a second click must not enqueue another job.
     } catch (failure) {
       setError(
-        failure instanceof Error
-          ? failure.message
-          : "Could not start analysis. Your case is saved; please retry.",
+        getFriendlyAnalysisError(
+          failure instanceof Error ? failure.message : null,
+        ),
       );
       busyRef.current = false;
       setBusy("");

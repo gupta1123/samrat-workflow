@@ -143,6 +143,90 @@ function packet() {
     notes: [],
   };
 }
+test("oversized packet reviews read all pages in bounded batches and resume completed evidence", async (t) => {
+  const previousLimit = process.env.PACKET_REQUEST_MAX_BYTES;
+  process.env.PACKET_REQUEST_MAX_BYTES = "4000000";
+  t.after(() => {
+    if (previousLimit === undefined)
+      delete process.env.PACKET_REQUEST_MAX_BYTES;
+    else process.env.PACKET_REQUEST_MAX_BYTES = previousLimit;
+  });
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const sourcePayloads = await Promise.all(documents.map(compact));
+  const largePages = pages.map((page, index) => ({
+    ...page,
+    image: `data:image/png;base64,${String(index).repeat(1_600_000)}`,
+  }));
+  const store = memoryStore();
+  let sources = 0;
+  let evidenceCalls = 0;
+  let failPacket = true;
+  const seenPages: string[] = [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      assert.ok(Buffer.byteLength(String(init?.body)) <= 4_000_000);
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      if (name === "packet_page_evidence") {
+        evidenceCalls++;
+        const text = body.messages[1].content[0].text;
+        const pointer = text.slice("Page pointer ".length);
+        seenPages.push(pointer);
+        return response({
+          pages: [
+            {
+              pointer,
+              evidence: `Original ${pointer}: Supplier Aster Metals. PO ORDER-27. Invoice number blank.`,
+              readable: true,
+            },
+          ],
+        });
+      }
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        sources++;
+        return response(sourcePayloads[context.sourcePageNumbers[0] - 1]);
+      }
+      assert.equal(
+        body.messages
+          .flatMap((message: { content: unknown }) =>
+            Array.isArray(message.content) ? message.content : [],
+          )
+          .filter((part: { type: string }) => part.type === "image_url").length,
+        0,
+      );
+      if (name === "packet_reconciliation")
+        return response(packet(), failPacket ? "length" : "stop");
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No independent discrepancy.",
+          }),
+        ),
+      });
+    },
+  );
+  const run = () =>
+    reviewExtractedDocumentsInStages(documents, {
+      sourcePages: largePages,
+      checkpoints: store,
+    });
+  const deferred = await run();
+  assert.equal(deferred.review.verdict, "needs_review");
+  failPacket = false;
+  await run();
+  assert.equal(sources, 2);
+  assert.equal(evidenceCalls, 2);
+  assert.deepEqual(seenPages.sort(), ["p1", "p2"]);
+});
+
 function memoryStore() {
   const values = new Map<string, string>();
   return {

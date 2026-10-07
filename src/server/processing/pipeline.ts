@@ -10652,12 +10652,8 @@ async function compactImageForAuthoritativeReview(
 
   const input = Buffer.from(image.slice(separatorIndex + 1), "base64");
   try {
-    const metadata = await sharp(input, { failOn: "none" }).metadata();
-    const longestEdge = Math.max(metadata.width ?? 0, metadata.height ?? 0);
-    if (longestEdge > 0 && longestEdge <= REVIEW_IMAGE_MAX_DIMENSION) {
-      return image;
-    }
-
+    // Already-small dimensions do not imply small bytes (for example a PNG
+    // scan). Normalize every review image, without enlarging or dropping it.
     const output = await sharp(input, { failOn: "none" })
       .rotate()
       .resize({

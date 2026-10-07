@@ -1,4 +1,13 @@
 import type { CaseDoc, Mismatch } from "../../types/pipeline";
+import { RequestSizeError, requestByteLimit } from "./request-budget";
+import {
+  packetEvidenceBatches,
+  pageEvidenceMessages,
+  validatePageEvidence,
+  reviewRequestBody,
+  PAGE_EVIDENCE_SCHEMA,
+  type PageEvidence,
+} from "./packet-evidence";
 import { FIELD_DEFINITIONS } from "../document-schema";
 import { buildDocumentReadabilityMismatches } from "../document-readability";
 import { EXTRACTION_VERIFICATION_FIELD } from "../../lib/extraction-verification";
@@ -181,6 +190,15 @@ async function completeReviewRequest<T>(options: {
         },
       });
     } catch (error) {
+      if (error instanceof RequestSizeError) {
+        throw new ReviewContractError(
+          "This review exceeds safe request capacity and needs a smaller source scope.",
+          {
+            operation: options.operation,
+            defect: error.message,
+          },
+        );
+      }
       const outputLimited = error instanceof OpenRouterOutputLimitError;
       const transientResponse = isRetryableOpenRouterError(error);
       if (!outputLimited && !transientResponse) throw error;
@@ -954,6 +972,106 @@ export async function reviewExtractedDocumentsInStages(
   let packetRaw: Record<string, unknown> | undefined;
   let packetContext: Record<string, unknown> = {};
   let aliases = packetPointerAliases(currentDocuments);
+  let pageEvidence: Promise<PageEvidence[]> | undefined;
+  const boundedPacketMessages = async (
+    messages: OpenRouterMessage[],
+    schema: Record<string, unknown>,
+    maxTokens: number,
+  ): Promise<OpenRouterMessage[]> => {
+    // Reserve space for repair instructions/rejected output on the second attempt.
+    if (
+      Buffer.byteLength(
+        reviewRequestBody(messages, schema, maxTokens),
+        "utf8",
+      ) <=
+      requestByteLimit() - 1_000_000
+    )
+      return messages;
+    pageEvidence ??= (async () => {
+      await report(94, "Checking page evidence in smaller batches");
+      let batches: ReturnType<typeof packetEvidenceBatches>;
+      try {
+        batches = packetEvidenceBatches(options.sourcePages);
+      } catch (error) {
+        if (!(error instanceof RequestSizeError)) throw error;
+        throw new ReviewContractError(
+          "A source page exceeds safe evidence capacity; source review is required.",
+        );
+      }
+      const results = await mapReviewTasks(
+        batches,
+        concurrency,
+        async (batch) => {
+          const response = await cachedReviewStage({
+            key: reviewCheckpointKey("packet", {
+              kind: "page-evidence",
+              sources: sourceFingerprint(batch),
+              pointers: batch.map((page) => page.pointer),
+              settings: modelSettings(),
+            }),
+            store: options.checkpoints,
+            validate: (raw) => validatePageEvidence(raw, batch),
+            run: () =>
+              completeReviewRequest({
+                operation: "packet-page-evidence",
+                schema: PAGE_EVIDENCE_SCHEMA,
+                messages: pageEvidenceMessages(batch),
+                maxTokens: 16384,
+                outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+                validate: (raw) => validatePageEvidence(raw, batch),
+              }),
+          });
+          return response.result;
+        },
+      );
+      return results.flat();
+    })();
+    const ledger = await pageEvidence;
+    if (ledger.some((entry) => !entry.readable))
+      throw new ReviewContractError(
+        "Page evidence is unreadable; source review is required.",
+      );
+    let imageIndex = 0;
+    const bounded = messages.map((message): OpenRouterMessage => ({
+      ...message,
+      content:
+        typeof message.content === "string"
+          ? message.content
+          : message.content.map((part) => {
+              if (part.type !== "image_url") return part;
+              const evidence = ledger[imageIndex];
+              if (
+                !evidence ||
+                options.sourcePages[imageIndex]?.image !== part.image_url.url
+              )
+                throw new ReviewContractError(
+                  "Source image has no completed evidence batch.",
+                );
+              imageIndex++;
+              return {
+                type: "text",
+                text: `Source-page evidence (read from original pixels in a completed batch): ${evidence.evidence}`,
+              };
+            }),
+    }));
+    if (imageIndex !== options.sourcePages.length)
+      throw new ReviewContractError(
+        "Packet evidence does not cover all original pages.",
+      );
+    bounded.push({
+      role: "user",
+      content:
+        "Original pages were read in byte-bounded batches. Use their page-labelled evidence with the independently verified source audits and fields for the whole-packet comparison. Do not treat omitted evidence as absence. If a source finding is uncertain, request its source recheck; never invent a quote or accept an unverified value.",
+    });
+    if (
+      Buffer.byteLength(reviewRequestBody(bounded, schema, maxTokens), "utf8") >
+      requestByteLimit() - 1_000_000
+    )
+      throw new ReviewContractError(
+        "Verified packet context exceeds safe capacity; manual source review is required.",
+      );
+    return bounded;
+  };
   let packetAttempts = 0;
   let discardedPacketIssueCount = 0;
   const parsePacket = (raw: string) => {
@@ -1044,9 +1162,7 @@ export async function reviewExtractedDocumentsInStages(
           lineItems: document.lineItems ?? [],
         })),
         sourceAudits: sourceReviews.map((result) => ({
-          docId: result.document.id,
-          status: result.audit.status,
-          reason: result.audit.reason,
+          ...result.audit,
         })),
         pageQuality: sourceReviews.flatMap((result) => result.pageQuality),
         candidateMismatches: candidates.map((candidate, index) => ({
@@ -1095,7 +1211,11 @@ export async function reviewExtractedDocumentsInStages(
           validate: parsePacket,
           outputLimitFallbackModel: getExtractionReviewFallbackModel(),
           schema: packetTaskSchema(currentDocuments, options.sourcePages),
-          messages,
+          messages: await boundedPacketMessages(
+            messages,
+            packetTaskSchema(currentDocuments, options.sourcePages),
+            8192,
+          ),
           maxTokens: configuredPositive(
             "PACKET_RECONCILIATION_MAX_OUTPUT_TOKENS",
             8192,
@@ -1267,35 +1387,39 @@ export async function reviewExtractedDocumentsInStages(
               6144,
               32768,
             ),
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are the same Pro packet reviewer deciding ONLY requestedCandidates. Return exactly one mismatchDecision per requested candidate, using its LOCAL mismatchId. " +
-                  "The all-packet candidate list is context only; do not copy its IDs into this batch's responses. Check the entire source-audited packet and original pages. " +
-                  "Confirm only printed, independent business discrepancies; dismiss OCR noise, equivalent units, formatting and derivative numerical symptoms. " +
-                  "Use seller-chain primary/context roles. A quantity/vehicle/weight conflict is not a tax mismatch when each source's tax arithmetic is internally correct. " +
-                  "Do not attribute unproven business errors to unreadable pages; those already have blocking source warnings. " +
-                  "primary true means root discrepancy. outlierDocumentIds may include only documents cited by this candidate, or empty when direction is unproved. " +
-                  "Keep reasons brief. Never invent a discrepancy to justify a machine-generated candidate.",
-              },
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: JSON.stringify(batchContext) },
-                  ...options.sourcePages.flatMap((page) => [
-                    {
-                      type: "text" as const,
-                      text: `Original file ${aliases.fileToAlias.get(page.sourceFileName)}, page ${page.pageNumber}`,
-                    },
-                    {
-                      type: "image_url" as const,
-                      image_url: { url: page.image },
-                    },
-                  ]),
-                ],
-              },
-            ],
+            messages: await boundedPacketMessages(
+              [
+                {
+                  role: "system",
+                  content:
+                    "You are the same Pro packet reviewer deciding ONLY requestedCandidates. Return exactly one mismatchDecision per requested candidate, using its LOCAL mismatchId. " +
+                    "The all-packet candidate list is context only; do not copy its IDs into this batch's responses. Check the entire source-audited packet and original pages. " +
+                    "Confirm only printed, independent business discrepancies; dismiss OCR noise, equivalent units, formatting and derivative numerical symptoms. " +
+                    "Use seller-chain primary/context roles. A quantity/vehicle/weight conflict is not a tax mismatch when each source's tax arithmetic is internally correct. " +
+                    "Do not attribute unproven business errors to unreadable pages; those already have blocking source warnings. " +
+                    "primary true means root discrepancy. outlierDocumentIds may include only documents cited by this candidate, or empty when direction is unproved. " +
+                    "Keep reasons brief. Never invent a discrepancy to justify a machine-generated candidate.",
+                },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: JSON.stringify(batchContext) },
+                    ...options.sourcePages.flatMap((page) => [
+                      {
+                        type: "text" as const,
+                        text: `Original file ${aliases.fileToAlias.get(page.sourceFileName)}, page ${page.pageNumber}`,
+                      },
+                      {
+                        type: "image_url" as const,
+                        image_url: { url: page.image },
+                      },
+                    ]),
+                  ],
+                },
+              ],
+              schema,
+              6144,
+            ),
           });
           decisionAttempts += result.attempts;
           return result;
@@ -1401,34 +1525,38 @@ export async function reviewExtractedDocumentsInStages(
             6144,
             32768,
           ),
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are the final Pro root-cause reviewer. Review every confirmed candidate together against the original pages and return only the required JSON. " +
-                "Account for every candidate exactly once: retain it as an independent field_discrepancy, combine symptoms caused by the same unrelated document into one unrelated_document issue, or dismiss it with a source-based reason. " +
-                "Group candidates only when the same identified outlier document conflicts with corroborating packet documents. Choose the business cause as primary; do not present its field symptoms as separate issues. " +
-                "Document roles are semantic: a manufacturer, processor, transporter, seller and buyer can legitimately have different names. Dismiss party-name candidates that compare different roles or harmless legal-name variants. " +
-                "Dismiss OCR uncertainty, formatting differences and derivative symptoms. Never infer identity from filename, identifier format, spelling similarity, regex patterns or a customer-specific name. " +
-                "For unrelated_document, cite the exact outlier document IDs and include only candidates that contain both that outlier and corroborating evidence. Keep titles and reasons brief and client-readable.",
-            },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: JSON.stringify(rootContext) },
-                ...options.sourcePages.flatMap((page) => [
-                  {
-                    type: "text" as const,
-                    text: `Original file ${aliases.fileToAlias.get(page.sourceFileName)}, page ${page.pageNumber}`,
-                  },
-                  {
-                    type: "image_url" as const,
-                    image_url: { url: page.image },
-                  },
-                ]),
-              ],
-            },
-          ],
+          messages: await boundedPacketMessages(
+            [
+              {
+                role: "system",
+                content:
+                  "You are the final Pro root-cause reviewer. Review every confirmed candidate together against the original pages and return only the required JSON. " +
+                  "Account for every candidate exactly once: retain it as an independent field_discrepancy, combine symptoms caused by the same unrelated document into one unrelated_document issue, or dismiss it with a source-based reason. " +
+                  "Group candidates only when the same identified outlier document conflicts with corroborating packet documents. Choose the business cause as primary; do not present its field symptoms as separate issues. " +
+                  "Document roles are semantic: a manufacturer, processor, transporter, seller and buyer can legitimately have different names. Dismiss party-name candidates that compare different roles or harmless legal-name variants. " +
+                  "Dismiss OCR uncertainty, formatting differences and derivative symptoms. Never infer identity from filename, identifier format, spelling similarity, regex patterns or a customer-specific name. " +
+                  "For unrelated_document, cite the exact outlier document IDs and include only candidates that contain both that outlier and corroborating evidence. Keep titles and reasons brief and client-readable.",
+              },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: JSON.stringify(rootContext) },
+                  ...options.sourcePages.flatMap((page) => [
+                    {
+                      type: "text" as const,
+                      text: `Original file ${aliases.fileToAlias.get(page.sourceFileName)}, page ${page.pageNumber}`,
+                    },
+                    {
+                      type: "image_url" as const,
+                      image_url: { url: page.image },
+                    },
+                  ]),
+                ],
+              },
+            ],
+            ROOT_CAUSE_REVIEW_SCHEMA,
+            6144,
+          ),
         });
         rootCauseAttempts += reviewed.attempts;
         return reviewed;

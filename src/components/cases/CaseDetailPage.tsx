@@ -1053,7 +1053,7 @@ function getFriendlyAnalysisStage(
     return "Validating results...";
   }
   if (normalized.includes("review")) {
-    return "AI reviewer checking evidence...";
+    return "Checking document evidence...";
   }
   if (normalized.includes("final") || normalized.includes("complete")) {
     return "Finalizing results...";
@@ -1521,9 +1521,9 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
         setAnalysisStatus("error");
         setAnalysisNotice(null);
         setAnalysisError(
-          statusError instanceof Error
-            ? statusError.message
-            : "Failed to load analysis progress.",
+          getFriendlyAnalysisError(
+            statusError instanceof Error ? statusError.message : null,
+          ),
         );
       }
     };
@@ -2145,9 +2145,9 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
     } catch (analysisFailure) {
       setAnalysisNotice(null);
       setAnalysisError(
-        analysisFailure instanceof Error
-          ? analysisFailure.message
-          : "Failed to analyze this case.",
+        getFriendlyAnalysisError(
+          analysisFailure instanceof Error ? analysisFailure.message : null,
+        ),
       );
       setAnalysisStatus("error");
     } finally {

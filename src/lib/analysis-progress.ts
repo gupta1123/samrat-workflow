@@ -64,16 +64,8 @@ export function getAnalysisProgressNotice(
 }
 
 export function getFriendlyAnalysisError(error: string | null | undefined) {
-  if (!error) return "Case analysis failed.";
-  if (
-    /did not return a json object|authoritative packet review did not return|independent extraction validation/i.test(
-      error,
-    )
-  )
-    return "The final AI review returned an incomplete response. Samrat did not save uncertain results. Please retry the analysis.";
-  if (/timed out|time limit|stopped reporting activity/i.test(error))
-    return "Analysis took too long and was stopped safely. Please retry; if it happens again, use fewer pages.";
-  if (/quota|credits|billing|insufficient/i.test(error))
-    return "The AI provider has no available credits or quota. Recharge or update the provider account, then retry the analysis.";
-  return error;
+  // Raw diagnostics belong in server logs, not the customer-facing page.
+  // Never guess a public error category from provider-specific message text.
+  void error;
+  return "We couldn't finish checking your documents. Please retry the analysis. If this happens again, contact support with your case ID.";
 }

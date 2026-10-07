@@ -1,4 +1,5 @@
 import { remainingTimeout } from "./deadline";
+import { assertRequestFits } from "./request-budget";
 
 const OPENROUTER_API_KEY = (process.env.OPENROUTER_API_KEY || "").trim();
 const OPENROUTER_MODEL =
@@ -50,6 +51,44 @@ export type OpenRouterMessage = {
       >;
 };
 
+export function serializeOpenRouterRequest(
+  messages: OpenRouterMessage[],
+  options: {
+    model?: string;
+    reasoning?: OpenRouterReasoningOptions;
+    maxTokens?: number;
+    responseSchema?: OpenRouterResponseSchema;
+    jsonMode?: boolean;
+    expectJson?: boolean;
+  } = {},
+) {
+  const maxTokens = normalizeMaxTokens(
+    options.maxTokens ?? OPENROUTER_MAX_OUTPUT_TOKENS,
+  );
+  return JSON.stringify({
+    model: options.model || OPENROUTER_MODEL,
+    messages,
+    temperature: 0,
+    ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+    ...(options.responseSchema
+      ? {
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: options.responseSchema.name,
+              strict: options.responseSchema.strict ?? false,
+              schema: options.responseSchema.schema,
+            },
+          },
+          provider: { require_parameters: true },
+        }
+      : options.jsonMode || options.expectJson
+        ? { response_format: { type: "json_object" } }
+        : {}),
+    ...(maxTokens ? { max_tokens: maxTokens } : {}),
+  });
+}
+
 type OpenRouterContentPart = {
   text?: string;
 };
@@ -94,7 +133,8 @@ function isRetryableStatus(status: number) {
 export function isRetryableOpenRouterError(error: unknown) {
   return (
     error instanceof OpenRouterRequestError ||
-    (error instanceof OpenRouterResponseError && isRetryableStatus(error.status))
+    (error instanceof OpenRouterResponseError &&
+      isRetryableStatus(error.status))
   );
 }
 
@@ -220,6 +260,18 @@ export async function callOpenRouter(
       : MAX_RETRIES;
   let attempt = 0;
   let lastError = "OpenRouter request failed";
+  const requestBody = serializeOpenRouterRequest(messages, {
+    ...options,
+    model,
+    maxTokens,
+  });
+  const requestBytes = assertRequestFits(requestBody);
+  logOpenRouterTiming({
+    operation: options?.operation ?? "ai-request",
+    event: "request_preflight",
+    model,
+    requestBytes,
+  });
 
   while (attempt <= maxRetries) {
     const requestStartedAt = Date.now();
@@ -240,31 +292,7 @@ export async function callOpenRouter(
             "HTTP-Referer": process.env.APP_BASE_URL || "http://localhost:3001",
             "X-Title": "Samrat Group Case Review",
           },
-          body: JSON.stringify({
-            model,
-            messages,
-            temperature: 0,
-            ...(options?.reasoning ? { reasoning: options.reasoning } : {}),
-            ...(options?.responseSchema
-              ? {
-                  response_format: {
-                    type: "json_schema",
-                    json_schema: {
-                      name: options.responseSchema.name,
-                      strict: options.responseSchema.strict ?? false,
-                      schema: options.responseSchema.schema,
-                    },
-                  },
-                  // Do not silently route a structured review through an
-                  // endpoint that ignores its schema. That would recreate the
-                  // expensive format-retry path this contract eliminates.
-                  provider: { require_parameters: true },
-                }
-              : options?.jsonMode || options?.expectJson
-                ? { response_format: { type: "json_object" } }
-                : {}),
-            ...(maxTokens ? { max_tokens: maxTokens } : {}),
-          }),
+          body: requestBody,
         },
       );
       const payload = await response.json().catch((error) => {

@@ -49,21 +49,21 @@ test("distinguishes an active final review from a stalled worker", () => {
   assert.match(stalled!, /retry automatically/);
 });
 
-test("turns malformed-review and provider-credit failures into useful guidance", () => {
-  assert.match(
-    getFriendlyAnalysisError(
-      "Required extraction review failed after 2 attempts. The extraction reviewer did not return a JSON object.",
-    ),
-    /incomplete response.*did not save uncertain results.*retry/i,
-  );
-  assert.match(
-    getFriendlyAnalysisError(
-      "Independent extraction validation failed after 2 attempts.",
-    ),
-    /incomplete response.*did not save uncertain results.*retry/i,
-  );
-  assert.match(
-    getFriendlyAnalysisError("insufficient credits"),
-    /Recharge or update the provider account/,
-  );
+test("analysis errors never expose raw provider or internal diagnostics", () => {
+  const messages = [
+    "Required extraction review failed after 2 attempts. The extraction reviewer did not return a JSON object.",
+    "Independent extraction validation failed after 2 attempts.",
+    "insufficient credits",
+    "Request body exceeds the provider maximum size: 20331542 bytes exceeds the 20000000 byte limit for Google AI Studio",
+    "OpenRouter google/gemini-pro-latest reached 32768 tokens",
+    "Unrecognised provider error with private diagnostics",
+    null,
+    undefined,
+  ];
+  for (const error of messages) {
+    assert.equal(
+      getFriendlyAnalysisError(error),
+      "We couldn't finish checking your documents. Please retry the analysis. If this happens again, contact support with your case ID.",
+    );
+  }
 });
