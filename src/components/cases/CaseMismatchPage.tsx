@@ -3,6 +3,7 @@ import { AppShell } from "@/components/dashboard/AppShell";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SapMatchPanel } from "@/components/cases/SapMatchPanel";
+import { EWayBillValidityCard } from "@/components/cases/EWayBillValidityCard";
 import {
   fetchCaseDetail,
   updateCaseMismatchDecision,
@@ -1106,6 +1107,8 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
     : false;
   const activeIsUnrelatedDocument =
     activeMismatch?.fieldName === UNRELATED_DOCUMENT_FIELD;
+  const activeIsEWayValidity =
+    activeMismatch?.fieldName === EWAY_BILL_VALIDITY_FIELD;
   const activeUnrelatedFields = useMemo(
     () =>
       uniqueStrings(
@@ -1633,7 +1636,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                             </span>
                           </div>
 
-                          {activeIssueHint ? (
+                          {activeIssueHint && !activeIsEWayValidity ? (
                             <div className="mt-3 border-l-2 border-[#cdbfae] py-0.5 pl-3 text-xs font-normal leading-5 text-[#5b4b3d]">
                               {activeIssueHint}
                             </div>
@@ -1718,88 +1721,104 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                           </div>
                         ) : activeIsSingleDocumentIssue ? (
                           <div className="space-y-4 py-4">
-                            <div className="border-y border-[#f2c7c4] bg-[#fbf0ef] px-3 py-3">
-                              <div className="text-xs font-semibold text-[#8c1d18]">
-                                {activeTaxValidationIssue
-                                  ? "Tax check failed"
-                                  : "Issue found"}
-                              </div>
-                              <div className="mt-1.5 text-[13px] font-medium leading-5 text-[#8c1d18]">
-                                {activeTaxValidationIssue
-                                  ? activeTaxValidationIssue.summary
-                                  : formatMismatchValue(
-                                      activeMismatch.fieldName,
-                                      activeEvidence[0]?.value,
-                                      getEvidenceDocumentRole(
-                                        activeEvidence[0]?.document,
-                                      ),
+                            {activeIsEWayValidity ? (
+                              <EWayBillValidityCard
+                                printedValidity={String(
+                                  activeEvidence[0]?.value ?? "",
+                                )}
+                                billNumber={
+                                  typeof activeEvidence[0]?.document
+                                    ?.extractedFields.eWayBillNumber ===
+                                  "string"
+                                    ? activeEvidence[0].document.extractedFields
+                                        .eWayBillNumber
+                                    : undefined
+                                }
+                              />
+                            ) : (
+                              <div className="border-y border-[#f2c7c4] bg-[#fbf0ef] px-3 py-3">
+                                <div className="text-xs font-semibold text-[#8c1d18]">
+                                  {activeTaxValidationIssue
+                                    ? "Tax check failed"
+                                    : "Issue found"}
+                                </div>
+                                <div className="mt-1.5 text-[13px] font-medium leading-5 text-[#8c1d18]">
+                                  {activeTaxValidationIssue
+                                    ? activeTaxValidationIssue.summary
+                                    : formatMismatchValue(
+                                        activeMismatch.fieldName,
+                                        activeEvidence[0]?.value,
+                                        getEvidenceDocumentRole(
+                                          activeEvidence[0]?.document,
+                                        ),
+                                      )}
+                                </div>
+                                {activeTaxValidationIssue ? (
+                                  <>
+                                    <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                                      <div className="rounded-md bg-white px-2.5 py-2">
+                                        <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
+                                          Taxable
+                                        </div>
+                                        <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
+                                          {formatTaxAmount(
+                                            activeTaxValidationIssue.taxableAmount,
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="rounded-md bg-white px-2.5 py-2">
+                                        <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
+                                          Expected tax
+                                        </div>
+                                        <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
+                                          {formatTaxAmount(
+                                            activeTaxValidationIssue.expectedTax,
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="rounded-md bg-white px-2.5 py-2">
+                                        <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
+                                          Extracted tax
+                                        </div>
+                                        <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
+                                          {formatTaxAmount(
+                                            activeTaxValidationIssue.actualTax,
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="rounded-md bg-white px-2.5 py-2">
+                                        <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
+                                          Difference
+                                        </div>
+                                        <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
+                                          {activeTaxValidationIssue.difference ===
+                                          null
+                                            ? "-"
+                                            : `${formatTaxAmount(Math.abs(activeTaxValidationIssue.difference))} ${activeTaxValidationIssue.difference < 0 ? "short" : "extra"}`}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {(activeTaxValidationIssue.rule ||
+                                      activeTaxValidationIssue.condition) && (
+                                      <div className="mt-2 rounded-md bg-white px-2.5 py-1.5 text-[11px] font-normal leading-4 text-[#5b4b3d]">
+                                        {activeTaxValidationIssue.condition ? (
+                                          <span>
+                                            {activeTaxValidationIssue.condition}
+                                            .{" "}
+                                          </span>
+                                        ) : null}
+                                        {activeTaxValidationIssue.rule ? (
+                                          <span>
+                                            Expected rule:{" "}
+                                            {activeTaxValidationIssue.rule}.
+                                          </span>
+                                        ) : null}
+                                      </div>
                                     )}
+                                  </>
+                                ) : null}
                               </div>
-                              {activeTaxValidationIssue ? (
-                                <>
-                                  <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                                    <div className="rounded-md bg-white px-2.5 py-2">
-                                      <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
-                                        Taxable
-                                      </div>
-                                      <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
-                                        {formatTaxAmount(
-                                          activeTaxValidationIssue.taxableAmount,
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="rounded-md bg-white px-2.5 py-2">
-                                      <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
-                                        Expected tax
-                                      </div>
-                                      <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
-                                        {formatTaxAmount(
-                                          activeTaxValidationIssue.expectedTax,
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="rounded-md bg-white px-2.5 py-2">
-                                      <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
-                                        Extracted tax
-                                      </div>
-                                      <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
-                                        {formatTaxAmount(
-                                          activeTaxValidationIssue.actualTax,
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="rounded-md bg-white px-2.5 py-2">
-                                      <div className="text-[10px] font-semibold tracking-wide text-[#8a7f72]">
-                                        Difference
-                                      </div>
-                                      <div className="mt-0.5 text-[13px] font-medium text-[#111827]">
-                                        {activeTaxValidationIssue.difference ===
-                                        null
-                                          ? "-"
-                                          : `${formatTaxAmount(Math.abs(activeTaxValidationIssue.difference))} ${activeTaxValidationIssue.difference < 0 ? "short" : "extra"}`}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  {(activeTaxValidationIssue.rule ||
-                                    activeTaxValidationIssue.condition) && (
-                                    <div className="mt-2 rounded-md bg-white px-2.5 py-1.5 text-[11px] font-normal leading-4 text-[#5b4b3d]">
-                                      {activeTaxValidationIssue.condition ? (
-                                        <span>
-                                          {activeTaxValidationIssue.condition}
-                                          .{" "}
-                                        </span>
-                                      ) : null}
-                                      {activeTaxValidationIssue.rule ? (
-                                        <span>
-                                          Expected rule:{" "}
-                                          {activeTaxValidationIssue.rule}.
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                  )}
-                                </>
-                              ) : null}
-                            </div>
+                            )}
 
                             <div className="grid gap-2 border-y border-[#e0d8cc] px-3 py-2 text-[13px] sm:grid-cols-2">
                               <div className="min-w-0">
@@ -1829,7 +1848,8 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               </div>
                             </div>
 
-                            {activeSingleIssueRows.length > 0 ? (
+                            {!activeIsEWayValidity &&
+                            activeSingleIssueRows.length > 0 ? (
                               <div className="border-y border-[#e0d8cc]">
                                 <div className="border-b border-[#ece6dc] bg-[#fbfaf8] px-3 py-2 text-xs font-semibold text-[#3d3530]">
                                   Useful context

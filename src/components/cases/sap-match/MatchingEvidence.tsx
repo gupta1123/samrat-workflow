@@ -235,7 +235,7 @@ export function ItemMatchingEvidence({
   const explanation = !line.itemCode
     ? "No SAP item has been linked yet. Any suggested item needs your confirmation before it can be used."
     : identification?.method === "exact-code"
-      ? "The item code read from the invoice matches a code in SAP Item Master after ignoring formatting. The SAP name comes from Item Master; the invoice description is shown for comparison."
+      ? null
       : identification?.method === "saved-mapping"
         ? identification.scope === "supplier"
           ? "A saved link for this supplier connects the invoice item to this SAP item. The SAP name comes from Item Master."
@@ -297,7 +297,9 @@ export function ItemMatchingEvidence({
           </tr>
         </tbody>
       </table>
-      <p className="mt-2 text-[#6b5d50]">{explanation}</p>
+      {explanation ? (
+        <p className="mt-2 text-[#6b5d50]">{explanation}</p>
+      ) : null}
       {invoice.source ? (
         <p className="mt-1 text-[10px] text-[#6b5d50]">
           Invoice source:{" "}
