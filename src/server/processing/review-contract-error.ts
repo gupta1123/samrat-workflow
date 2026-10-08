@@ -1,10 +1,11 @@
 export type SourceReviewValidationSection =
-  "references" | "field-changes" | "source-audit";
+  "references" | "field-changes" | "source-audit" | "review-issues";
 
 export class SourceReviewValidationError extends Error {
   constructor(
     readonly section: SourceReviewValidationSection,
     message: string,
+    readonly rejectedResponse?: string,
   ) {
     super(message);
     this.name = "SourceReviewValidationError";

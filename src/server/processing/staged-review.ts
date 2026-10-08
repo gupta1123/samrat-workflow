@@ -39,6 +39,7 @@ import {
   buildSourceAuditRepairSchema,
   buildSourceAuditSchema,
   buildSourceFieldChangesRepairSchema,
+  buildSourceIssuesRepairSchema,
   buildSourceReferenceRepairSchema,
   ownDocumentPages,
   parseCompactSourceAudit,
@@ -225,6 +226,11 @@ async function completeReviewRequest<T>(options: {
       return { raw, result: options.validate(raw), attempts: attempt };
     } catch (error) {
       defect = error instanceof Error ? error.message : String(error);
+      if (
+        error instanceof SourceReviewValidationError &&
+        error.rejectedResponse
+      )
+        rejected = error.rejectedResponse;
       validationSection =
         error instanceof SourceReviewValidationError
           ? error.section
@@ -470,6 +476,19 @@ async function reviewOneSource(options: {
   });
   const validate = (raw: string) =>
     parseCompactSourceAudit(raw, options.document, options.pages);
+  const validateMerged = (raw: string) => {
+    try {
+      return validate(raw);
+    } catch (error) {
+      if (error instanceof SourceReviewValidationError)
+        throw new SourceReviewValidationError(
+          error.section,
+          error.message,
+          raw,
+        );
+      throw error;
+    }
+  };
   const pending = cachedReviewStage({
     key,
     store: options.store,
@@ -500,6 +519,7 @@ async function reviewOneSource(options: {
             "references",
             "field-changes",
             "source-audit",
+            "review-issues",
           ],
           maxTokens: configuredPositive(
             "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
@@ -518,6 +538,76 @@ async function reviewOneSource(options: {
           throw error;
         const rejected = parseObjectOrNull(error.rejected);
         if (!rejected) throw error;
+        if (error.validationSection === "review-issues") {
+          const repaired = await completeReviewRequest({
+            operation: "source-issues-repair",
+            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+            schema: buildSourceIssuesRepairSchema(
+              options.document,
+              options.pages,
+            ),
+            maxTokens: configuredPositive(
+              "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+              8192,
+              32768,
+            ),
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Review ONLY the proposed unresolved findings against the supplied original page images. Return exactly {reviewIssues: [...]}. " +
+                  "Use only canonical fields allowed by the schema, a source-grounded reason, and evidence with a supplied own-page pointer and a literal quote containing the exact value. " +
+                  "Do not invent evidence, infer values, or change source fields, table coverage, support votes or page quality. " +
+                  "Remove unsupported proposed findings; return an empty array only when the source proves that none of the proposals is an unresolved finding.",
+              },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
+                      validationDefect: error.defect,
+                      document: context.document,
+                      proposedIssues: rejected.reviewIssues,
+                      sourcePagePointers: context.sourcePagePointers,
+                    }),
+                  },
+                  ...options.pages.flatMap((page, index) => [
+                    {
+                      type: "text" as const,
+                      text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                    },
+                    {
+                      type: "image_url" as const,
+                      image_url: { url: page.image },
+                    },
+                  ]),
+                ],
+              },
+            ],
+            validate: (raw) => {
+              const patch = object(JSON.parse(raw));
+              if (
+                Object.keys(patch).length !== 1 ||
+                !Object.hasOwn(patch, "reviewIssues")
+              )
+                throw new SourceReviewValidationError(
+                  "review-issues",
+                  "Finding repair may only return reviewIssues.",
+                );
+              const merged = JSON.stringify({
+                ...rejected,
+                reviewIssues: patch.reviewIssues,
+              });
+              return { raw: merged, result: validateMerged(merged) };
+            },
+          });
+          return {
+            raw: repaired.result.raw,
+            result: repaired.result.result,
+            attempts: 1 + repaired.attempts,
+          };
+        }
         if (error.validationSection === "field-changes") {
           const repairContext = {
             validationDefect: error.defect,
@@ -573,7 +663,7 @@ async function reviewOneSource(options: {
                 ...rejected,
                 fieldChanges: patch.fieldChanges,
               });
-              return { raw: merged, result: validate(merged) };
+              return { raw: merged, result: validateMerged(merged) };
             },
           });
           return {
@@ -643,7 +733,7 @@ async function reviewOneSource(options: {
                   "Source-audit repair returned fields outside its repair contract.",
                 );
               const merged = JSON.stringify({ ...rejected, ...patch });
-              return { raw: merged, result: validate(merged) };
+              return { raw: merged, result: validateMerged(merged) };
             },
           });
           return {
@@ -711,7 +801,7 @@ async function reviewOneSource(options: {
               references: patch.references,
               newReferences: patch.newReferences,
             });
-            return { raw: merged, result: validate(merged) };
+            return { raw: merged, result: validateMerged(merged) };
           },
         });
         return {
@@ -727,6 +817,72 @@ async function reviewOneSource(options: {
     return { ...cached, key };
   } catch (error) {
     if (!(error instanceof ReviewContractError)) throw error;
+    if (error.validationSection === "review-issues" && error.rejected) {
+      const rejected = parseObjectOrNull(error.rejected);
+      if (rejected) {
+        // Independently revalidate ALL source fields, references, table rows,
+        // corrections and page quality. Never infer their validity from the
+        // failure category or apply an invalid finding. Approval remains blocked.
+        try {
+          const verified = validate(
+            JSON.stringify({ ...rejected, reviewIssues: [] }),
+          );
+          const retainedIssues: Mismatch[] = [];
+          if (Array.isArray(rejected.reviewIssues)) {
+            for (const [index, issue] of rejected.reviewIssues.entries()) {
+              try {
+                const independent = validate(
+                  JSON.stringify({ ...rejected, reviewIssues: [issue] }),
+                );
+                retainedIssues.push(
+                  ...independent.reviewIssues.map((finding) => ({
+                    ...finding,
+                    id: `evidence-review-source:${options.document.id}-${index + 1}`,
+                  })),
+                );
+              } catch {
+                // The unvalidated proposal is represented by the explicit
+                // review blocker, never presented as a factual mismatch.
+              }
+            }
+          }
+          const deferred = unverifiedSourceReview(
+            options.document,
+            options.pages,
+          );
+          const reason =
+            "The source data was verified, but an unresolved review finding could not be validated. Review the original page before approval.";
+          return {
+            result: {
+              ...verified,
+              audit: {
+                ...verified.audit,
+                status: "needs_review" as const,
+                reason,
+              },
+              summary: {
+                ...verified.summary,
+                verdict: "needs_review" as const,
+                warnings: [...verified.summary.warnings, reason],
+              },
+              reviewIssues: [
+                ...retainedIssues,
+                ...deferred.reviewIssues.map((issue) => ({
+                  ...issue,
+                  analysis: reason,
+                })),
+              ],
+            },
+            reused: false,
+            attempts: 3,
+            key,
+          };
+        } catch {
+          // If any source-data contract also fails, retain the original
+          // fail-closed behavior below; table coverage cannot be assumed.
+        }
+      }
+    }
     // A model-contract failure is not evidence that the user's document is
     // wrong. Preserve the original extraction, block approval with an explicit
     // review item, and allow the remaining packet analysis to finish. Never

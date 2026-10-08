@@ -211,7 +211,10 @@ export function buildSourceAuditSchema(
         items: {
           type: "object",
           properties: {
-            field: text,
+            field: {
+              type: "string",
+              enum: FIELD_DEFINITIONS.map(({ key }) => key),
+            },
             reason: text,
             evidence: {
               type: "array",
@@ -272,6 +275,19 @@ export function buildSourceFieldChangesRepairSchema(
     type: "object",
     properties: { fieldChanges: full.properties.fieldChanges },
     required: ["fieldChanges"],
+    additionalProperties: false,
+  };
+}
+
+export function buildSourceIssuesRepairSchema(
+  document: CaseDoc,
+  pages: ReviewSourcePage[],
+) {
+  const full = buildSourceAuditSchema(document, pages);
+  return {
+    type: "object",
+    properties: { reviewIssues: full.properties.reviewIssues },
+    required: ["reviewIssues"],
     additionalProperties: false,
   };
 }
@@ -370,7 +386,7 @@ export function parseCompactSourceAudit(
       assertOwnPointers(entry);
     }
   };
-  assertOwnPointers(payload);
+  assertOwnPointers({ ...payload, reviewIssues: [] });
   // The request owns these exact page pointers, just like document/file
   // pointers in packet review. No local/original page-number prediction or
   // number parsing is necessary; unknown pointers always fail.
@@ -402,7 +418,6 @@ export function parseCompactSourceAudit(
     "structureChange",
     "tableCoverage",
     "pageQuality",
-    "reviewIssues",
   ])
     payload[key] = bindPagePointers(payload[key]);
   const checklist = buildReviewSourceSupportChecklist([document])[document.id];
@@ -806,26 +821,36 @@ export function parseCompactSourceAudit(
     throw new Error(
       "The proposed document type was not preserved after source validation.",
     );
-  const issues = array(payload.reviewIssues).map((value) => {
-    const issue = object(value);
+  try {
+    assertOwnPointers(payload.reviewIssues);
+    const issues = array(bindPagePointers(payload.reviewIssues)).map(
+      (value) => {
+        const issue = object(value);
+        return {
+          ...issue,
+          evidence: array(issue.evidence).map((entry) => ({
+            ...object(entry),
+            docId: document.id,
+            sourceFileName: document.sourceFileName,
+          })),
+        };
+      },
+    );
     return {
-      ...issue,
-      evidence: array(issue.evidence).map((entry) => ({
-        ...object(entry),
-        docId: document.id,
-        sourceFileName: document.sourceFileName,
-      })),
+      ...result,
+      reviewIssues: parseGroundedReviewIssues(
+        issues,
+        [result.document],
+        pages,
+        `source:${document.id}`,
+      ),
     };
-  });
-  return {
-    ...result,
-    reviewIssues: parseGroundedReviewIssues(
-      issues,
-      [result.document],
-      pages,
-      `source:${document.id}`,
-    ),
-  };
+  } catch (error) {
+    throw new SourceReviewValidationError(
+      "review-issues",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 export function parseGroundedReviewIssues(

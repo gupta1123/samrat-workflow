@@ -29,7 +29,10 @@ function setup(
   pool.intercept({ path: "/b1s/v1/Logout", method: "POST" }).reply(200, {});
   pool
     .intercept({ path: () => true, method: "GET" })
-    .reply((options) => read(new URL(options.path, "https://sap.example.test")))
+    .reply((options) => {
+      const result = read(new URL(options.path, "https://sap.example.test"));
+      return { ...result, data: JSON.stringify(result.data) };
+    })
     .persist();
   t.after(async () => {
     setGlobalDispatcher(dispatcher);

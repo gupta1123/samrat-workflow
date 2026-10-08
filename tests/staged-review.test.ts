@@ -143,6 +143,162 @@ function packet() {
     notes: [],
   };
 }
+
+for (const repairSucceeds of [true, false]) {
+  test(`invalid source findings are isolated from verified invoice rows (${repairSucceeds ? "repaired" : "manual review"})`, async (t) => {
+    const { reviewExtractedDocumentsInStages } =
+      await import("../src/server/processing/staged-review");
+    const invoice: CaseDoc = {
+      ...documents[0],
+      fields: { ...documents[0].fields, supplierGstin: "ABCDE1234F1Z5" },
+      lineItems: [
+        {
+          itemCode: "MAT-42",
+          description: "Alloy rod",
+          quantity: "12.5",
+          unit: "MT",
+          rate: "50000",
+          sourcePage: 1,
+        },
+      ],
+    };
+    const sourceDocs = [invoice, documents[1]];
+    const valid = await Promise.all(sourceDocs.map(compact));
+    valid[0].fieldChanges.push({
+      field: "supplierGstin",
+      value: "27ABCDE1234F1Z5",
+      evidenceKind: "printed",
+      pageNumber: "p1",
+      quote: "Supplier GSTIN: 27ABCDE1234F1Z5",
+    });
+    const groundedFinding = {
+      field: "vendorName",
+      reason: "Verify the printed supplier identity",
+      evidence: [
+        {
+          value: "Aster Metals",
+          quote: "Supplier: Aster Metals",
+          pageNumber: "p1",
+        },
+      ],
+    };
+    const badFinding = {
+      field: "not-a-canonical-field",
+      reason: "Unsupported proposal",
+      evidence: [
+        { value: "invented", quote: "different words", pageNumber: "p1" },
+      ],
+    };
+    const invalid = {
+      ...valid[0],
+      reviewIssues: [groundedFinding, badFinding],
+    };
+    let repairs = 0;
+    let fullAuditRepairs = 0;
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        const name = body.response_format.json_schema.name;
+        const context = JSON.parse(body.messages[1].content[0].text);
+        if (name === "source_document_review")
+          return response(
+            context.sourcePageNumbers[0] === 1 ? invalid : valid[1],
+          );
+        if (name === "source_issues_repair") {
+          repairs++;
+          assert.deepEqual(
+            Object.keys(body.response_format.json_schema.schema.properties),
+            ["reviewIssues"],
+          );
+          return response({
+            reviewIssues: repairSucceeds ? [] : [groundedFinding, badFinding],
+          });
+        }
+        if (name === "source_audit_repair") fullAuditRepairs++;
+        if (name === "packet_reconciliation") return response(packet());
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (candidate: { mismatchId: string }) => ({
+              mismatchId: candidate.mismatchId,
+              status: "dismissed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "No printed difference.",
+            }),
+          ),
+        });
+      },
+    );
+    const result = await reviewExtractedDocumentsInStages(sourceDocs, {
+      sourcePages: pages,
+    });
+    assert.equal(repairs, repairSucceeds ? 1 : 2);
+    assert.equal(fullAuditRepairs, 0);
+    assert.deepEqual(result.documents[0].lineItems, invoice.lineItems);
+    assert.equal(result.documents[0].tableCoverage?.status, "complete");
+    assert.equal(result.documents[0].tableCoverage?.rows.length, 1);
+    assert.equal(result.documents[0].fields.supplierGstin, "27ABCDE1234F1Z5");
+    assert.equal(
+      result.reviewIssues.some(
+        (issue) => issue.field === "extractionVerification",
+      ),
+      !repairSucceeds,
+    );
+    if (!repairSucceeds) {
+      assert.equal(
+        result.reviewIssues.some(
+          (issue) =>
+            issue.field === "vendorName" &&
+            issue.values[0].value === "Aster Metals",
+        ),
+        true,
+      );
+      assert.equal(result.review.verdict, "needs_review");
+      assert.equal(result.review.documentAudits?.[0].status, "needs_review");
+    }
+  });
+}
+
+test("invalid finding pointers get their own validation category and cannot hide incomplete invoice coverage", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const { SourceReviewValidationError } =
+    await import("../src/server/processing/review-contract-error");
+  const document: CaseDoc = {
+    ...documents[0],
+    lineItems: [{ description: "Rod", quantity: "1", sourcePage: 1 }],
+  };
+  const raw = await compact(document);
+  const payload = {
+    ...raw,
+    reviewIssues: [
+      {
+        field: "vendorName",
+        reason: "Review",
+        evidence: [
+          { value: "Aster", quote: "Aster Metals", pageNumber: "p999" },
+        ],
+      },
+    ],
+  };
+  assert.throws(
+    () =>
+      parseCompactSourceAudit(JSON.stringify(payload), document, [pages[0]]),
+    (error) =>
+      error instanceof SourceReviewValidationError &&
+      error.section === "review-issues",
+  );
+  payload.tableCoverage.rows = [];
+  assert.throws(
+    () =>
+      parseCompactSourceAudit(JSON.stringify(payload), document, [pages[0]]),
+    (error) =>
+      error instanceof SourceReviewValidationError &&
+      error.section === "source-audit",
+  );
+});
 test("oversized packet reviews read all pages in bounded batches and resume completed evidence", async (t) => {
   const previousLimit = process.env.PACKET_REQUEST_MAX_BYTES;
   process.env.PACKET_REQUEST_MAX_BYTES = "4000000";
