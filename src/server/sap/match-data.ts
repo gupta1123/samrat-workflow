@@ -16,6 +16,7 @@ import {
 } from "@/lib/sap-match/types";
 import type { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { sapPostingDate } from "./dates";
+import { resolveReceiptSupplier } from "./receipt-supplier";
 import {
   branchForShipTo,
   buildMatchInvoice,
@@ -317,7 +318,13 @@ export async function computeCaseMatch(params: {
   let suppliersRead: number | undefined;
   let supplierIdentification: MatchContext["supplierIdentification"] = null;
   let receiptSearch: MatchContext["receiptSearch"];
+  let discoveredReceipts: Awaited<
+    ReturnType<Client["findOpenReceiptDocumentsForInvoice"]>
+  > | null = null;
   let itemMappingScopes: MatchContext["itemMappingScopes"] = {};
+  const itemMappingConflicts: NonNullable<
+    MatchContext["itemMappingConflicts"]
+  > = {};
   const identify = (
     supplier: { BPAddresses?: Array<{ GSTIN?: string | null }> },
     method: "reviewer" | "saved-mapping",
@@ -370,13 +377,73 @@ export async function computeCaseMatch(params: {
         supplierIdentification = evidence;
       }));
     }
-    if (!vendor && !ambiguous.length) {
+    if (!vendor && !ambiguous.length && invoice.vendorGstin) {
       const suppliers = await client.listSuppliers();
       suppliersRead = suppliers.length;
       ({ vendor, ambiguous } = resolveVendor(invoice, suppliers, (evidence) => {
         supplierIdentification = evidence;
       }));
     }
+  }
+
+  // A legal supplier name need not equal SAP's division-specific BP name.
+  // Discover the BP through literal invoice/e-way references before giving up.
+  // Do not persist a mapping or invent a missing invoice GSTIN.
+  if (!vendor && !selectedCardCode) {
+    try {
+      const documents = await client.findOpenReceiptDocumentsForInvoice({
+        invoiceNumber: invoice.invoiceNumber,
+        eWayBill: invoice.eWayBill,
+        lorryReceipt: null,
+        vehicles: [],
+        invoiceRefField: config.invoiceRefField,
+        eWayBillField: config.eWayBillField,
+      });
+      const codes = [
+        ...new Set(
+          documents.flatMap((document) =>
+            typeof document.CardCode === "string" ? [document.CardCode] : [],
+          ),
+        ),
+      ];
+      const suppliers = (
+        await Promise.all(codes.map((code) => client.getSupplier(code)))
+      ).filter(
+        (supplier): supplier is NonNullable<typeof supplier> =>
+          supplier !== null,
+      );
+      const resolved = resolveReceiptSupplier(
+        invoice,
+        documents,
+        suppliers,
+        config,
+      );
+      if (resolved.vendor) {
+        vendor = resolved.vendor;
+        ambiguous = [];
+        supplierIdentification = resolved.identification;
+        discoveredReceipts = documents.filter(
+          (document) => document.CardCode === resolved.vendor?.cardCode,
+        );
+      } else if (resolved.ambiguous.length) {
+        ambiguous = resolved.ambiguous;
+      }
+    } catch (error) {
+      console.warn(
+        "Exact SAP receipt supplier lookup was incomplete; supplier confirmation is required.",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  // Without an invoice GSTIN, try exact delivery references before scanning
+  // the entire supplier master. Only fall back to the full name lookup if needed.
+  if (!vendor && !ambiguous.length && !invoice.vendorGstin) {
+    const suppliers = await client.listSuppliers();
+    suppliersRead = suppliers.length;
+    ({ vendor, ambiguous } = resolveVendor(invoice, suppliers, (evidence) => {
+      supplierIdentification = evidence;
+    }));
   }
 
   let receiptDocuments: Awaited<
@@ -394,20 +461,22 @@ export async function computeCaseMatch(params: {
       vendorPurchaseOrders,
       loadedItemMap,
     ] = await Promise.all([
-      client.findOpenReceiptDocumentsForInvoice({
-        cardCode: vendor.cardCode,
-        invoiceNumber: invoice.invoiceNumber,
-        eWayBill: invoice.eWayBill,
-        lorryReceipt: invoice.lorryReceipt,
-        vehicles: invoice.vehicles,
-        invoiceRefField: config.invoiceRefField,
-        eWayBillField: config.eWayBillField,
-        lorryReceiptField: config.lorryReceiptField,
-        vehicleField: config.vehicleField,
-        onSearch: (search) => {
-          receiptSearch = { method: "identifier", ...search };
-        },
-      }),
+      discoveredReceipts !== null
+        ? Promise.resolve(discoveredReceipts)
+        : client.findOpenReceiptDocumentsForInvoice({
+            cardCode: vendor.cardCode,
+            invoiceNumber: invoice.invoiceNumber,
+            eWayBill: invoice.eWayBill,
+            lorryReceipt: invoice.lorryReceipt,
+            vehicles: invoice.vehicles,
+            invoiceRefField: config.invoiceRefField,
+            eWayBillField: config.eWayBillField,
+            lorryReceiptField: config.lorryReceiptField,
+            vehicleField: config.vehicleField,
+            onSearch: (search) => {
+              receiptSearch = { method: "identifier", ...search };
+            },
+          }),
       client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
       client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
       loadItemMappings(db, vendor.cardCode),
@@ -492,6 +561,43 @@ export async function computeCaseMatch(params: {
   }
 
   const receipts = mapReceiptLines(receiptDocuments, purchaseOrders, config);
+  const receiptIdentity = vendor
+    ? resolveReceiptSupplier(
+        invoice,
+        receiptDocuments,
+        [
+          {
+            CardCode: vendor.cardCode,
+            CardName: vendor.cardName,
+            BPAddresses: supplierIdentification?.sapGstins.map((GSTIN) => ({
+              GSTIN,
+            })),
+          },
+        ],
+        config,
+      )
+    : null;
+  const referenceEntries = new Set(
+    receiptIdentity?.identification?.receiptEvidence?.map(
+      (entry) => entry.docEntry,
+    ),
+  );
+  const deliveryItems = new Set(
+    receipts
+      .filter((receipt) => referenceEntries.has(receipt.docEntry))
+      .map((receipt) => receipt.itemCode),
+  );
+  // Never replace an item link automatically. If exact shipment evidence
+  // contains only other item codes, present the real receipt products for
+  // reviewer confirmation and leave the saved mapping itself untouched.
+  if (deliveryItems.size) {
+    for (const line of invoice.lines) {
+      const key = itemMappingKey(line);
+      if (key && itemMap[key] && !deliveryItems.has(itemMap[key])) {
+        itemMappingConflicts[key] = itemMap[key];
+      }
+    }
+  }
   const poLines = mapPoLines(purchaseOrders, config);
   const itemCodes = [
     ...receipts.map((line) => line.itemCode),
@@ -514,11 +620,19 @@ export async function computeCaseMatch(params: {
     };
   }
 
+  const receiptItemSuggestions = [...deliveryItems].map((itemCode) => ({
+    itemCode,
+    name: items[itemCode]?.name ?? itemCode,
+    why: `Recorded on GRPO ${[...new Set(receipts.filter((receipt) => referenceEntries.has(receipt.docEntry) && receipt.itemCode === itemCode).map((receipt) => receipt.docNum))].join(", ")} with this invoice's exact invoice or e-way bill reference; product confirmation required`,
+  }));
+
   const context: MatchContext = {
     vendor,
     supplierIdentification,
     receiptSearch,
     itemMappingScopes,
+    itemMappingConflicts,
+    receiptItemSuggestions,
     checkedAt: new Date().toISOString(),
     ambiguousVendors: ambiguous,
     vendorKey: keys[0] ?? null,

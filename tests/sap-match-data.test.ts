@@ -552,6 +552,115 @@ test("a vendor linked earlier is used even when the names differ", async () => {
   }
 });
 
+test("missing supplier GSTIN and a division-specific BP name can be resolved through an exact receipt reference", async () => {
+  const data = tables();
+  const fields = { ...invoiceFields } as Record<string, unknown>;
+  delete fields.supplierGstin;
+  fields.vendorName = "Example Metals Limited";
+  data.packet_documents[0].extracted_fields = fields;
+  let discovery = false;
+  const baseClient = sapClient();
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    client: sapClient({
+      searchSuppliers: async () => [],
+      listSuppliers: async () => [],
+      getSupplier: async () => ({
+        CardCode: "V-TATA01",
+        CardName: "Example Metals Limited - Retail",
+      }),
+      findOpenReceiptDocumentsForInvoice: async (input: {
+        cardCode?: string;
+      }) => {
+        if (!input.cardCode) discovery = true;
+        return (await baseClient.listOpenReceiptDocumentsForVendor()).map(
+          (receipt) => ({
+            ...receipt,
+            DocumentStatus: "bost_Open",
+            Cancelled: "tNO",
+          }),
+        );
+      },
+    }) as never,
+  });
+  assert.equal(discovery, true);
+  assert.ok(match.available);
+  if (match.available) {
+    assert.equal(match.vendor?.cardCode, "V-TATA01");
+    assert.equal(match.invoice.vendorGstin, null);
+    assert.equal(
+      match.result.supplierIdentification?.method,
+      "receipt-reference",
+    );
+    assert.equal(match.result.status, "ready");
+  }
+});
+
+test("failed cross-supplier lookup leaves identification blocked instead of guessing", async () => {
+  const data = tables();
+  data.packet_documents[0].extracted_fields = {
+    ...invoiceFields,
+    supplierGstin: undefined,
+    vendorName: "Unlinked Legal Name",
+  };
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    client: sapClient({
+      searchSuppliers: async () => [],
+      listSuppliers: async () => [],
+      findOpenReceiptDocumentsForInvoice: async () => {
+        throw new Error("Search incomplete");
+      },
+    }) as never,
+  });
+  assert.ok(match.available);
+  if (match.available) assert.equal(match.vendor, null);
+});
+
+test("a saved item link conflicting with literal delivery references requires a new item confirmation without changing the stored link", async () => {
+  const data = tables();
+  data.sap_item_mappings[0].sap_item_code = "WRONG-PRODUCT";
+  const base = sapClient();
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    client: sapClient({
+      getSupplier: async () => ({
+        CardCode: "V-TATA01",
+        CardName: "Example Metals",
+        BPAddresses: [{ GSTIN: "20AAACT2803M2ZO" }],
+      }),
+      searchSuppliers: async () => [],
+      listSuppliers: async () => [],
+      findOpenReceiptDocumentsForInvoice: async () =>
+        (await base.listOpenReceiptDocumentsForVendor()).map((receipt) => ({
+          ...receipt,
+          DocumentStatus: "bost_Open",
+          Cancelled: "tNO",
+        })),
+      listOpenReceiptDocumentsForVendor: async () =>
+        (await base.listOpenReceiptDocumentsForVendor()).map((receipt) => ({
+          ...receipt,
+          DocumentStatus: "bost_Open",
+          Cancelled: "tNO",
+        })),
+    }) as never,
+  });
+  assert.ok(match.available);
+  if (match.available) {
+    assert.equal(match.vendor?.cardCode, "V-TATA01");
+    assert.equal(match.result.lines[0].itemCode, null);
+    assert.equal(match.result.lines[0].allocatedQty, 0);
+    const check = match.result.open.find((check) => check.id === "map-0");
+    assert.ok(check?.title.includes("Confirm item link"));
+    assert.equal(check?.itemSuggestions?.[0].itemCode, "BW-TW20-091");
+    assert.equal(match.result.payload, null);
+  }
+  assert.equal(data.sap_item_mappings[0].sap_item_code, "WRONG-PRODUCT");
+});
+
 test("a linked vendor missing from the supplier list is looked up directly", async () => {
   const data = tables();
   data.sap_vendor_mappings = [

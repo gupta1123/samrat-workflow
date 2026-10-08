@@ -393,18 +393,27 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
 
   if (!context.vendor) {
     const read = context.suppliersRead;
+    const receiptCandidates = context.ambiguousVendors.some(
+      (candidate) =>
+        candidate.why ===
+        "Exact invoice or e-way bill reference on an open SAP GRPO",
+    );
     checks.push({
       id: "vendor",
       lineIndex: null,
       sev: "block",
-      title: context.ambiguousVendors.length
-        ? "More than one exact SAP vendor record matches this invoice"
-        : "No SAP vendor found for this invoice",
-      help: context.ambiguousVendors.length
-        ? `SAP has multiple records with the invoice's exact GSTIN or vendor name. Choose the correct SAP vendor code below; no vendor has been guessed.`
-        : read === 0
-          ? `SAP returned no suppliers at all for the connected user, so nothing could be compared with "${invoice.vendorName ?? "unknown"}". Check that the SAP user may read business partners.`
-          : `No exact GSTIN or vendor-name match was found for "${invoice.vendorName ?? "unknown"}" among ${read ?? "the"} SAP suppliers. Search SAP and explicitly choose the correct vendor; the system will not guess.`,
+      title: receiptCandidates
+        ? "Confirm the supplier linked to these SAP receipts"
+        : context.ambiguousVendors.length
+          ? "More than one exact SAP vendor record matches this invoice"
+          : "No SAP vendor found for this invoice",
+      help: receiptCandidates
+        ? "Exact invoice or e-way bill references found SAP receipts, but they do not establish one supplier consistent with the invoice GSTIN. Review the receipt evidence and explicitly choose the correct supplier; no supplier has been guessed."
+        : context.ambiguousVendors.length
+          ? `SAP has multiple records with the invoice's exact GSTIN or vendor name. Choose the correct SAP vendor code below; no vendor has been guessed.`
+          : read === 0
+            ? `SAP returned no suppliers at all for the connected user, so nothing could be compared with "${invoice.vendorName ?? "unknown"}". Check that the SAP user may read business partners.`
+            : `No exact GSTIN or vendor-name match was found for "${invoice.vendorName ?? "unknown"}" among ${read ?? "the"} SAP suppliers. Search SAP and explicitly choose the correct vendor; the system will not guess.`,
       vendorSuggestions: context.ambiguousVendors.length
         ? context.ambiguousVendors
         : [],
@@ -518,7 +527,13 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
 
   for (const ln of invoice.lines) {
     const mappingKey = itemMappingKey(ln);
-    const mapped = mappingKey ? context.itemMap[mappingKey] : undefined;
+    const conflictingMapping = mappingKey
+      ? context.itemMappingConflicts?.[mappingKey]
+      : undefined;
+    const mapped =
+      mappingKey && !conflictingMapping
+        ? context.itemMap[mappingKey]
+        : undefined;
     const directCode = ln.vendorItemCode ? normalizeRef(ln.vendorItemCode) : "";
     const itemCode =
       mapped ??
@@ -561,9 +576,15 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
         id: `map-${ln.index}`,
         lineIndex: ln.index,
         sev: "block",
-        title: `Item not linked: ${ln.description ?? ln.vendorItemCode ?? `line ${ln.index + 1}`}`,
-        help: `${invoice.vendorName ?? "This vendor"}'s material ${ln.vendorItemCode ?? ""} is not linked to one of your SAP items yet. Link it once and future invoices use it automatically.`,
-        itemSuggestions: suggestItems(ln, context, invoice),
+        title: conflictingMapping
+          ? `Confirm item link: ${ln.description ?? ln.vendorItemCode ?? `line ${ln.index + 1}`}`
+          : `Item not linked: ${ln.description ?? ln.vendorItemCode ?? `line ${ln.index + 1}`}`,
+        help: conflictingMapping
+          ? `The saved link uses SAP item ${conflictingMapping}, but the open GRPOs with this invoice's exact invoice or e-way bill reference contain different item codes. Confirm the correct product below. The saved link has not been changed automatically.`
+          : `${invoice.vendorName ?? "This vendor"}'s material ${ln.vendorItemCode ?? ""} is not linked to one of your SAP items yet. Link it once and future invoices use it automatically.`,
+        itemSuggestions: context.receiptItemSuggestions?.length
+          ? context.receiptItemSuggestions
+          : suggestItems(ln, context, invoice),
       });
       continue;
     }

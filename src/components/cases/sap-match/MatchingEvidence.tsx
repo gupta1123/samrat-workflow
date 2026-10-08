@@ -121,6 +121,7 @@ export function SupplierEvidence({
         name: "Identified by exact supplier name",
         "saved-mapping": "Reused a saved supplier mapping",
         reviewer: "Supplier selected by reviewer for this packet",
+        "receipt-reference": "Identified through exact references on SAP GRPOs",
       }[identification.method];
   const invoiceGstin = invoice.vendorGstin?.trim().toUpperCase() ?? "";
   const gstins = [
@@ -156,6 +157,15 @@ export function SupplierEvidence({
           </span>
         </p>
       </div>
+      {identification?.receiptEvidence?.map((entry) => (
+        <p
+          key={`${entry.docEntry}:${entry.field}`}
+          className="mt-1 text-[10px] text-[#6b5d50]"
+        >
+          {entry.field} {entry.value} matches GRPO {entry.docNum}, recorded
+          under supplier {entry.cardCode}.
+        </p>
+      ))}
       <p
         className={`mt-1 text-[10px] leading-4 ${sameGstin ? color.Matched : color["Not checked"]}`}
       >

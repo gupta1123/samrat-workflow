@@ -180,7 +180,9 @@ export async function withTestServiceLayer<T>(
     listBusinessPartnersPage: (
       query: BusinessPartnerQuery,
     ) => Promise<Record<string, unknown>[]>;
-    listInspectorItemsPage: (query: ItemsQuery) => Promise<Record<string, unknown>[]>;
+    listInspectorItemsPage: (
+      query: ItemsQuery,
+    ) => Promise<Record<string, unknown>[]>;
     listInspectorGrposPage: (
       query: GrpoInspectorQuery,
       fields: GrpoReferenceFields,
@@ -189,7 +191,7 @@ export async function withTestServiceLayer<T>(
       cardCode: string,
     ) => Promise<SapMatchDocument[]>;
     findOpenReceiptDocumentsForInvoice: (input: {
-      cardCode: string;
+      cardCode?: string;
       invoiceNumber: string;
       eWayBill: string | null;
       lorryReceipt: string | null;
@@ -664,7 +666,10 @@ export async function withTestServiceLayer<T>(
         );
       },
       async listInspectorItemsPage(query) {
-        return pageAll<Record<string, unknown>>(itemsReadPath(query), query.limit + 1);
+        return pageAll<Record<string, unknown>>(
+          itemsReadPath(query),
+          query.limit + 1,
+        );
       },
       async listInspectorGrposPage(query, fields) {
         return pageAll<Record<string, unknown>>(
@@ -749,8 +754,11 @@ export async function withTestServiceLayer<T>(
             });
         };
         add(input.eWayBillField, input.eWayBill, "E-Way Bill No.");
-        add(input.lorryReceiptField, input.lorryReceipt, "Lorry Receipt No.");
-        const vehicleField = safeField(input.vehicleField);
+        if (input.cardCode)
+          add(input.lorryReceiptField, input.lorryReceipt, "Lorry Receipt No.");
+        const vehicleField = input.cardCode
+          ? safeField(input.vehicleField)
+          : null;
         if (vehicleField) {
           for (const vehicle of input.vehicles.filter(Boolean).slice(0, 4)) {
             identifiers.push({
@@ -770,14 +778,20 @@ export async function withTestServiceLayer<T>(
         const matches = await Promise.all(
           identifiers.map(async (identifier): Promise<ExactReceiptMatch> => {
             try {
-              const documents = await collectionOnce<SapMatchDocument>(
+              const limit = input.cardCode ? 100 : 1000;
+              const documents = await pageAll<SapMatchDocument>(
                 "/PurchaseDeliveryNotes?$filter=" +
                   encodeURIComponent(
-                    `CardCode eq '${literal(input.cardCode)}' and DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO' and ${identifier.filter}`,
+                    `${input.cardCode ? `CardCode eq '${literal(input.cardCode)}' and ` : ""}DocumentStatus eq 'bost_Open' and Cancelled eq 'tNO' and ${identifier.filter}`,
                   ) +
                   "&$orderby=DocEntry%20desc",
-                100,
+                limit,
               );
+              if (!input.cardCode && documents.length >= limit) {
+                throw new Error(
+                  "Exact supplier-reference search exceeded its read limit.",
+                );
+              }
               return {
                 identifier: {
                   field: identifier.field,
@@ -786,6 +800,8 @@ export async function withTestServiceLayer<T>(
                 documents,
               };
             } catch (error) {
+              // A partial cross-supplier search cannot prove uniqueness.
+              if (!input.cardCode) throw error;
               console.warn(
                 `Could not query SAP receipts by ${identifier.label}; continuing with the other exact identifiers.`,
                 error instanceof Error ? error.message : String(error),
@@ -800,7 +816,13 @@ export async function withTestServiceLayer<T>(
             }
           }),
         );
-        const combined = combineExactReceiptMatches(matches, 100);
+        const limit = input.cardCode ? 100 : 1000;
+        const combined = combineExactReceiptMatches(matches, limit);
+        if (!input.cardCode && combined.documents.length >= limit) {
+          throw new Error(
+            "Exact supplier-reference search exceeded its combined read limit.",
+          );
+        }
         const first = combined.identifiers[0];
         if (combined.documents.length && first) {
           input.onSearch?.({
@@ -808,7 +830,7 @@ export async function withTestServiceLayer<T>(
             value: first.value,
             identifiers: combined.identifiers,
             documentsRead: combined.documents.length,
-            limit: 100,
+            limit,
           });
         }
         return combined.documents;

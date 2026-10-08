@@ -141,9 +141,16 @@ export type SapItemInfo = {
 };
 
 export type SupplierIdentification = {
-  method: "gstin" | "name" | "saved-mapping" | "reviewer";
+  method: "gstin" | "name" | "saved-mapping" | "reviewer" | "receipt-reference";
   sapGstins: string[];
   mappingKey?: string;
+  receiptEvidence?: Array<{
+    docEntry: number;
+    docNum: number;
+    cardCode: string;
+    field: string;
+    value: string;
+  }>;
 };
 
 export type ReceiptSearch = {
@@ -164,6 +171,13 @@ export type MatchContext = {
   receiptSearch?: ReceiptSearch;
   checkedAt?: string;
   itemMappingScopes?: Record<string, "supplier" | "shared">;
+  /** Saved selections that contradict the product codes on exact-reference receipts. */
+  itemMappingConflicts?: Record<string, string>;
+  receiptItemSuggestions?: Array<{
+    itemCode: string;
+    name: string;
+    why: string;
+  }>;
   /** More than one SAP vendor has the same authoritative invoice identifier. */
   ambiguousVendors: Array<{ cardCode: string; cardName: string; why: string }>;
   /** How this invoice's vendor is remembered (GSTIN or name), used when linking it to a SAP vendor. */
