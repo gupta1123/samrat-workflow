@@ -144,6 +144,242 @@ function packet() {
   };
 }
 
+test("reference repair hands a later page-quality defect to the audit repair", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const payloads = await Promise.all(documents.map(compact));
+  const invalid = structuredClone(payloads[0]);
+  invalid.references.referencePoNumber.quote = "No quoted order value";
+  invalid.pageQuality[0].issues = ["rotated"] as never[];
+  invalid.pageQuality[0].approvalSafe = true;
+  let refs = 0;
+  let audits = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review")
+        return response(
+          context.sourcePageNumbers[0] === 1 ? invalid : payloads[1],
+        );
+      if (name === "source_reference_repair") {
+        refs++;
+        return response({
+          references: payloads[0].references,
+          newReferences: [],
+        });
+      }
+      if (name === "source_audit_repair") {
+        audits++;
+        const properties = Object.keys(
+          body.response_format.json_schema.schema.properties,
+        );
+        return response(
+          Object.fromEntries(
+            properties.map((key) => [
+              key,
+              (payloads[0] as unknown as Record<string, unknown>)[key],
+            ]),
+          ),
+        );
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No printed difference.",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  assert.equal(refs, 1);
+  assert.equal(audits, 1);
+  assert.equal(result.documents[0].tableCoverage?.status, "not_present");
+  assert.equal(
+    result.reviewIssues.some(
+      (issue) => issue.field === "extractionVerification",
+    ),
+    false,
+  );
+});
+
+for (const restoreReference of [false, true]) {
+  test(`auxiliary reference isolation preserves source-based table recovery (${restoreReference ? "reference reverified" : "manual review"})`, async (t) => {
+    const { reviewExtractedDocumentsInStages } =
+      await import("../src/server/processing/staged-review");
+    const invoice: CaseDoc = {
+      ...documents[0],
+      fields: {
+        ...documents[0].fields,
+        invoiceNumber: "INV-91",
+        irnNumber: "UNVERIFIED-IRN",
+      },
+      lineItems: [
+        {
+          itemCode: "AL-10",
+          description: "Alloy rod",
+          quantity: "8",
+          unit: "Pieces",
+          rate: "45000",
+          sourcePage: 1,
+        },
+        {
+          itemCode: "AL-10",
+          description: "Alloy rod",
+          quantity: "21.75",
+          unit: "MT",
+          rate: "45000",
+          sourcePage: 1,
+        },
+      ],
+    };
+    const invalid = await compact(invoice);
+    invalid.references.irnNumber.quote = "IRN: unreadable";
+    const scopedDoc = {
+      ...invoice,
+      fields: { ...documents[0].fields, invoiceNumber: "INV-91" },
+    };
+    const scoped = await compact(scopedDoc);
+    if (restoreReference)
+      scoped.newReferences.push({
+        field: "irnNumber",
+        value: "PRINTED-IRN",
+        sourceLabel: "IRN",
+        valueKind: "reference",
+        pageNumber: "p1",
+        quote: "IRN: PRINTED-IRN",
+      });
+    const recovered = { ...invoice.lineItems![1], sourcePage: 1 };
+    const quote =
+      "Material AL-10 Alloy rod; Packages 8 pieces; Quantity 21.75 MT; Rate 45000 per MT";
+    scoped.structureChange = {
+      lineItems: [recovered],
+      evidence: { pageNumber: "p1", quote },
+    } as never;
+    scoped.tableCoverage.rows = [{ pageNumber: "p1", quote }];
+    scoped.tableCoverage.evidence = { pageNumber: "p1", quote };
+    const other = await compact(documents[1]);
+    let independentCalls = 0;
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        const name = body.response_format.json_schema.name;
+        const context = JSON.parse(body.messages[1].content[0].text);
+        if (name === "source_document_review") {
+          if (context.sourcePageNumbers[0] === 2) return response(other);
+          if (!context.document.fields.irnNumber) {
+            independentCalls++;
+            return response(scoped);
+          }
+          return response(invalid);
+        }
+        if (name === "source_reference_repair")
+          return response({
+            references: invalid.references,
+            newReferences: [],
+          });
+        if (name === "packet_reconciliation") return response(packet());
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (candidate: { mismatchId: string }) => ({
+              mismatchId: candidate.mismatchId,
+              status: "dismissed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "No printed difference.",
+            }),
+          ),
+        });
+      },
+    );
+    const result = await reviewExtractedDocumentsInStages(
+      [invoice, documents[1]],
+      { sourcePages: pages },
+    );
+    assert.equal(independentCalls, 1);
+    assert.equal(
+      result.documents[0].fields.irnNumber,
+      restoreReference ? "PRINTED-IRN" : undefined,
+    );
+    assert.equal(result.documents[0].fields.invoiceNumber, "INV-91");
+    assert.deepEqual(result.documents[0].lineItems, [recovered]);
+    assert.equal(result.documents[0].tableCoverage?.status, "complete");
+    const { buildMatchInvoice } =
+      await import("../src/server/sap/match-mapping");
+    const { serializeFieldsWithLineItems } =
+      await import("../src/server/line-items");
+    const matched = buildMatchInvoice({
+      caseInvoiceNumber: "INV-91",
+      casePoNumber: "",
+      documents: [
+        {
+          document_type: "Tax Invoice",
+          extracted_fields: serializeFieldsWithLineItems(result.documents[0]),
+        },
+      ],
+    });
+    assert.equal(matched?.extractionIssue, undefined);
+    assert.equal(matched?.lines.length, 1);
+    assert.equal(matched?.lines[0].quantity, 21.75);
+    if (!restoreReference) assert.equal(result.review.verdict, "needs_review");
+    assert.equal(
+      result.reviewIssues.some(
+        (issue) =>
+          issue.field === "extractionVerification" &&
+          issue.analysis?.includes("irnNumber"),
+      ),
+      !restoreReference,
+    );
+  });
+}
+
+test("reference isolation rejects foreign-page proof and never substitutes an auxiliary identifier for an invoice", async () => {
+  const { isolateUnverifiedSourceReferences } =
+    await import("../src/server/processing/staged-review-contract");
+  const document = {
+    ...documents[0],
+    fields: { ...documents[0].fields, invoiceNumber: "INV-99" },
+  };
+  const raw = await compact(document);
+  raw.references.invoiceNumber.pageNumber = "p999";
+  const isolated = isolateUnverifiedSourceReferences(
+    JSON.stringify(raw),
+    document,
+    [pages[0]],
+  );
+  assert.deepEqual(isolated.quarantined, ["invoiceNumber"]);
+  assert.equal(isolated.document.fields.invoiceNumber, undefined);
+  assert.equal(isolated.document.fields.referencePoNumber, "ORDER-27");
+  assert.equal(document.fields.invoiceNumber, "INV-99");
+  const { buildMatchInvoice } = await import("../src/server/sap/match-mapping");
+  assert.equal(
+    buildMatchInvoice({
+      caseInvoiceNumber: "INV-99",
+      casePoNumber: "ORDER-27",
+      documents: [
+        {
+          document_type: "Tax Invoice",
+          extracted_fields: isolated.document.fields,
+        },
+      ],
+    }),
+    null,
+  );
+});
+
 for (const repairSucceeds of [true, false]) {
   test(`invalid source findings are isolated from verified invoice rows (${repairSucceeds ? "repaired" : "manual review"})`, async (t) => {
     const { reviewExtractedDocumentsInStages } =

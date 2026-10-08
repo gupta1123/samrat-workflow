@@ -292,6 +292,88 @@ export function buildSourceIssuesRepairSchema(
   };
 }
 
+/** Quarantine only references whose own-page proof fails, not unrelated data. */
+export function isolateUnverifiedSourceReferences(
+  raw: string,
+  document: CaseDoc,
+  pages: ReviewSourcePage[],
+) {
+  const payload = object(JSON.parse(raw));
+  const references = object(payload.references);
+  const definitions = new Set(
+    REFERENCE_FIELD_DEFINITIONS.map(({ key }) => key),
+  );
+  const candidates = new Map<string, unknown>(Object.entries(references));
+  for (const value of array(payload.newReferences)) {
+    const entry = object(value);
+    if (typeof entry.field !== "string" || candidates.has(entry.field))
+      throw new Error(
+        "Cannot isolate malformed or duplicate reference entries.",
+      );
+    candidates.set(entry.field, entry);
+  }
+  const pointers = new Map(
+    ownDocumentPages(document, pages).map((page, index) => [
+      `p${index + 1}`,
+      page.pageNumber,
+    ]),
+  );
+  const fields = { ...document.fields };
+  const quarantined: FieldKey[] = [];
+  for (const key of REFERENCE_FIELD_DEFINITIONS.map(({ key }) => key)) {
+    if (String(document.fields[key] ?? "").trim() && !candidates.has(key))
+      candidates.set(key, null);
+  }
+  for (const [key, candidate] of candidates) {
+    if (!definitions.has(key as FieldKey))
+      throw new Error("Unknown reference cannot be silently removed.");
+    try {
+      const entry = object(candidate);
+      const { field: ignored, ...proof } = entry;
+      void ignored;
+      if (
+        Object.keys(proof).some(
+          (property) =>
+            ![
+              "value",
+              "sourceLabel",
+              "valueKind",
+              "pageNumber",
+              "quote",
+            ].includes(property),
+        )
+      )
+        throw new Error("Unexpected reference proof properties.");
+      if (
+        typeof proof.pageNumber !== "string" ||
+        !pointers.has(proof.pageNumber)
+      )
+        throw new Error("Unknown reference page pointer.");
+      // The same strict ledger validates one reference at a time. Neither the
+      // proposed value nor its spelling determines what the reference means.
+      readReferenceLedger({
+        document: {
+          ...document,
+          fields: { [key]: document.fields[key as FieldKey] },
+        },
+        fields: {
+          [key]: {
+            ...proof,
+            value: proof.valueKind === "reference" ? proof.value : null,
+            pageNumber: pointers.get(proof.pageNumber),
+            sourceFileName: document.sourceFileName,
+          },
+        },
+        sourcePages: pages,
+      });
+    } catch {
+      delete fields[key as FieldKey];
+      quarantined.push(key as FieldKey);
+    }
+  }
+  return { document: { ...document, fields }, quarantined };
+}
+
 const SOURCE_AUDIT_REPAIR_KEYS = [
   "sourceVerdict",
   "fieldChecks",

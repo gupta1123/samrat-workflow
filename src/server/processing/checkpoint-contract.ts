@@ -7,7 +7,7 @@ export type ReviewCheckpointStage =
 export const EXTRACTION_CHECKPOINT_CONTRACT_VERSION =
   "all-packet-issues-root-cause-reviewed-v12";
 
-export const STAGED_REVIEW_CONTRACT_VERSION = "independent-source-findings-v17";
+export const STAGED_REVIEW_CONTRACT_VERSION = "independent-source-sections-v18";
 
 export function checkpointContractForStage(stage: ReviewCheckpointStage) {
   return stage === "extraction"

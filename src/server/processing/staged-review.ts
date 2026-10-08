@@ -40,6 +40,7 @@ import {
   buildSourceAuditSchema,
   buildSourceFieldChangesRepairSchema,
   buildSourceIssuesRepairSchema,
+  isolateUnverifiedSourceReferences,
   buildSourceReferenceRepairSchema,
   ownDocumentPages,
   parseCompactSourceAudit,
@@ -276,6 +277,7 @@ const SOURCE_REVIEW_INSTRUCTION =
   'The response structure is {"sourceVerdict":"verified|needs_review","fieldChecks":{"requestedField":"supported|unsupported"},"lineItemChecks":{"requestedProperty":"supported|unsupported"},"references":{"canonicalReferenceField":{"value":"literal printed value or null","sourceLabel":"literal label","valueKind":"reference|document_type|date|party|other|absent|unreadable","pageNumber":"supplied pointer","quote":"literal own-page label and value"}},"newReferences":[],"fieldChanges":[{"field":"canonical non-reference field","value":"source-based value","evidenceKind":"printed|visual_observation","pageNumber":"supplied pointer","quote":"literal own-page words"}],"removalEvidence":null,"structureChange":null,"pageQuality":[{"pageNumber":"supplied pointer","issues":[],"approvalSafe":true,"confidence":"high|medium|low","reason":"visual assessment"}],"reviewIssues":[],"reason":"source-based explanation"}. This is a shape guide, not findings: inspect the pixels to fill every nested evidence and quality property; never return empty evidence objects. references can be {} when no references exist. Empty arrays mean no entries, not one empty object. ' +
   "Check EVERY populated field and every populated line-item property, and inspect for omitted, explicitly labelled values. " +
   "Independently inventory commercial goods/service rows from ALL original pages in tableCoverage, even when first-pass lineItems is empty. status complete requires one own-page quote per goods/service row in rows, in the same order as the final lineItems. Include a brief own-page evidence quote explaining the table assessment. Totals, taxes, delivery allocations, repeated copies and supporting references are not additional invoice products. not_present means the source truly has no commercial rows, not that extraction returned none. unreadable requires sourceVerdict needs_review. " +
+  "Read the source column headings and billing basis to distinguish billable quantity from package/piece counts and shipment weights. A piece count and a weight describing the SAME commercial row are not separate products. Preserve genuine separate rows even when their codes repeat. If the source is ambiguous, declare unreadable/needs_review rather than choosing by numeric size, code similarity or an assumed unit. Correct erroneous first-pass row structure using complete source-backed structureChange.lineItems. " +
   "If any source row is missing, including an entirely omitted table, recover the COMPLETE source table in structureChange.lineItems with own-page evidence in this response. Never borrow products or quantities from another document. Confirm codes/descriptions, quantity, unit, unit price and amounts directly from the source; preserve absent fields as absent. " +
   "fieldChecks and lineItemChecks are OBJECTS keyed by the supplied fieldChecksInOrder and lineItemChecksInOrder names. Return every listed key exactly once with supported or unsupported; do not use positional arrays or review the corrected field set. " +
   "Supported means the field/property belongs to this source, including a misread value that you correct. Unsupported means the source never supplies that field/property. The app removes unsupported values directly from your votes; provide removalEvidence for those votes, not a second removal list. " +
@@ -460,7 +462,15 @@ async function reviewOneSource(options: {
   pages: ReviewSourcePage[];
   store?: ReviewCheckpointStore;
   recheckReason?: string;
-}) {
+  referenceQuarantineAttempted?: boolean;
+}): Promise<{
+  result:
+    | ReturnType<typeof parseCompactSourceAudit>
+    | ReturnType<typeof unverifiedSourceReview>;
+  reused: boolean;
+  attempts: number;
+  key: string;
+}> {
   const context = sourceAuditContext(
     options.document,
     options.pages,
@@ -486,7 +496,11 @@ async function reviewOneSource(options: {
           error.message,
           raw,
         );
-      throw error;
+      throw new SourceReviewValidationError(
+        "source-audit",
+        error instanceof Error ? error.message : String(error),
+        raw,
+      );
     }
   };
   const pending = cachedReviewStage({
@@ -530,285 +544,327 @@ async function reviewOneSource(options: {
           messages: sourceMessages,
         });
       } catch (error) {
-        if (
-          !(error instanceof ReviewContractError) ||
-          !error.rejected ||
-          !error.validationSection
-        )
-          throw error;
-        const rejected = parseObjectOrNull(error.rejected);
-        if (!rejected) throw error;
-        if (error.validationSection === "review-issues") {
-          const repaired = await completeReviewRequest({
-            operation: "source-issues-repair",
-            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
-            schema: buildSourceIssuesRepairSchema(
-              options.document,
-              options.pages,
-            ),
-            maxTokens: configuredPositive(
-              "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
-              8192,
-              32768,
-            ),
-            messages: [
-              {
-                role: "system",
-                content:
-                  "Review ONLY the proposed unresolved findings against the supplied original page images. Return exactly {reviewIssues: [...]}. " +
-                  "Use only canonical fields allowed by the schema, a source-grounded reason, and evidence with a supplied own-page pointer and a literal quote containing the exact value. " +
-                  "Do not invent evidence, infer values, or change source fields, table coverage, support votes or page quality. " +
-                  "Remove unsupported proposed findings; return an empty array only when the source proves that none of the proposals is an unresolved finding.",
-              },
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify({
-                      validationDefect: error.defect,
-                      document: context.document,
-                      proposedIssues: rejected.reviewIssues,
-                      sourcePagePointers: context.sourcePagePointers,
-                    }),
-                  },
-                  ...options.pages.flatMap((page, index) => [
-                    {
-                      type: "text" as const,
-                      text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
-                    },
-                    {
-                      type: "image_url" as const,
-                      image_url: { url: page.image },
-                    },
-                  ]),
-                ],
-              },
-            ],
-            validate: (raw) => {
-              const patch = object(JSON.parse(raw));
-              if (
-                Object.keys(patch).length !== 1 ||
-                !Object.hasOwn(patch, "reviewIssues")
-              )
-                throw new SourceReviewValidationError(
-                  "review-issues",
-                  "Finding repair may only return reviewIssues.",
-                );
-              const merged = JSON.stringify({
-                ...rejected,
-                reviewIssues: patch.reviewIssues,
-              });
-              return { raw: merged, result: validateMerged(merged) };
-            },
-          });
-          return {
-            raw: repaired.result.raw,
-            result: repaired.result.result,
-            attempts: 1 + repaired.attempts,
-          };
-        }
-        if (error.validationSection === "field-changes") {
-          const repairContext = {
-            validationDefect: error.defect,
-            currentFields: options.document.fields,
-            proposedFieldChanges: rejected.fieldChanges,
-            fieldMeanings: context.fieldMeanings,
-            sourcePagePointers: context.sourcePagePointers,
-          };
-          const repaired = await completeReviewRequest({
-            operation: "source-field-changes-repair",
-            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
-            schema: buildSourceFieldChangesRepairSchema(
-              options.document,
-              options.pages,
-            ),
-            maxTokens: configuredPositive(
-              "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
-              8192,
-              32768,
-            ),
-            messages: [
-              {
-                role: "system",
-                content: SOURCE_FIELD_CHANGES_REPAIR_INSTRUCTION,
-              },
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: JSON.stringify(repairContext) },
-                  ...options.pages.flatMap((page, index) => [
-                    {
-                      type: "text" as const,
-                      text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
-                    },
-                    {
-                      type: "image_url" as const,
-                      image_url: { url: page.image },
-                    },
-                  ]),
-                ],
-              },
-            ],
-            validate: (raw) => {
-              const patch = object(JSON.parse(raw));
-              if (
-                Object.keys(patch).some((key) => key !== "fieldChanges") ||
-                !Object.hasOwn(patch, "fieldChanges")
-              )
-                throw new Error(
-                  "Field-change repair returned fields outside its repair contract.",
-                );
-              const merged = JSON.stringify({
-                ...rejected,
-                fieldChanges: patch.fieldChanges,
-              });
-              return { raw: merged, result: validateMerged(merged) };
-            },
-          });
-          return {
-            raw: repaired.result.raw,
-            result: repaired.result.result,
-            attempts: 1 + repaired.attempts,
-          };
-        }
-        if (error.validationSection === "source-audit") {
-          const proposedAudit = Object.fromEntries(
-            SOURCE_AUDIT_REPAIR_KEYS.map((key) => [key, rejected[key]]),
-          );
-          const repairContext = {
-            validationDefect: error.defect,
-            document: context.document,
-            fieldChecksInOrder: context.fieldChecksInOrder,
-            lineItemChecksInOrder: context.lineItemChecksInOrder,
-            sourcePagePointers: context.sourcePagePointers,
-            proposedAudit,
-          };
-          const repaired = await completeReviewRequest({
-            operation: "source-audit-repair",
-            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
-            schema: buildSourceAuditRepairSchema(
-              options.document,
-              options.pages,
-            ),
-            maxTokens: configuredPositive(
-              "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
-              8192,
-              32768,
-            ),
-            messages: [
-              { role: "system", content: SOURCE_AUDIT_REPAIR_INSTRUCTION },
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: JSON.stringify(repairContext) },
-                  ...options.pages.flatMap((page, index) => [
-                    {
-                      type: "text" as const,
-                      text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
-                    },
-                    {
-                      type: "image_url" as const,
-                      image_url: { url: page.image },
-                    },
-                  ]),
-                ],
-              },
-            ],
-            validate: (raw) => {
-              const patch = object(JSON.parse(raw));
-              if (
-                Object.keys(patch).length !== SOURCE_AUDIT_REPAIR_KEYS.length ||
-                Object.keys(patch).some(
-                  (key) =>
-                    !SOURCE_AUDIT_REPAIR_KEYS.includes(
-                      key as (typeof SOURCE_AUDIT_REPAIR_KEYS)[number],
-                    ),
-                ) ||
-                SOURCE_AUDIT_REPAIR_KEYS.some(
-                  (key) => !Object.hasOwn(patch, key),
-                )
-              )
-                throw new Error(
-                  "Source-audit repair returned fields outside its repair contract.",
-                );
-              const merged = JSON.stringify({ ...rejected, ...patch });
-              return { raw: merged, result: validateMerged(merged) };
-            },
-          });
-          return {
-            raw: repaired.result.raw,
-            result: repaired.result.result,
-            attempts: 1 + repaired.attempts,
-          };
-        }
-        const repairContext = {
-          validationDefect: error.defect,
-          referencesToReview: context.referencesToReview,
-          originalReferenceValues: Object.fromEntries(
-            context.referencesToReview.map((field) => [
-              field,
-              options.document.fields[field],
-            ]),
-          ),
-          sourcePagePointers: context.sourcePagePointers,
-        };
-        const repaired = await completeReviewRequest({
-          operation: "source-reference-repair",
-          outputLimitFallbackModel: getExtractionReviewFallbackModel(),
-          schema: buildSourceReferenceRepairSchema(
-            options.document,
-            options.pages,
-          ),
-          maxTokens: configuredPositive(
-            "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
-            8192,
-            32768,
-          ),
-          messages: [
-            { role: "system", content: SOURCE_REFERENCE_REPAIR_INSTRUCTION },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: JSON.stringify(repairContext) },
-                ...options.pages.flatMap((page, index) => [
-                  {
-                    type: "text" as const,
-                    text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
-                  },
-                  {
-                    type: "image_url" as const,
-                    image_url: { url: page.image },
-                  },
-                ]),
+        const repairResponse = async (error: unknown) => {
+          if (
+            !(error instanceof ReviewContractError) ||
+            !error.rejected ||
+            !error.validationSection
+          )
+            throw error;
+          const rejected = parseObjectOrNull(error.rejected);
+          if (!rejected) throw error;
+          if (error.validationSection === "review-issues") {
+            const repaired = await completeReviewRequest({
+              operation: "source-issues-repair",
+              stopAfterValidationSections: [
+                "references",
+                "field-changes",
+                "source-audit",
               ],
-            },
-          ],
-          validate: (raw) => {
-            const patch = object(JSON.parse(raw));
-            if (
-              Object.keys(patch).some(
-                (key) => key !== "references" && key !== "newReferences",
-              ) ||
-              !Object.hasOwn(patch, "references") ||
-              !Object.hasOwn(patch, "newReferences")
-            )
-              throw new Error(
-                "Reference repair returned fields outside its repair contract.",
-              );
-            const merged = JSON.stringify({
-              ...rejected,
-              references: patch.references,
-              newReferences: patch.newReferences,
+              outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+              schema: buildSourceIssuesRepairSchema(
+                options.document,
+                options.pages,
+              ),
+              maxTokens: configuredPositive(
+                "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+                8192,
+                32768,
+              ),
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "Review ONLY the proposed unresolved findings against the supplied original page images. Return exactly {reviewIssues: [...]}. " +
+                    "Use only canonical fields allowed by the schema, a source-grounded reason, and evidence with a supplied own-page pointer and a literal quote containing the exact value. " +
+                    "Do not invent evidence, infer values, or change source fields, table coverage, support votes or page quality. " +
+                    "Remove unsupported proposed findings; return an empty array only when the source proves that none of the proposals is an unresolved finding.",
+                },
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "text",
+                      text: JSON.stringify({
+                        validationDefect: error.defect,
+                        document: context.document,
+                        proposedIssues: rejected.reviewIssues,
+                        sourcePagePointers: context.sourcePagePointers,
+                      }),
+                    },
+                    ...options.pages.flatMap((page, index) => [
+                      {
+                        type: "text" as const,
+                        text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                      },
+                      {
+                        type: "image_url" as const,
+                        image_url: { url: page.image },
+                      },
+                    ]),
+                  ],
+                },
+              ],
+              validate: (raw) => {
+                const patch = object(JSON.parse(raw));
+                if (
+                  Object.keys(patch).length !== 1 ||
+                  !Object.hasOwn(patch, "reviewIssues")
+                )
+                  throw new SourceReviewValidationError(
+                    "review-issues",
+                    "Finding repair may only return reviewIssues.",
+                  );
+                const merged = JSON.stringify({
+                  ...rejected,
+                  reviewIssues: patch.reviewIssues,
+                });
+                return { raw: merged, result: validateMerged(merged) };
+              },
             });
-            return { raw: merged, result: validateMerged(merged) };
-          },
-        });
-        return {
-          raw: repaired.result.raw,
-          result: repaired.result.result,
-          attempts: 1 + repaired.attempts,
+            return {
+              raw: repaired.result.raw,
+              result: repaired.result.result,
+              attempts: 1 + repaired.attempts,
+            };
+          }
+          if (error.validationSection === "field-changes") {
+            const repairContext = {
+              validationDefect: error.defect,
+              currentFields: options.document.fields,
+              proposedFieldChanges: rejected.fieldChanges,
+              fieldMeanings: context.fieldMeanings,
+              sourcePagePointers: context.sourcePagePointers,
+            };
+            const repaired = await completeReviewRequest({
+              operation: "source-field-changes-repair",
+              stopAfterValidationSections: [
+                "references",
+                "source-audit",
+                "review-issues",
+              ],
+              outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+              schema: buildSourceFieldChangesRepairSchema(
+                options.document,
+                options.pages,
+              ),
+              maxTokens: configuredPositive(
+                "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+                8192,
+                32768,
+              ),
+              messages: [
+                {
+                  role: "system",
+                  content: SOURCE_FIELD_CHANGES_REPAIR_INSTRUCTION,
+                },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: JSON.stringify(repairContext) },
+                    ...options.pages.flatMap((page, index) => [
+                      {
+                        type: "text" as const,
+                        text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                      },
+                      {
+                        type: "image_url" as const,
+                        image_url: { url: page.image },
+                      },
+                    ]),
+                  ],
+                },
+              ],
+              validate: (raw) => {
+                const patch = object(JSON.parse(raw));
+                if (
+                  Object.keys(patch).some((key) => key !== "fieldChanges") ||
+                  !Object.hasOwn(patch, "fieldChanges")
+                )
+                  throw new Error(
+                    "Field-change repair returned fields outside its repair contract.",
+                  );
+                const merged = JSON.stringify({
+                  ...rejected,
+                  fieldChanges: patch.fieldChanges,
+                });
+                return { raw: merged, result: validateMerged(merged) };
+              },
+            });
+            return {
+              raw: repaired.result.raw,
+              result: repaired.result.result,
+              attempts: 1 + repaired.attempts,
+            };
+          }
+          if (error.validationSection === "source-audit") {
+            const proposedAudit = Object.fromEntries(
+              SOURCE_AUDIT_REPAIR_KEYS.map((key) => [key, rejected[key]]),
+            );
+            const repairContext = {
+              validationDefect: error.defect,
+              document: context.document,
+              fieldChecksInOrder: context.fieldChecksInOrder,
+              lineItemChecksInOrder: context.lineItemChecksInOrder,
+              sourcePagePointers: context.sourcePagePointers,
+              proposedAudit,
+            };
+            const repaired = await completeReviewRequest({
+              operation: "source-audit-repair",
+              stopAfterValidationSections: [
+                "references",
+                "field-changes",
+                "review-issues",
+              ],
+              outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+              schema: buildSourceAuditRepairSchema(
+                options.document,
+                options.pages,
+              ),
+              maxTokens: configuredPositive(
+                "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+                8192,
+                32768,
+              ),
+              messages: [
+                { role: "system", content: SOURCE_AUDIT_REPAIR_INSTRUCTION },
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: JSON.stringify(repairContext) },
+                    ...options.pages.flatMap((page, index) => [
+                      {
+                        type: "text" as const,
+                        text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                      },
+                      {
+                        type: "image_url" as const,
+                        image_url: { url: page.image },
+                      },
+                    ]),
+                  ],
+                },
+              ],
+              validate: (raw) => {
+                const patch = object(JSON.parse(raw));
+                if (
+                  Object.keys(patch).length !==
+                    SOURCE_AUDIT_REPAIR_KEYS.length ||
+                  Object.keys(patch).some(
+                    (key) =>
+                      !SOURCE_AUDIT_REPAIR_KEYS.includes(
+                        key as (typeof SOURCE_AUDIT_REPAIR_KEYS)[number],
+                      ),
+                  ) ||
+                  SOURCE_AUDIT_REPAIR_KEYS.some(
+                    (key) => !Object.hasOwn(patch, key),
+                  )
+                )
+                  throw new Error(
+                    "Source-audit repair returned fields outside its repair contract.",
+                  );
+                const merged = JSON.stringify({ ...rejected, ...patch });
+                return { raw: merged, result: validateMerged(merged) };
+              },
+            });
+            return {
+              raw: repaired.result.raw,
+              result: repaired.result.result,
+              attempts: 1 + repaired.attempts,
+            };
+          }
+          const repairContext = {
+            validationDefect: error.defect,
+            referencesToReview: context.referencesToReview,
+            originalReferenceValues: Object.fromEntries(
+              context.referencesToReview.map((field) => [
+                field,
+                options.document.fields[field],
+              ]),
+            ),
+            sourcePagePointers: context.sourcePagePointers,
+          };
+          const repaired = await completeReviewRequest({
+            operation: "source-reference-repair",
+            stopAfterValidationSections: [
+              "field-changes",
+              "source-audit",
+              "review-issues",
+            ],
+            outputLimitFallbackModel: getExtractionReviewFallbackModel(),
+            schema: buildSourceReferenceRepairSchema(
+              options.document,
+              options.pages,
+            ),
+            maxTokens: configuredPositive(
+              "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
+              8192,
+              32768,
+            ),
+            messages: [
+              { role: "system", content: SOURCE_REFERENCE_REPAIR_INSTRUCTION },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: JSON.stringify(repairContext) },
+                  ...options.pages.flatMap((page, index) => [
+                    {
+                      type: "text" as const,
+                      text: `Own page pointer p${index + 1} (original page ${page.pageNumber})`,
+                    },
+                    {
+                      type: "image_url" as const,
+                      image_url: { url: page.image },
+                    },
+                  ]),
+                ],
+              },
+            ],
+            validate: (raw) => {
+              const patch = object(JSON.parse(raw));
+              if (
+                Object.keys(patch).some(
+                  (key) => key !== "references" && key !== "newReferences",
+                ) ||
+                !Object.hasOwn(patch, "references") ||
+                !Object.hasOwn(patch, "newReferences")
+              )
+                throw new Error(
+                  "Reference repair returned fields outside its repair contract.",
+                );
+              const merged = JSON.stringify({
+                ...rejected,
+                references: patch.references,
+                newReferences: patch.newReferences,
+              });
+              return { raw: merged, result: validateMerged(merged) };
+            },
+          });
+          return {
+            raw: repaired.result.raw,
+            result: repaired.result.result,
+            attempts: 1 + repaired.attempts,
+          };
         };
+        const repairedSections = new Set<SourceReviewValidationSection>();
+        let failure: unknown = error;
+        let attempts = 1;
+        while (
+          failure instanceof ReviewContractError &&
+          failure.validationSection
+        ) {
+          const section = failure.validationSection;
+          if (repairedSections.has(section)) throw failure;
+          repairedSections.add(section);
+          try {
+            const repaired = await repairResponse(failure);
+            return { ...repaired, attempts: attempts + repaired.attempts - 1 };
+          } catch (next) {
+            attempts += 2;
+            failure = next;
+          }
+        }
+        throw failure;
       }
     },
   });
@@ -817,6 +873,73 @@ async function reviewOneSource(options: {
     return { ...cached, key };
   } catch (error) {
     if (!(error instanceof ReviewContractError)) throw error;
+    if (
+      error.validationSection === "references" &&
+      error.rejected &&
+      !options.referenceQuarantineAttempted
+    ) {
+      let isolated: ReturnType<
+        typeof isolateUnverifiedSourceReferences
+      > | null = null;
+      try {
+        isolated = isolateUnverifiedSourceReferences(
+          error.rejected,
+          options.document,
+          options.pages,
+        );
+      } catch {
+        // A malformed container cannot be treated as independent reference
+        // evidence. Preserve the normal approval/matching block below.
+      }
+      if (isolated?.quarantined.length) {
+        const independent = await reviewOneSource({
+          ...options,
+          document: isolated.document,
+          referenceQuarantineAttempted: true,
+          recheckReason: `The previous reference proofs for ${isolated.quarantined.join(", ")} could not be validated and those unverified proposals were quarantined. Independently verify this source's retained fields and complete commercial table. Restore a quarantined reference only if its exact printed value and own-page proof can now be supplied. Do not infer missing values.`,
+        });
+        const unresolved = isolated.quarantined.filter(
+          (field) =>
+            !independent.result.audit.referenceEvidence.some(
+              (proof) =>
+                proof.field === field &&
+                proof.value === independent.result.document.fields[field],
+            ),
+        );
+        if (!unresolved.length) return independent;
+        const reason = `Reference verification needs manual review: ${unresolved.join(", ")}. Other source data was independently re-reviewed; no unverified reference was accepted.`;
+        const deferred = unverifiedSourceReview(
+          options.document,
+          options.pages,
+        );
+        return {
+          ...independent,
+          result: {
+            ...independent.result,
+            audit: {
+              ...independent.result.audit,
+              status: "needs_review" as const,
+              reason,
+            },
+            summary: {
+              ...independent.result.summary,
+              verdict: "needs_review" as const,
+              warnings: [...independent.result.summary.warnings, reason],
+            },
+            reviewIssues: [
+              ...independent.result.reviewIssues,
+              ...deferred.reviewIssues.map((issue) => ({
+                ...issue,
+                id: `evidence-review-reference-quarantine-${options.document.id}`,
+                analysis: reason,
+                fixPlan:
+                  "Verify the named reference against the original source page before approval.",
+              })),
+            ],
+          },
+        };
+      }
+    }
     if (error.validationSection === "review-issues" && error.rejected) {
       const rejected = parseObjectOrNull(error.rejected);
       if (rejected) {
