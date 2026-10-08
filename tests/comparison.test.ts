@@ -143,7 +143,7 @@ test("complete conflicting IRNs are surfaced for review", () => {
   );
 });
 
-test("a printed reference does not pretend the actual PO or weight slip was uploaded", () => {
+test("a printed weight reference does not replace a missing required weight slip", () => {
   const summary = summarizeCase(
     [
       {
@@ -177,8 +177,8 @@ test("a printed reference does not pretend the actual PO or weight slip was uplo
     [],
   );
 
-  assert.deepEqual(summary.missingDocTypes, ["Purchase Order", "Weight Proof"]);
-  assert.equal(summary.riskScore, 24);
+  assert.deepEqual(summary.missingDocTypes, ["Weight Proof"]);
+  assert.equal(summary.riskScore, 12);
 });
 
 test("metric tonnes normalize when the unit is printed without a space", () => {
@@ -337,7 +337,8 @@ test("pages in one PDF sharing an invoice stay in one verification group despite
 
 test("a mother bill is detected without a PO when the downstream invoice faces the configured company", () => {
   const previousInternalNames = process.env.INTERNAL_COMPANY_NAMES;
-  process.env.INTERNAL_COMPANY_NAMES = "Samrat Group,Samrat Irons Private Limited";
+  process.env.INTERNAL_COMPANY_NAMES =
+    "Samrat Group,Samrat Irons Private Limited";
 
   try {
     const downstreamInvoice: CaseDoc = {

@@ -192,7 +192,6 @@ function scoreReceipt(
   if (vehicle) {
     if (invoice.vehicles.map(normalizeRef).includes(vehicle)) {
       score += 25;
-      truck = true;
       good.push(`same truck (${receipt.vehicle})`);
     } else {
       bad.push(`different truck (${receipt.vehicle})`);
@@ -217,6 +216,11 @@ function scoreReceipt(
     good,
     bad,
     truck,
+    // Vehicle, date, quantity and PO similarity do not establish invoice identity.
+    // A differing receipt invoice reference needs an exact shipment reference
+    // before it can be used automatically (split deliveries may share an EWB).
+    automaticEligible:
+      !vendorRef || vendorRef === normalizeRef(invoice.invoiceNumber) || truck,
   };
 }
 
@@ -910,7 +914,7 @@ function evaluateMaterialLine(args: {
           receipt.openQty > EPS
             ? "Already allocated to another invoice line"
             : `Already billed${receipt.invoicedBy ? ` (${receipt.invoicedBy})` : ""}`;
-        return { view, receipt, truck: false };
+        return { view, receipt, truck: false, automaticEligible: false };
       }
       const branch = context.branch;
       if (
@@ -919,13 +923,18 @@ function evaluateMaterialLine(args: {
         branch.bplId !== receipt.branchId
       ) {
         view.rejected = `Received at another branch, not ${branch.name}`;
-        return { view, receipt, truck: false };
+        return { view, receipt, truck: false, automaticEligible: false };
       }
       const scored = scoreReceipt(invoice, ln, receipt, rules, view.open);
       view.score = scored.score;
       view.good = scored.good;
       view.bad = scored.bad;
-      return { view, receipt, truck: scored.truck };
+      return {
+        view,
+        receipt,
+        truck: scored.truck,
+        automaticEligible: scored.automaticEligible,
+      };
     });
 
   const manual = state.allocations[String(i)];
@@ -941,8 +950,16 @@ function evaluateMaterialLine(args: {
       }
     }
   } else {
+    const hasExactReference = candidates.some(
+      (candidate) => !candidate.view.rejected && candidate.truck,
+    );
     const eligible = candidates
-      .filter((candidate) => !candidate.view.rejected)
+      .filter(
+        (candidate) =>
+          !candidate.view.rejected &&
+          candidate.automaticEligible &&
+          (!hasExactReference || candidate.truck),
+      )
       .sort(
         (a, b) =>
           b.view.score - a.view.score ||
@@ -951,7 +968,12 @@ function evaluateMaterialLine(args: {
     let taken = 0;
     for (const candidate of eligible) {
       if (remaining <= EPS) break;
-      if (taken === 0 && candidate.view.score < MIN_FIRST_SCORE) break;
+      if (
+        taken === 0 &&
+        !candidate.truck &&
+        candidate.view.score < MIN_FIRST_SCORE
+      )
+        break;
       if (taken > 0 && !candidate.truck) continue;
       candidate.view.allocated = r3(Math.min(candidate.view.open, remaining));
       remaining = r3(remaining - candidate.view.allocated);
@@ -1046,8 +1068,9 @@ function evaluateMaterialLine(args: {
         : `Matched to receipt ${nos}`,
   });
 
-  // The receipt was matched by PO and quantity only, without any truck or invoice reference.
-  const anchored = selected.some((candidate) => candidate.truck);
+  // Every allocated receipt must have invoice/shipment evidence, not merely
+  // one strong receipt followed by unrelated receipts on the same vehicle.
+  const anchored = selected.every((candidate) => candidate.truck);
   if (!anchored) {
     checks.push({
       id: `anchor-${i}`,
@@ -1055,7 +1078,7 @@ function evaluateMaterialLine(args: {
       sev: "ack",
       ask: "Is this the right receipt?",
       title: "Matched on PO and quantity only",
-      help: "The receipt has no truck number or invoice number that confirms it belongs to this invoice. Confirm it is the right one.",
+      help: "At least one selected receipt has no matching invoice, E-Way Bill or lorry receipt reference. A matching vehicle, PO or quantity alone does not confirm invoice identity. Confirm every selected receipt is correct.",
       options: [
         {
           choice: "ok",

@@ -484,6 +484,100 @@ test("one invoice, two trucks: quantity is split across two receipts", () => {
   );
 });
 
+test("same vehicle cannot pull another invoice into an exact-reference receipt group", () => {
+  const inv = invoice({
+    eWayBill: "EWB-DELIVERY-A",
+    freightAmount: 0,
+    taxableTotal: 65.036 * 68000,
+    lines: [
+      { ...invoice().lines[0], quantity: 65.036, amount: 65.036 * 68000 },
+    ],
+  });
+  const ctx = context([
+    receipt(5101, {
+      ...truck,
+      eWayBill: inv.eWayBill,
+      quantity: 5.136,
+      openQty: 5.136,
+    }),
+    receipt(5102, {
+      vendorRef: "DELIVERY-PART-B",
+      eWayBill: inv.eWayBill,
+      vehicle: "OTHER-VEHICLE-B",
+      quantity: 39.89,
+      openQty: 39.89,
+    }),
+    receipt(5103, {
+      vendorRef: "DELIVERY-PART-C",
+      eWayBill: inv.eWayBill,
+      vehicle: "OTHER-VEHICLE-C",
+      quantity: 20.01,
+      openQty: 20.01,
+    }),
+    receipt(5104, {
+      ...truck,
+      vendorRef: "UNRELATED-INVOICE",
+      quantity: 9.32,
+      openQty: 9.32,
+    }),
+    receipt(5105, { vehicle: truck.vehicle, quantity: 12, openQty: 12 }),
+  ]);
+  const result = evaluateMatch({ invoice: inv, context: ctx });
+  const allocated = result.lines[0].candidates.filter(
+    (candidate) => candidate.allocated > 0,
+  );
+  assert.deepEqual(
+    allocated.map((candidate) => [candidate.docNum, candidate.allocated]),
+    [
+      [5101, 5.136],
+      [5102, 39.89],
+      [5103, 20.01],
+    ],
+  );
+  assert.equal(result.lines[0].allocatedQty, 65.036);
+  assert.equal(result.lines[0].manual, false);
+});
+
+test("a same-vehicle receipt with a different invoice cannot be the first automatic selection", () => {
+  const result = evaluateMatch({
+    invoice: invoice(),
+    context: context([
+      receipt(5104, { ...truck, vendorRef: "UNRELATED-INVOICE" }),
+    ]),
+  });
+  assert.equal(result.lines[0].allocatedQty, 0);
+  assert.equal(result.lines[0].candidates[0].allocated, 0);
+});
+
+test("exact E-Way Bill supports split receipts even when their scoring evidence conflicts", () => {
+  const inv = invoice({ eWayBill: "EWB-DELIVERY-A" });
+  const result = evaluateMatch({
+    invoice: inv,
+    context: context([
+      receipt(5106, {
+        vendorRef: "DELIVERY-PART-A",
+        eWayBill: inv.eWayBill,
+        vehicle: "OTHER-VEHICLE",
+        lorryReceipt: "LOCAL-LR",
+        poRef: "OTHER-ORDER-REFERENCE",
+      }),
+    ]),
+  });
+  assert.equal(result.lines[0].allocatedQty, inv.lines[0].quantity);
+});
+
+test("vehicle-only fallback requires confirmation rather than establishing identity", () => {
+  const result = evaluateMatch({
+    invoice: invoice(),
+    context: context([receipt(5107, { vehicle: truck.vehicle })]),
+  });
+  assert.equal(result.lines[0].allocatedQty, invoice().lines[0].quantity);
+  assert.equal(
+    result.checks.find((check) => check.id === "anchor-0")?.sev,
+    "ack",
+  );
+});
+
 test("one GRPO open balance cannot be reused by separate invoice lines", () => {
   const shared = receipt(4501, {
     ...truck,
@@ -575,6 +669,7 @@ test("a part bill asks for confirmation, then is ready", () => {
       poRef: "APPO26-0247",
       poRate: 62500,
       vehicle: "AP21TC5510",
+      vendorRef: inv.invoiceNumber,
       note: "Two trucks were unloaded on one receipt",
     }),
   ]);

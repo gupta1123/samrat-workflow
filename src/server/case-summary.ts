@@ -3,7 +3,10 @@ import {
   isDocTypeEnabled,
   type PacketFieldConfiguration,
 } from "@/server/document-schema";
-import { MISSING_DOCUMENTS_FIELD } from "@/lib/missing-documents";
+import {
+  MISSING_DOCUMENTS_FIELD,
+  isRequiredMissingDocumentGroup,
+} from "@/lib/missing-documents";
 import { isInternalCompanyName } from "@/server/workspace-parties";
 import type { CaseDoc, DocType, FieldKey, Mismatch } from "@/types/pipeline";
 
@@ -684,7 +687,9 @@ export function getMissingCorePacketDocumentGroups(
 
   return getEnabledCorePacketGroups(fieldConfiguration)
     .filter(
-      (group) => !isCorePacketGroupCovered(group, documents, presentTypes),
+      (group) =>
+        isRequiredMissingDocumentGroup(group.label) &&
+        !isCorePacketGroupCovered(group, documents, presentTypes),
     )
     .map((group) => group.label);
 }
@@ -729,9 +734,8 @@ export function summarizeCase(
 
   const riskScore = Math.min(
     100,
-    mismatches.filter(
-      (mismatch) => mismatch.field !== MISSING_DOCUMENTS_FIELD,
-    ).length *
+    mismatches.filter((mismatch) => mismatch.field !== MISSING_DOCUMENTS_FIELD)
+      .length *
       10 +
       missingDocTypes.length * 12 +
       (paymentGap > 0 ? 10 : 0),
