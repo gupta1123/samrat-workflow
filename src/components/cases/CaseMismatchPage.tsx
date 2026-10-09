@@ -100,8 +100,8 @@ function getValueCount(mismatch: MismatchRecord) {
 function getMismatchResolutionLabel(
   status: MismatchRecord["resolutionStatus"],
 ) {
-  if (status === "accepted") return "Acknowledged";
-  if (status === "rejected") return "Disputed";
+  if (status === "accepted") return "Accepted";
+  if (status === "rejected") return "Rejected";
   return "Pending";
 }
 function getMismatchResolutionClassName(
@@ -865,7 +865,7 @@ export function getIssueListDetail(
     ) {
       return `${formatTaxAmount(parsedTaxIssue.actualTax)} vs ${formatTaxAmount(parsedTaxIssue.expectedTax)} - ${sourceLabel}`;
     }
-    return sourceLabel || issueType;
+    return sourceLabel ? `${issueType} - ${sourceLabel}` : issueType;
   }
   const count = getValueCount(mismatch);
   const status =
@@ -1403,7 +1403,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                       ? "Match GRPO & prepare invoice"
                       : visibleMismatches.length === 0
                         ? "No issues"
-                        : "Document review"}
+                        : `${acceptedMismatchCount + rejectedMismatchCount} of ${visibleMismatches.length} done · ${pendingMismatchCount} left`}
                   </p>
                 </div>
 
@@ -2019,17 +2019,15 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                                   ? "Case rejected"
                                   : selectedPendingMismatchIds.length > 0
                                     ? `${selectedPendingMismatchIds.length} selected`
-                                    : `${pendingMismatchCount} unresolved ${pendingMismatchCount === 1 ? "issue" : "issues"}`}
+                                    : `${pendingMismatchCount} ${pendingMismatchCount === 1 ? "issue" : "issues"} to review`}
                             </div>
-                            {isCaseFinal ? (
-                              <div className="mt-0.5 text-[11px] text-[#6b5d50]">
-                                {detail.case.status === "accepted"
-                                  ? `${acceptedMismatchCount} ${acceptedMismatchCount === 1 ? "issue" : "issues"} acknowledged`
-                                  : detail.case.status === "rejected"
-                                    ? `${rejectedMismatchCount} disputed · ${acceptedMismatchCount} acknowledged`
-                                    : `${acceptedMismatchCount} acknowledged · ${rejectedMismatchCount} disputed`}
-                              </div>
-                            ) : null}
+                            <div className="mt-0.5 text-[11px] text-[#8a7f72]">
+                              {detail.case.status === "accepted"
+                                ? `${acceptedMismatchCount} ${acceptedMismatchCount === 1 ? "issue" : "issues"} accepted`
+                                : detail.case.status === "rejected"
+                                  ? `${rejectedMismatchCount} rejected · ${acceptedMismatchCount} accepted`
+                                  : `${acceptedMismatchCount} accepted · ${rejectedMismatchCount} rejected`}
+                            </div>
                           </div>
                         </div>
                         {decisionStatus === "error" && decisionError && (
@@ -2071,7 +2069,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               ) : (
                                 <X className="mr-2 h-4 w-4" />
                               )}
-                              Dispute selected
+                              Reject Selected
                             </Button>
                             <Button
                               className="rounded-lg bg-[#2b1a10] text-xs font-medium text-white hover:bg-[#3b271a] shadow-sm"
@@ -2085,7 +2083,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               ) : (
                                 <Check className="mr-2 h-4 w-4" />
                               )}
-                              Acknowledge selected
+                              Accept Selected
                             </Button>
                           </>
                         ) : isActiveMismatchPending && !isCaseFinal ? (
@@ -2112,7 +2110,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               ) : (
                                 <X className="mr-2 h-4 w-4" />
                               )}
-                              Dispute issue
+                              Reject Issue
                             </Button>
                             <Button
                               className="rounded-lg bg-[#2b1a10] text-xs font-medium text-white hover:bg-[#3b271a] shadow-sm"
@@ -2124,7 +2122,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               ) : (
                                 <Check className="mr-2 h-4 w-4" />
                               )}
-                              Acknowledge issue
+                              Accept Issue
                             </Button>
                           </>
                         ) : !isActiveMismatchPending && !isCaseFinal ? (
@@ -2145,8 +2143,8 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                               )}
                               {activeMismatch.resolutionStatus === "accepted"
-                                ? "Dispute issue"
-                                : "Acknowledge issue"}
+                                ? "Change to rejected"
+                                : "Change to accepted"}
                             </Button>
                           </>
                         ) : (

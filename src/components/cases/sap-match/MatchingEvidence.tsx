@@ -248,22 +248,21 @@ export function ItemMatchingEvidence({
       ? null
       : identification?.method === "saved-mapping"
         ? identification.scope === "supplier"
-          ? null
+          ? "A saved link for this supplier connects the invoice item to this SAP item. The SAP name comes from Item Master."
           : identification.scope === "shared"
-            ? null
+            ? "A saved shared item link connects the invoice item to this SAP item. The SAP name comes from Item Master."
             : "A saved item link connects the invoice item to this SAP item. Its scope was not recorded in this check. The SAP name comes from Item Master."
         : "This saved check contains the SAP item, but does not record how it was identified. Re-check to record the matching method.";
 
   return (
-    <details
+    <section
       aria-label="Item matching"
-      open={!line.itemCode ? true : undefined}
-      className="text-[11px] leading-4"
+      className="rounded-lg border border-[#e0d8cc] bg-[#faf8f4] p-3 text-[11px] leading-4"
     >
-      <summary className="w-fit cursor-pointer py-1 font-medium text-[#6b4a33]">
-        Match details ·{" "}
+      <h3 className="font-semibold text-[#111827]">How the item matched</h3>
+      <p className="mt-1 font-medium text-[#6b4a33]">
         {line.itemCode ? itemIdentificationLabel(line) : "Item not linked"}
-      </summary>
+      </p>
       <table
         className="mt-2 w-full table-fixed text-left"
         aria-label="Invoice and SAP item comparison"
@@ -311,7 +310,15 @@ export function ItemMatchingEvidence({
       {explanation ? (
         <p className="mt-2 text-[#6b5d50]">{explanation}</p>
       ) : null}
-    </details>
+      {invoice.source ? (
+        <p className="mt-1 text-[10px] text-[#6b5d50]">
+          Invoice source:{" "}
+          {[invoice.source.fileName, invoice.source.pageLabel]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -333,109 +340,57 @@ export function MatchingEvidence({
     service
       ? inr(value)
       : `${qty(value)}${invoice.lines[line.index]?.unit ? ` ${invoice.lines[line.index].unit}` : ""}`;
-  const exceptions = new Map<
-    string,
-    { row: EvidenceRow; documents: string[] }
-  >();
-  for (const candidate of selected) {
-    for (const row of candidateEvidence(invoice, candidate)) {
-      if (
-        row.status === "Matched" ||
-        row.scanned === "Not recorded" ||
-        row.sap === "Not recorded in saved check"
-      )
-        continue;
-      const key = JSON.stringify([
-        row.label,
-        row.scanned,
-        row.sap,
-        row.status,
-        row.note,
-      ]);
-      const entry = exceptions.get(key) ?? { row, documents: [] };
-      const document = `${candidate.kind} ${candidate.docNum}`;
-      if (!entry.documents.includes(document)) entry.documents.push(document);
-      exceptions.set(key, entry);
-    }
-  }
-  const missingReferences = selected.filter(
-    (candidate) => !candidate.references,
-  );
+  const notices = [
+    ...new Set(
+      selected.flatMap((candidate) => [
+        ...(!candidate.references
+          ? [
+              `${candidate.kind} ${candidate.docNum}: reference values were not recorded in this saved check.`,
+            ]
+          : []),
+        ...candidateEvidence(invoice, candidate)
+          .filter(
+            (row) =>
+              row.status !== "Matched" &&
+              row.scanned !== "Not recorded" &&
+              row.sap !== "Not recorded in saved check",
+          )
+          .map((row) => {
+            const document = `${candidate.kind} ${candidate.docNum}`;
+            if (row.status === "Partly matched")
+              return `${document}: ${row.note?.replace(/^Matched:.*?\. /, "") ?? `${row.label} only partly matched.`}`;
+            if (row.status === "Different")
+              return `${row.label}: scanned ${row.scanned}; ${document} has ${row.sap}.`;
+            return `${row.label} ${row.scanned}: not verified against ${document}${row.sap === "0" ? " (SAP stores 0)" : ""}.`;
+          }),
+      ]),
+    ),
+  ];
   return (
     <section>
-      {exceptions.size || missingReferences.length ? (
-        <div
+      {notices.length ? (
+        <ul
           aria-label="Reference checks to note"
-          className="mb-2 rounded-md border border-[#f0d7a6] bg-[#fdf7ea] px-2.5 py-2 text-[11px] leading-4"
+          className="mb-2 space-y-1 border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]"
         >
-          <p className="mb-1 font-semibold text-[#855009]">Reference checks</p>
-          {missingReferences.length ? (
-            <p className="text-[#6b5d50]">
-              {missingReferences
-                .map((candidate) => `${candidate.kind} ${candidate.docNum}`)
-                .join(", ")}
-              : reference values were not recorded in this saved check.
-            </p>
-          ) : null}
-          {exceptions.size ? (
-            <div className="overflow-x-auto">
-              <table
-                className="w-full min-w-[380px] table-fixed text-left"
-                aria-label="Reference exceptions"
-              >
-                <thead className="text-[#6b5d50]">
-                  <tr>
-                    <th className="w-[26%] py-1 font-medium">Reference</th>
-                    <th className="w-[29%] py-1 font-medium">Scanned packet</th>
-                    <th className="py-1 font-medium">SAP</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...exceptions].map(([key, { row, documents }]) => (
-                    <tr
-                      key={key}
-                      className="border-t border-[#ecdcc1] align-top"
-                    >
-                      <th
-                        scope="row"
-                        className="py-1.5 pr-2 font-medium text-[#3d3530]"
-                      >
-                        {row.label}
-                        <span className="block text-[10px] font-normal text-[#855009]">
-                          {row.status === "Not checked"
-                            ? "Not verified"
-                            : row.status}
-                        </span>
-                      </th>
-                      <td className="break-words py-1.5 pr-2 text-[#3d3530]">
-                        {row.scanned}
-                      </td>
-                      <td className="break-words py-1.5 text-[#3d3530]">
-                        {row.sap}
-                        <span className="block text-[10px] text-[#6b5d50]">
-                          {documents.join(", ")}
-                        </span>
-                        {row.note && row.status !== "Partly matched" ? (
-                          <span className="block text-[10px] text-[#6b5d50]">
-                            {row.sap === "0"
-                              ? "SAP stores 0; reference unverified."
-                              : row.note}
-                          </span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </div>
+          {notices.map((notice) => (
+            <li key={notice}>{notice}</li>
+          ))}
+        </ul>
       ) : null}
       <details className="text-[11px]">
         <summary className="w-fit cursor-pointer py-1 font-medium text-[#6b4a33]">
           Matching evidence
         </summary>
         <div className="mt-2 border-t border-[#ece6dc] pt-2">
+          {invoice.source ? (
+            <p className="mb-2 text-[11px] text-[#6b5d50]">
+              Scanned invoice:{" "}
+              {[invoice.source.fileName, invoice.source.pageLabel]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          ) : null}
           {selected.length ? (
             <dl className="mb-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
               {[

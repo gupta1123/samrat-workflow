@@ -40,7 +40,7 @@ test("expiry display shows bill number and readable dates without technical expl
   assert.ok(html.includes("26 Jun 2026"));
   assert.ok(html.includes("7 Oct 2026"));
   assert.ok(html.includes("Today (India)"));
-  assert.ok(!html.includes("accept or reject"));
+  assert.ok(html.includes("accept or reject"));
   assert.ok(!html.includes("2026-06-26"));
 });
 

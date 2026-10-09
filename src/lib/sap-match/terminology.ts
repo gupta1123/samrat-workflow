@@ -32,10 +32,7 @@ export function sapMessage(
     text = text.split(value).join(`\u0000${index}\u0000`);
   });
   const phrases: Array<[string, string]> = [
-    [
-      "Sent back to the vendor for correction",
-      "Marked for supplier correction",
-    ],
+    ["Sent back to the vendor for correction", "Marked for supplier correction"],
     ["Return to vendor", "Mark for supplier correction"],
     [
       "Ask the vendor for a corrected invoice",
@@ -122,7 +119,7 @@ export function sapMessage(
     )
     .replace(
       /Billed (.+?) of the (.+?) received/g,
-      "Allocated GRPO Qty. $1 of GRPO Open Qty. $2",
+      "Invoice Qty. $1 of GRPO Open Qty. $2",
     )
     .replace(
       /billed (.+?) more than was received/g,

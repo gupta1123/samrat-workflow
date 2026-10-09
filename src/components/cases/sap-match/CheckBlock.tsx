@@ -57,7 +57,6 @@ export function CheckBlock({
   onChoose,
   onUndo,
   priceReview,
-  partialReceipt,
 }: {
   check: MatchCheck;
   locked: boolean;
@@ -65,7 +64,6 @@ export function CheckBlock({
   onChoose: (choice: string, reason: string) => void;
   onUndo: () => void;
   priceReview?: PriceReviewDetails;
-  partialReceipt?: { docNum: number; allocated: string; remaining: string };
 }) {
   const [picked, setPicked] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -126,16 +124,9 @@ export function CheckBlock({
           <tone.Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone.icon}`} />
           <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-auto">
             <p className="text-[12px] font-semibold text-[#111827]">
-              {partialReceipt
-                ? `Partial invoicing · GRPO ${partialReceipt.docNum}`
-                : (check.ask ?? check.title)}
+              {check.ask ?? check.title}
             </p>
-            {partialReceipt ? (
-              <p className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
-                Allocate {partialReceipt.allocated}; {partialReceipt.remaining}{" "}
-                remains open.
-              </p>
-            ) : check.help ? (
+            {check.help ? (
               <p className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
                 {check.help}
               </p>
@@ -145,7 +136,7 @@ export function CheckBlock({
                 {check.waitNote}
               </p>
             ) : null}
-            {!partialReceipt && singleOption.lines.length ? (
+            {singleOption.lines.length ? (
               <details className="mt-1 text-[11px] text-[#6b5d50]">
                 <summary className="w-fit cursor-pointer py-1">
                   Decision details

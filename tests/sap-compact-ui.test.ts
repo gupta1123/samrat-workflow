@@ -117,10 +117,7 @@ test("reference exceptions stay visible while the full matching trail is collaps
   );
   const visibleNotice = html.slice(0, html.indexOf("<details"));
   assert.match(visibleNotice, /UNLINKED-PO/);
-  assert.match(
-    visibleNotice,
-    /Lorry Receipt No\..*Not verified.*LR42.*SAP stores 0/,
-  );
+  assert.match(visibleNotice, /LR42.*not verified.*SAP stores 0/);
   assert.match(
     html,
     /<details[^>]*><summary[^>]*>Matching evidence<\/summary>/,
@@ -128,87 +125,6 @@ test("reference exceptions stay visible while the full matching trail is collaps
   assert.doesNotMatch(html, /<details[^>]*\bopen(?:[ =>])/);
   assert.match(html, /GRPO Quantity received/);
   assert.match(html, /GRPO 718, line 1.*PO 274, line 1/);
-});
-
-test("partial invoicing identifies its GRPO allocation rather than the whole invoice quantity", () => {
-  const original = matchFixture.result.lines[0];
-  const candidate = {
-    ...original.candidates[0],
-    open: 39.89,
-    allocated: 27.96,
-    docNum: 102810,
-  };
-  const html = renderToStaticMarkup(
-    createElement(MatchLineCard, {
-      caseId: "partial-allocation",
-      invoice: matchFixture.invoice,
-      line: { ...original, invoiceQty: 65.036, candidates: [candidate] },
-      checks: [
-        {
-          id: `part-${original.index}-${candidate.key}`,
-          lineIndex: original.index,
-          sev: "ack",
-          open: true,
-          title: "Invoice Qty. 27.96 of GRPO Open Qty. 39.89",
-          help: "Repeated explanation",
-          options: [
-            {
-              choice: "ok",
-              title: "Confirm partial invoicing",
-              lines: ["Repeated explanation"],
-              effect: "resolve",
-            },
-          ],
-        },
-      ],
-      locked: false,
-      busy: false,
-      vendorFound: true,
-      onChoose: () => {},
-      onUndo: () => {},
-      onAllocate: () => {},
-      onResetAllocation: () => {},
-      onLink: () => {},
-    }),
-  );
-  assert.match(html, /Partial invoicing · GRPO 102810/);
-  assert.match(html, /Allocate 27.96 MT; 11.93 MT remains open/);
-  assert.doesNotMatch(
-    html,
-    /Invoice Qty\. 27.96 of|Repeated explanation|Decision details/,
-  );
-  assert.match(html, /65.036 MT/);
-});
-
-test("shared PO reference exceptions are grouped without losing conflicting shipment values", () => {
-  const original = matchFixture.result.lines[0].candidates[0];
-  const html = renderToStaticMarkup(
-    createElement(MatchingEvidence, {
-      invoice: {
-        ...matchFixture.invoice,
-        poReferences: ["VENDOR-PO"],
-        vehicle: "TRUCK1",
-      },
-      line: {
-        ...matchFixture.result.lines[0],
-        candidates: [
-          original,
-          {
-            ...original,
-            key: "second",
-            docNum: 719,
-            vehicle: "OTHER",
-            references: { ...original.references, vehicle: "OTHER" },
-          },
-        ],
-      },
-      locked: false,
-    }),
-  );
-  const visible = html.slice(0, html.indexOf("<details"));
-  assert.equal((visible.match(/VENDOR-PO/g) ?? []).length, 1);
-  assert.match(visible, /GRPO 718, GRPO 719/);
-  assert.match(visible, /Vehicle No\..*TRUCK1.*OTHER.*GRPO 719/);
 });
 
 test("missing historical reference evidence is summarized once without hiding a known vehicle conflict", () => {
@@ -247,7 +163,7 @@ test("draft total and action precede collapsed posting details", () => {
     }),
   );
   const summary = html.slice(0, html.indexOf("<details"));
-  assert.match(summary, /Proposed amount.*₹200.*before tax/);
+  assert.match(summary, /Draft total.*₹200/);
   assert.match(summary, /Create draft/);
   assert.doesNotMatch(summary, /4130067129|TSPL001|Base Document/);
   assert.match(html, /View draft posting details/);

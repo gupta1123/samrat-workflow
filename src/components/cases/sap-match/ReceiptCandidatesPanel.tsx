@@ -21,7 +21,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { receiptSelection } from "@/lib/sap-match/receipt-selection";
-import { candidateEvidence } from "@/lib/sap-match/evidence";
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
 import type {
   CandidateView,
@@ -57,22 +56,11 @@ function CandidateCard({
   const id = useId();
   const chosen = Number(value) > 0;
   const rejected = Boolean(candidate.rejected);
-  const evidence = candidateEvidence(invoice, candidate);
-  const conflicts = evidence.filter(
-    (row) => row.status === "Different" || row.status === "Partly matched",
-  );
-  const warnings = candidate.bad.filter(
-    (message) =>
-      !candidate.references ||
-      !/different PO|reference|invoice number|vehicle|lorry|e-way|eway/i.test(
-        message,
-      ),
-  );
   const amount = (value: number) =>
     service ? inr(value) : `${qty(value)}${unit ? ` ${unit}` : ""}`;
   return (
     <li
-      className={`rounded-md border px-3 py-2 ${rejected ? "border-[#e0d8cc] bg-[#f6f3ee]" : chosen ? "border-[#9c9388] bg-white" : "border-[#e0d8cc] bg-white"}`}
+      className={`rounded-md border px-3 py-2 ${rejected ? "border-[#e0d8cc] bg-[#f6f3ee]" : chosen ? "border-[#8bb59b] bg-[#f3f9f5]" : "border-[#e0d8cc] bg-white"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -84,16 +72,9 @@ function CandidateCard({
               </span>
             </h4>
             {chosen && !rejected ? (
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-[#f0ece4] px-1.5 py-0.5 text-[9px] font-medium text-[#3d3530]">
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-[#dfefe4] px-1.5 py-0.5 text-[9px] font-medium text-[#24583e]">
                 <Check className="h-2.5 w-2.5" />
                 Selected
-              </span>
-            ) : null}
-            {!rejected && conflicts.length ? (
-              <span className="rounded-full bg-[#fff1d6] px-1.5 py-0.5 text-[9px] font-medium text-[#855009]">
-                {conflicts.some((row) => row.status === "Different")
-                  ? "Reference conflict"
-                  : "Reference review"}
               </span>
             ) : null}
           </div>
@@ -120,15 +101,9 @@ function CandidateCard({
                   {error}
                 </p>
               ) : null}
-              {conflicts.length || warnings.length ? (
+              {candidate.bad.length ? (
                 <p className="mt-0.5 text-[10px] leading-4 text-[#855009]">
-                  {[
-                    ...conflicts.map(
-                      (row) =>
-                        `${row.label.replace(/[:.]$/, "")} ${row.status === "Partly matched" ? "partly matched" : "differs"}`,
-                    ),
-                    ...warnings,
-                  ].join(" · ")}
+                  Also review: {candidate.bad.join("; ")}
                 </p>
               ) : null}
             </>
@@ -210,18 +185,6 @@ function CandidateCard({
               candidate={candidate}
               compact
             />
-            {candidate.bad.length ? (
-              <p className="text-[#855009]">
-                {candidate.bad
-                  .map((message) =>
-                    message.replace(
-                      /different PO(?:\s*\((.*?)\))?/gi,
-                      "Scanned PO reference differs from SAP PO $1",
-                    ),
-                  )
-                  .join("; ")}
-              </p>
-            ) : null}
             {candidate.note &&
             !/^Based On Purchase Orders\b/i.test(candidate.note.trim()) ? (
               <p>{candidate.note}</p>
@@ -456,22 +419,20 @@ export function ReceiptCandidatesPanel({
               </section>
             ) : null}
             {available.filter(matches).length ? (
-              <details
-                key={query ? "searching-other" : "other"}
-                open={query ? true : undefined}
-              >
-                <summary className="min-h-7 cursor-pointer text-[11px] font-semibold text-[#6b5d50]">
-                  Show other {label} ({available.filter(matches).length})
-                </summary>
-                <div className="mt-1.5">{renderCandidates(available)}</div>
-              </details>
+              <section>
+                {groupTitle(
+                  service ? "Other eligible POs" : "Other eligible GRPOs",
+                  available,
+                )}
+                {renderCandidates(available)}
+              </section>
             ) : null}
             {!selected.filter(matches).length &&
             !available.filter(matches).length ? (
               <p className="text-[11px] text-[#6b5d50]">
                 {query
-                  ? "No candidates match your search."
-                  : "No candidates available."}
+                  ? "No eligible candidates match your search."
+                  : "No eligible candidates available."}
               </p>
             ) : null}
             {excluded.filter(matches).length ? (

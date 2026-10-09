@@ -254,10 +254,7 @@ export function MatchLineCard({
               <table className="w-full table-fixed text-left text-[11px]">
                 <thead className="text-[#6b5d50]">
                   <tr>
-                    <th
-                      scope="col"
-                      className="relative w-[22%] pb-2 font-medium"
-                    >
+                    <th scope="col" className="relative w-[22%] pb-2 font-medium">
                       <span className="sr-only">Field</span>
                     </th>
                     <th
@@ -331,13 +328,6 @@ export function MatchLineCard({
                   ) : null}
                 </tbody>
               </table>
-              {invoice.source ? (
-                <p className="mt-1 text-[10px] text-[#6b5d50]">
-                  {[invoice.source.fileName, invoice.source.pageLabel]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-              ) : null}
               <p className="mt-1 text-[11px] text-[#6b5d50]">
                 {poNumber != null ? `SAP PO ${poNumber}` : "No SAP PO linked"}
                 {!service
@@ -353,10 +343,7 @@ export function MatchLineCard({
               >
                 <thead>
                   <tr className="text-left text-[10px] uppercase tracking-wider text-[#6b5d50]">
-                    <th
-                      scope="col"
-                      className="relative w-20 pb-1 font-semibold"
-                    >
+                    <th scope="col" className="relative w-20 pb-1 font-semibold">
                       <span className="sr-only">Field</span>
                     </th>
                     <SourceHeader
@@ -382,9 +369,7 @@ export function MatchLineCard({
                     <SourceHeader
                       title="Scanned Invoice (PDF)"
                       reference={
-                        [invoice.source?.fileName, invoice.source?.pageLabel]
-                          .filter(Boolean)
-                          .join(" · ") || "Supplier invoice"
+                        invoice.source?.pageLabel ?? "Supplier invoice"
                       }
                     />
                   </tr>
@@ -469,8 +454,6 @@ export function MatchLineCard({
               </p>
             ) : null}
 
-            <MatchingEvidence invoice={invoice} line={line} locked={locked} />
-
             {!locked
               ? others.map((check) => (
                   <CheckBlock
@@ -478,21 +461,6 @@ export function MatchLineCard({
                     check={check}
                     locked={locked}
                     busy={busy}
-                    partialReceipt={(() => {
-                      const candidate = selected.find(
-                        (entry) =>
-                          check.id === `part-${line.index}-${entry.key}`,
-                      );
-                      return candidate
-                        ? {
-                            docNum: candidate.docNum,
-                            allocated: quantity(candidate.allocated),
-                            remaining: quantity(
-                              Math.max(0, candidate.open - candidate.allocated),
-                            ),
-                          }
-                        : undefined;
-                    })()}
                     priceReview={
                       check.id === `rate-${line.index}`
                         ? priceReviewDetails(invoice, line, rateTolerancePct)
@@ -522,6 +490,8 @@ export function MatchLineCard({
                 Not checked: {unchecked.map((check) => check.title).join("; ")}
               </p>
             ) : null}
+
+            <MatchingEvidence invoice={invoice} line={line} locked={locked} />
 
             <div className="flex flex-wrap gap-2">
               {line.candidates.length ? (

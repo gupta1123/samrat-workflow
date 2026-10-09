@@ -513,10 +513,6 @@ function Matched({
     uncheckedNames[check.id] ?? check.title.split(" (")[0];
   const meta = STATUS[locked ? "ready" : result.status];
   const openCount = result.open.length;
-  const reviewSummary =
-    result.status === "review"
-      ? `${openCount} SAP ${openCount === 1 ? "decision" : "decisions"} to review`
-      : result.summary;
 
   if (variant === "sidebar") {
     return (
@@ -532,14 +528,22 @@ function Matched({
                 : undefined
             }
           />
+          <span className="truncate text-[11px] text-[#8a7f72]">
+            {invoice.invoiceNumber}
+          </span>
         </div>
         <div className="text-[11px] leading-4 text-[#3d3530]">
           {ap
             ? ap.status === "posted"
               ? `Posted as A/P Invoice ${ap.sap_docnum}`
               : `Draft Entry No. ${ap.sap_docnum} saved, not posted`
-            : reviewSummary}
+            : result.summary}
         </div>
+        {!ap && openCount > 1 ? (
+          <div className="text-[10px] text-[#8a7f72]">
+            {openCount - 1} more to resolve
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -590,28 +594,25 @@ function Matched({
             onCancel={() => onConfirmDraft(false)}
           />
         ) : (
-          <div className="space-y-1">
-            <Button
-              size="sm"
-              className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white shadow-sm hover:bg-[#3b271a]"
-              disabled={!canCreate || busy}
-              onClick={() => onConfirmDraft(true)}
-            >
-              <Send className="mr-1.5 h-3 w-3" />
-              Create A/P Invoice Draft in SAP Test
-            </Button>
-            <p className="text-[10px] text-[#6b5d50]">
-              SAP calculates tax. A draft does not post an invoice.
-            </p>
-          </div>
+          <Button
+            size="sm"
+            className="rounded-lg bg-[#2b1a10] text-[11px] font-medium text-white shadow-sm hover:bg-[#3b271a]"
+            disabled={!canCreate || busy}
+            onClick={() => onConfirmDraft(true)}
+          >
+            <Send className="mr-1.5 h-3 w-3" />
+            Create A/P Invoice Draft in SAP Test
+          </Button>
         )
       ) : (
         <p className="text-[11px] text-[#8a7f72]">
-          Resolve the SAP decisions before creating a draft.
+          The draft can be created once every item above is settled. It is
+          checked against SAP again at that moment.
         </p>
       )}
     </div>
   ) : null;
+  const first = result.open[0];
 
   return (
     <div className="space-y-4 px-4 py-3">
@@ -629,9 +630,9 @@ function Matched({
                   : `Draft Entry No. ${ap.sap_docnum} is saved in SAP`
                 : result.status === "ready"
                   ? "Ready to create A/P Invoice Draft"
-                  : reviewSummary}
+                  : (first?.title ?? result.summary)}
             </div>
-            {locked ? (
+            {locked || result.status !== "ready" ? (
               <StatusPill
                 status={locked ? "ready" : result.status}
                 label={
@@ -649,6 +650,12 @@ function Matched({
               ? `Comparison saved at draft creation · ${matchTimestamp(data.draftDetails?.recordedAt)}`
               : `Last SAP check: ${matchTimestamp(result.checkedAt ?? data.matchJob?.finishedAt)}`}
           </p>
+          <div className="mt-0.5 text-[11px] leading-4 text-[#6b5d50]">
+            {vendorLabel} · Vendor Ref. No. {invoice.invoiceNumber}
+            {!ap && result.status !== "ready" && openCount > 1
+              ? ` · ${openCount - 1} more thing${openCount > 2 ? "s" : ""} below`
+              : ""}
+          </div>
         </div>
         <span className="rounded-full bg-[#fff7ed] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#b45309] ring-1 ring-inset ring-[#fcd9b6]">
           SAP {data.sapEnv === "test" ? "Test" : data.sapEnv}

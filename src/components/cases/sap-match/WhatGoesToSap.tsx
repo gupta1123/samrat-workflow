@@ -46,21 +46,21 @@ export function WhatGoesToSap({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
         <div>
           <p className="text-[12px] font-semibold text-[#111827]">
-            {saved ? "Saved draft total" : "Proposed amount"}:{" "}
+            {saved ? "Saved draft total" : "Draft total"}:{" "}
             {inr(plan.bookedTaxable)}{" "}
             <span className="ml-1 font-normal text-[#6b5d50]">before tax</span>
           </p>
           {plan.difference !== null && Math.abs(plan.difference) > 0.005 ? (
             <p className="mt-1 text-[11px] text-[#9a5a0a]">
-              Scanned invoice before tax: {inr(plan.invoiceTaxable)} ·
-              Difference: {inr(plan.difference)}
+              Scanned invoice: {inr(plan.invoiceTaxable)} · Difference:{" "}
+              {inr(plan.difference)}
             </p>
           ) : null}
-          {saved ? (
-            <p className="mt-1 text-[11px] text-[#6b5d50]">
-              Recorded at draft creation; current SAP balances may differ.
-            </p>
-          ) : null}
+          <p className="mt-1 text-[11px] text-[#6b5d50]">
+            {saved
+              ? "Recorded at draft creation; current SAP balances may differ."
+              : "Tax is calculated by SAP. Creating a draft does not post an invoice."}
+          </p>
         </div>
         {actions}
       </div>
@@ -191,9 +191,7 @@ export function WhatGoesToSap({
         </div>
         <dl className="ml-auto max-w-xs space-y-1 px-4 pb-4 pt-3 text-[11px] tabular-nums">
           <div className="flex justify-between">
-            <dt className="text-[#6b5d50]">
-              {saved ? "Saved draft total" : "Proposed amount"} (before tax)
-            </dt>
+            <dt className="text-[#8a7f72]">Draft Total (before tax)</dt>
             <dd className="font-medium text-[#111827]">
               {inr(plan.bookedTaxable)}
             </dd>
@@ -214,6 +212,11 @@ export function WhatGoesToSap({
               </dd>
             </div>
           ) : null}
+          <div className="pt-1 text-[10px] leading-4 text-[#8a7f72]">
+            {saved
+              ? "Saved when the draft was created. This preview does not show current GRPO balances or subsequent SAP changes."
+              : "SAP works out tax from the linked documents. Nothing is created until you choose to create the draft."}
+          </div>
         </dl>
       </details>
     </section>
