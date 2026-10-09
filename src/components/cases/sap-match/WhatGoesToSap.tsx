@@ -51,10 +51,17 @@ export function WhatGoesToSap({
             <span className="ml-1 font-normal text-[#6b5d50]">before tax</span>
           </p>
           {plan.difference !== null && Math.abs(plan.difference) > 0.005 ? (
-            <p className="mt-1 text-[11px] text-[#9a5a0a]">
-              Scanned invoice: {inr(plan.invoiceTaxable)} · Difference:{" "}
-              {inr(plan.difference)}
-            </p>
+            Math.abs(plan.difference) <= 1 ? (
+              <p className="mt-1 text-[11px] text-[#24583e]">
+                ✓ Matches scanned invoice {inr(plan.invoiceTaxable)} (rounding{" "}
+                {inr(plan.difference)})
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] text-[#9a5a0a]">
+                Scanned invoice: {inr(plan.invoiceTaxable)} · Difference:{" "}
+                {inr(plan.difference)}
+              </p>
+            )
           ) : null}
           <p className="mt-1 text-[11px] text-[#6b5d50]">
             {saved

@@ -32,9 +32,31 @@ test("SAP LR zero is shown as unverified rather than a match or conflicting real
     },
   );
   const row = rows.find((row) => row.label === "Lorry Receipt No.")!;
-  assert.equal(row.sap, "0");
+  assert.equal(row.sap, "Blank in SAP");
   assert.equal(row.status, "Not checked");
-  assert.match(row.note!, /placeholder/);
+  assert.match(row.note!, /left this blank/);
+});
+
+test("a part-suffixed SAP invoice reference is the same invoice, not a conflict", () => {
+  const candidate = matchFixture.result.lines[0].candidates[0];
+  const rows = candidateEvidence(
+    { ...matchFixture.invoice, invoiceNumber: "2413387831" },
+    {
+      ...candidate,
+      references: { ...candidate.references!, invoice: "2413387831-2" },
+    },
+  );
+  const row = rows.find((row) => row.label === "Invoice No.")!;
+  assert.equal(row.status, "Matched");
+  assert.match(row.note!, /part suffix/);
+  const other = candidateEvidence(
+    { ...matchFixture.invoice, invoiceNumber: "2413387831" },
+    {
+      ...candidate,
+      references: { ...candidate.references!, invoice: "2413387832-2" },
+    },
+  ).find((row) => row.label === "Invoice No.")!;
+  assert.equal(other.status, "Different");
 });
 
 test("old snapshots do not invent missing SAP references", () => {

@@ -43,7 +43,7 @@ test("posted UI keeps comparison and preview but exposes no financial or match-e
     "Purchase Order",
     "GRPO",
     "Vendor Invoice",
-    "2 MT open",
+    "Received, not yet billed",
     "GRPO Quantity received",
     "Open at saved check",
     "Used in draft",

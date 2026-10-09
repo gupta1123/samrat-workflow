@@ -190,6 +190,17 @@ export function MatchLineCard({
         .map((candidate) => candidate.docNum),
     ),
   ];
+  const grpoSplit =
+    grpoNumbers.length > 1
+      ? selected
+          .filter((candidate) => candidate.kind === "GRPO")
+          .map((candidate) => `${candidate.docNum}: ${quantity(candidate.allocated)}`)
+          .join(" · ")
+      : null;
+  const sameAsTitle =
+    (line.itemName ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "") ===
+    title.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const otherCandidates = line.candidates.length > selected.length;
   const poNumber =
     line.po?.docNum ??
     selected.find((candidate) => candidate.kind === "PO")?.docNum;
@@ -223,7 +234,7 @@ export function MatchLineCard({
               <>
                 {invoiceLine?.vendorItemCode ? " → " : ""}
                 <span className="font-mono">{line.itemCode}</span>
-                {line.itemName ? ` · ${line.itemName}` : ""}
+                {line.itemName && !sameAsTitle ? ` · ${line.itemName}` : ""}
               </>
             ) : null}
             {!unmapped
@@ -332,7 +343,7 @@ export function MatchLineCard({
                 {poNumber != null ? `SAP PO ${poNumber}` : "No SAP PO linked"}
                 {!service
                   ? grpoNumbers.length
-                    ? ` · GRPO ${grpoNumbers.join(", ")}`
+                    ? ` · GRPO ${grpoSplit ?? grpoNumbers.join(", ")}`
                     : " · No GRPO selected"
                   : " · Service; GRPO not required"}
               </p>
@@ -364,6 +375,7 @@ export function MatchLineCard({
                               ? `GRPO No. ${grpoNumbers.join(", ")}`
                               : "No GRPO selected"
                         }
+                        detail={grpoSplit ?? undefined}
                       />
                     ) : null}
                     <SourceHeader
@@ -394,11 +406,16 @@ export function MatchLineCard({
                       <Row
                         label="Quantity"
                         order={quantity(line.po?.qty ?? null)}
+                        orderNote={line.po?.qty != null ? "Ordered" : undefined}
                         received={
                           selected.length
-                            ? `${quantity(balances.available)} open`
+                            ? quantity(balances.available)
                             : "No selection"
                         }
+                        receivedNote={
+                          selected.length ? "Received, not yet billed" : undefined
+                        }
+                        billedNote="Billed"
                         billed={quantity(line.invoiceQty)}
                         tone={toneOf(checks, [
                           `qty-${line.index}`,
@@ -484,6 +501,16 @@ export function MatchLineCard({
                       onUndo={() => {}}
                     />
                   ))}
+
+            {!locked && otherCandidates && needsReview ? (
+              <p className="text-[11px] text-[#6b5d50]">
+                Not the right GRPO? Open{" "}
+                <span className="font-medium text-[#3d3530]">
+                  GRPOs considered
+                </span>{" "}
+                below to choose another.
+              </p>
+            ) : null}
 
             {unchecked.length ? (
               <p className="text-[11px] text-[#6b5d50]">

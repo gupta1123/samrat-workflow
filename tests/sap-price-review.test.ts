@@ -89,3 +89,27 @@ test("no allocation does not display zero as an invoice-value difference", () =>
     null,
   );
 });
+
+test("a lower rate that equals the invoice freight is explained as freight billed separately", () => {
+  const withFreight = { ...matchFixture.invoice, freightAmount: 256317.6 };
+  assert.equal(
+    priceReviewDetails(withFreight, line, 0.5)?.freightExplains,
+    256317.6,
+  );
+  assert.equal(
+    priceReviewDetails(
+      { ...matchFixture.invoice, freightAmount: 1000 },
+      line,
+      0.5,
+    )?.freightExplains,
+    null,
+  );
+  assert.equal(
+    priceReviewDetails(
+      withFreight,
+      { ...line, invoiceRate: 70572 },
+      0.5,
+    )?.freightExplains,
+    null,
+  );
+});

@@ -20,6 +20,9 @@ const color = {
   "Not checked": "text-[#6b5d50]",
 };
 
+const normalizedText = (value: string | null | undefined) =>
+  (value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
 function EvidenceTable({
   rows,
   sapLabel,
@@ -253,6 +256,23 @@ export function ItemMatchingEvidence({
             ? "A saved shared item link connects the invoice item to this SAP item. The SAP name comes from Item Master."
             : "A saved item link connects the invoice item to this SAP item. Its scope was not recorded in this check. The SAP name comes from Item Master."
         : "This saved check contains the SAP item, but does not record how it was identified. Re-check to record the matching method.";
+  const sameName =
+    Boolean(line.itemName) &&
+    normalizedText(source?.description) === normalizedText(line.itemName);
+  if (identification?.method === "exact-code" && line.itemCode && sameName) {
+    return (
+      <p
+        aria-label="Item matching"
+        className="flex flex-wrap items-center gap-x-1.5 text-[11px] leading-4 text-[#24583e]"
+      >
+        <span aria-hidden>✓</span>
+        <span>
+          Item code <span className="font-mono">{line.itemCode}</span> found
+          in SAP Item Master with the same name
+        </span>
+      </p>
+    );
+  }
 
   return (
     <section
@@ -340,43 +360,116 @@ export function MatchingEvidence({
     service
       ? inr(value)
       : `${qty(value)}${invoice.lines[line.index]?.unit ? ` ${invoice.lines[line.index].unit}` : ""}`;
-  const notices = [
-    ...new Set(
-      selected.flatMap((candidate) => [
-        ...(!candidate.references
-          ? [
-              `${candidate.kind} ${candidate.docNum}: reference values were not recorded in this saved check.`,
-            ]
-          : []),
-        ...candidateEvidence(invoice, candidate)
-          .filter(
-            (row) =>
-              row.status !== "Matched" &&
-              row.scanned !== "Not recorded" &&
-              row.sap !== "Not recorded in saved check",
-          )
-          .map((row) => {
-            const document = `${candidate.kind} ${candidate.docNum}`;
-            if (row.status === "Partly matched")
-              return `${document}: ${row.note?.replace(/^Matched:.*?\. /, "") ?? `${row.label} only partly matched.`}`;
-            if (row.status === "Different")
-              return `${row.label}: scanned ${row.scanned}; ${document} has ${row.sap}.`;
-            return `${row.label} ${row.scanned}: not verified against ${document}${row.sap === "0" ? " (SAP stores 0)" : ""}.`;
-          }),
-      ]),
-    ),
-  ];
+  const missingReferences = selected
+    .filter((candidate) => !candidate.references)
+    .map((candidate) => `${candidate.kind} ${candidate.docNum}`);
+  const evidence = selected.map((candidate) => ({
+    candidate,
+    rows: candidateEvidence(invoice, candidate),
+  }));
+  const exceptions = [
+    ...new Set(evidence.flatMap(({ rows }) => rows.map((row) => row.label))),
+  ]
+    .map((label) => ({
+      label,
+      scanned:
+        evidence
+          .map(({ rows }) => rows.find((row) => row.label === label)?.scanned)
+          .find((value) => value && value !== "Not recorded") ?? "Not recorded",
+      cells: evidence.map(({ rows }) =>
+        rows.find((row) => row.label === label),
+      ),
+    }))
+    .filter(
+      ({ scanned, cells }) =>
+        scanned !== "Not recorded" &&
+        cells.some(
+          (cell) =>
+            cell &&
+            cell.status !== "Matched" &&
+            cell.sap !== "Not recorded in saved check",
+        ),
+    );
   return (
     <section>
-      {notices.length ? (
-        <ul
-          aria-label="Reference checks to note"
-          className="mb-2 space-y-1 border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]"
-        >
-          {notices.map((notice) => (
-            <li key={notice}>{notice}</li>
-          ))}
-        </ul>
+      {missingReferences.length ? (
+        <p className="mb-2 text-[11px] leading-4 text-[#6b5d50]">
+          {missingReferences.join(", ")}: reference values were not recorded in
+          this saved check.
+        </p>
+      ) : null}
+      {exceptions.length ? (
+        <div className="mb-2 overflow-x-auto">
+          <table
+            aria-label="Reference checks to note"
+            className="w-full min-w-[360px] text-left text-[11px] leading-4"
+          >
+            <thead className="text-[10px] text-[#6b5d50]">
+              <tr>
+                <th scope="col" className="pb-1 pr-3 font-medium">
+                  Reference
+                </th>
+                <th scope="col" className="pb-1 pr-3 font-medium">
+                  Invoice packet
+                </th>
+                {evidence.map(({ candidate }) => (
+                  <th
+                    key={candidate.key}
+                    scope="col"
+                    className="pb-1 pr-3 font-medium"
+                  >
+                    {candidate.kind} {candidate.docNum}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {exceptions.map((row) => (
+                <tr
+                  key={row.label}
+                  className="border-t border-[#f0ece4] align-top"
+                >
+                  <th
+                    scope="row"
+                    className="py-1.5 pr-3 font-normal text-[#6b5d50]"
+                  >
+                    {row.label}
+                  </th>
+                  <td className="break-words py-1.5 pr-3 text-[#111827]">
+                    {row.scanned}
+                  </td>
+                  {row.cells.map((cell, index) => (
+                    <td
+                      key={evidence[index].candidate.key}
+                      className="break-words py-1.5 pr-3"
+                      title={cell?.note}
+                    >
+                      {!cell ? (
+                        <span className="text-[#6b5d50]">—</span>
+                      ) : (
+                        <>
+                          <span className={color[cell.status]}>
+                            {cell.status === "Matched"
+                              ? "✓"
+                              : cell.status === "Different"
+                                ? "≠"
+                                : cell.status === "Partly matched"
+                                  ? "~"
+                                  : "?"}
+                          </span>{" "}
+                          <span className="text-[#111827]">{cell.sap}</span>
+                        </>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-[10px] text-[#6b5d50]">
+            ✓ same · ≠ different · ~ partly matched · ? cannot be confirmed
+          </p>
+        </div>
       ) : null}
       <details className="text-[11px]">
         <summary className="w-fit cursor-pointer py-1 font-medium text-[#6b4a33]">

@@ -20,24 +20,48 @@ const normalized = (value: string) =>
 const usable = (value: string) =>
   Boolean(normalized(value) && !/^0+$/.test(normalized(value)));
 
+const placeholder = (value: string) =>
+  Boolean(normalized(value) && /^0+$/.test(normalized(value)));
+
+/** Stores often add a part suffix per truck: 2413387831-2 is still invoice 2413387831. */
+function suffixOf(scanned: string, sap: string) {
+  const match = sap
+    .trim()
+    .match(/^(.*?)\s*[-/]\s*(\d{1,2})$/);
+  return match && normalized(match[1]) === normalized(scanned)
+    ? match[2]
+    : null;
+}
+
 function compare(
   label: string,
   scanned: string[],
   sap: string[],
   recorded: boolean,
   source?: string,
+  allowPartSuffix = false,
 ): EvidenceRow {
   const left = scanned.filter(usable),
     right = sap.filter(usable);
+  const suffixed: string[] = [];
   const matched = left.filter((value) =>
-    right.some((other) => normalized(value) === normalized(other)),
+    right.some((other) => {
+      if (normalized(value) === normalized(other)) return true;
+      if (allowPartSuffix && suffixOf(value, other)) {
+        suffixed.push(other);
+        return true;
+      }
+      return false;
+    }),
   );
   const additional = left.filter((value) => !matched.includes(value));
   return {
     label,
     scanned: scanned.join(", ") || "Not recorded",
     sap: recorded
-      ? sap.join(", ") || "Not recorded"
+      ? sap
+          .map((value) => (placeholder(value) ? "Blank in SAP" : value))
+          .join(", ") || "Not recorded"
       : "Not recorded in saved check",
     status:
       !recorded || !left.length || !right.length
@@ -50,11 +74,11 @@ function compare(
     note:
       matched.length && additional.length
         ? `Matched: ${matched.join(", ")}. Additional packet reference: ${additional.join(", ")} (not matched to this document).`
-        : sap.some(
-              (value) => normalized(value) && /^0+$/.test(normalized(value)),
-            )
-          ? "SAP stores 0 as a placeholder; it does not confirm this reference."
-          : undefined,
+        : suffixed.length
+          ? `SAP records ${suffixed.join(", ")}: the same invoice with a part suffix.`
+          : sap.some(placeholder)
+            ? "Stores left this blank in SAP (saved as 0), so it cannot confirm this reference."
+            : undefined,
     source,
   };
 }
@@ -82,6 +106,8 @@ export function candidateEvidence(
       [invoice.invoiceNumber],
       refs?.invoice ? [refs.invoice] : [],
       Boolean(refs),
+      undefined,
+      true,
     ),
   );
   if (invoice.eWayBill || refs?.eWayBill)

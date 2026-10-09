@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   Check,
@@ -582,7 +583,13 @@ function Matched({
       ) : null}
       {!data.postable ? (
         <p className="text-[11px] text-[#8a7f72]">
-          Approve this case before creating an A/P Invoice Draft.
+          Approve this case before creating an A/P Invoice Draft.{" "}
+          <Link
+            href={`/cases/${caseId}`}
+            className="font-medium text-[#6b4a33] underline"
+          >
+            Go to approval
+          </Link>
         </p>
       ) : result.status === "ready" ? (
         confirmingDraft ? (
@@ -728,9 +735,10 @@ function Matched({
         <details className="border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]">
           <summary className="cursor-pointer font-medium">
             Not verified: {unchecked.map(uncheckedLabel).join(" · ")}
-            {!locked && result.status === "ready" ? (
-              <span className="mt-0.5 block font-normal">
-                Draft creation is allowed with these checks unverified.
+            {!locked ? (
+              <span className="font-normal">
+                {" "}
+                · does not block the draft
               </span>
             ) : null}
           </summary>

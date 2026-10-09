@@ -117,7 +117,7 @@ test("reference exceptions stay visible while the full matching trail is collaps
   );
   const visibleNotice = html.slice(0, html.indexOf("<details"));
   assert.match(visibleNotice, /UNLINKED-PO/);
-  assert.match(visibleNotice, /LR42.*not verified.*SAP stores 0/);
+  assert.match(visibleNotice, /LR42.*Blank in SAP/);
   assert.match(
     html,
     /<details[^>]*><summary[^>]*>Matching evidence<\/summary>/,

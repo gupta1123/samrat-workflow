@@ -68,6 +68,14 @@ export function PriceReviewBlock({
             {details.direction === "higher" ? "above" : "below"} {source} · Allowed:{" "}
             {details.tolerancePct}%
           </p>
+          {details.freightExplains != null ? (
+            <p className="mt-1.5 rounded-md bg-white/70 px-2 py-1.5 text-[11px] leading-4 text-[#3d3530]">
+              <strong>Likely cause: freight billed separately.</strong> The
+              difference matches the invoice freight of ₹
+              {money.format(details.freightExplains)}. If the PO rate
+              includes freight, the supplier has not undercharged.
+            </p>
+          ) : null}
 
           {!locked && !accepting ? (
             <div className="mt-2 flex flex-wrap gap-2">
@@ -93,7 +101,7 @@ export function PriceReviewBlock({
                   title="Marks this case for supplier correction. Contact the supplier separately; no notification is sent."
                   onClick={() => onChoose(returnOption.choice, "")}
                 >
-                  Mark for correction
+                  Supplier must correct
                 </Button>
               ) : null}
             </div>
@@ -117,6 +125,11 @@ export function PriceReviewBlock({
                 className="mt-1 block w-full rounded-md border border-[#cfc4b8] bg-white px-2 py-1.5 text-[11px] text-[#111827] outline-none focus:border-[#2d6a4f] focus:ring-1 focus:ring-[#2d6a4f]"
                 value={reason}
                 disabled={busy}
+                placeholder={
+                  details.freightExplains != null
+                    ? "e.g. Freight billed separately on the invoice"
+                    : undefined
+                }
                 onChange={(event) => setReason(event.target.value)}
               />
               <p
