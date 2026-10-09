@@ -5,7 +5,6 @@ import { Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MatchCheck } from "@/lib/sap-match/types";
 import type { PriceReviewDetails } from "@/lib/sap-match/price-review";
-import { inr } from "./format";
 
 const MIN_REASON = 5;
 const money = new Intl.NumberFormat("en-IN", {
@@ -36,12 +35,7 @@ export function PriceReviewBlock({
     (option) => option.effect === "return",
   );
   const source = details.comparisonSource.replace(/^SAP /, "");
-  const title =
-    source === "PO" || source === "GRPO"
-      ? details.direction === "higher"
-        ? `Price exceeds ${source} limit`
-        : `Price below ${source} tolerance`
-      : "Price outside allowed limit";
+  const title = `Invoice price is ${details.percent.toFixed(2)}% ${details.direction === "higher" ? "above" : "below"} ${source}`;
 
   return (
     <section
@@ -58,15 +52,12 @@ export function PriceReviewBlock({
                 {details.direction === "higher" ? "+" : "−"}₹
                 {money.format(details.valueDifference)}
               </strong>{" "}
-              before tax{details.partialAllocation ? " · allocated quantity" : ""}
+              before tax
+              {details.partialAllocation ? " · allocated quantity" : ""}
             </p>
           ) : null}
           <p className="mt-0.5 text-[10px] leading-4 text-[#6b5d50]">
-            {inr(details.difference)}
-            {details.unit ? `/${details.unit}` : ""} {details.direction} ·{" "}
-            {details.percent.toFixed(2)}%{" "}
-            {details.direction === "higher" ? "above" : "below"} {source} · Allowed:{" "}
-            {details.tolerancePct}%
+            Allowed difference: {details.tolerancePct}%
           </p>
 
           {!locked && !accepting ? (
@@ -93,7 +84,7 @@ export function PriceReviewBlock({
                   title="Marks this case for supplier correction. Contact the supplier separately; no notification is sent."
                   onClick={() => onChoose(returnOption.choice, "")}
                 >
-                  Mark for correction
+                  Mark correction needed
                 </Button>
               ) : null}
             </div>

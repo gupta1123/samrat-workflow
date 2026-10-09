@@ -54,13 +54,11 @@ export function EWayBillValidityCard({
           </dd>
         </div>
       </dl>
-      <p className="mt-4 text-xs text-[#5b4b3d]">
-        {expired
-          ? "This e-way bill has expired. Review the warning, then accept or reject it below."
-          : expiry
-            ? "This e-way bill is valid for today's date."
-            : "The expiry date is missing or could not be read. Check the source document before deciding."}
-      </p>
+      {!expiry ? (
+        <p className="mt-4 text-xs text-[#5b4b3d]">
+          The expiry date could not be read. Check the source document.
+        </p>
+      ) : null}
     </section>
   );
 }

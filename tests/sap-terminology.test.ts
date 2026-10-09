@@ -26,7 +26,7 @@ test("SAP copy distinguishes posting, document dates, GRPOs and vendor payment",
   );
   assert.equal(
     sapMessage("Billed 2 of the 5 received"),
-    "Invoice Qty. 2 of GRPO Open Qty. 5",
+    "Allocated GRPO Qty. 2 of GRPO Open Qty. 5",
   );
   assert.equal(
     sapMessage("same quantity"),
