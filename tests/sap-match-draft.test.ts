@@ -320,15 +320,34 @@ test("no attachment is fabricated when selected documents have none", () => {
   );
 });
 
-test("conflicting multi-GRPO attachments or series cannot silently pick the first", () => {
-  for (const field of ["AtcEntry", "InvoiceSeriesCode"] as const) {
-    const rows = openRows();
-    rows[1][field] += 1;
-    assert.throws(
-      () => openDocumentDraftFields(plan(), { grpos: rows, pos: [] }),
-      MatchDraftError,
-    );
-  }
+test("different GRPO attachment groups do not block a combined draft or pick one group", () => {
+  const rows = openRows();
+  rows[1].AtcEntry += 1;
+  const fields = openDocumentDraftFields(plan(), { grpos: rows, pos: [] });
+  assert.deepEqual(fields, { Series: 2014 });
+  const { payload } = buildMatchedDraftPayload({
+    caseId: "combined",
+    plan: plan(),
+    bases: bases(),
+    freightExpenseCode: 1,
+  });
+  Object.assign(payload, fields);
+  assert.equal(payload.AttachmentEntry, undefined);
+  assert.deepEqual(
+    (payload.DocumentLines as Array<{ BaseEntry: number }>).map((line) => line.BaseEntry),
+    [8431, 8433],
+  );
+  assert.equal(rows[0].AtcEntry, 240149);
+  assert.equal(rows[1].AtcEntry, 240150);
+});
+
+test("conflicting multi-GRPO invoice series still prevent a draft", () => {
+  const rows = openRows();
+  rows[1].InvoiceSeriesCode += 1;
+  assert.throws(
+    () => openDocumentDraftFields(plan(), { grpos: rows, pos: [] }),
+    /different invoice series/,
+  );
 });
 
 test("missing rows, wrong supplier, wrong line and invalid series prevent a draft", () => {

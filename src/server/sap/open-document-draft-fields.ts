@@ -56,13 +56,11 @@ export function openDocumentDraftFields(
       "The selected SAP documents have different invoice series. SAP must provide one compatible series before creating this draft.",
     );
   }
-  if (attachments.size > 1) {
-    throw new MatchDraftError(
-      "The selected SAP documents have different attachment entries. SAP accepts one AttachmentEntry per draft. Ask the SAP team to provide a combined attachment entry; no attachment was chosen arbitrarily.",
-    );
-  }
   return {
     Series: [...series][0],
-    ...(attachments.size ? { AttachmentEntry: [...attachments][0] } : {}),
+    // AttachmentEntry is optional and belongs to the document header. Multiple
+    // GRPO attachment groups cannot be represented by picking one of them.
+    // Keep their attachments on the linked base documents instead.
+    ...(attachments.size === 1 ? { AttachmentEntry: [...attachments][0] } : {}),
   };
 }
