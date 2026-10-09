@@ -21,17 +21,36 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { receiptSelection } from "@/lib/sap-match/receipt-selection";
+import {
+  poNotOnInvoice,
+  rankCandidates,
+  type RankedCandidate,
+} from "@/lib/sap-match/candidate-ranking";
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
-import type {
-  CandidateView,
-  LineResult,
-  MatchInvoice,
-} from "@/lib/sap-match/types";
+import type { LineResult, MatchInvoice } from "@/lib/sap-match/types";
 import { formatDate, inr, qty } from "./format";
 import { CandidateEvidence } from "./MatchingEvidence";
 
+function Signals({ ranked }: { ranked: RankedCandidate }) {
+  if (!ranked.signals.length) return null;
+  return (
+    <ul className="mt-1 flex flex-wrap gap-1" aria-label="Reference checks">
+      {ranked.signals.map((signal) => (
+        <li
+          key={signal.label}
+          title={signal.note ?? `SAP: ${signal.sap}`}
+          className={`rounded px-1.5 py-0.5 text-[10px] leading-3 ${signal.status === "same" ? "bg-[#e3f1e8] text-[#24583e]" : "bg-[#fbeceb] text-[#9b2923]"}`}
+        >
+          {signal.status === "same" ? "✓" : "≠"} {signal.label}
+          {signal.status === "different" ? ` ${signal.sap}` : ""}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function CandidateCard({
-  candidate,
+  ranked,
   invoice,
   service,
   unit,
@@ -40,9 +59,11 @@ function CandidateCard({
   locked,
   busy,
   group,
+  showLine,
+  fillValue,
   onValue,
 }: {
-  candidate: CandidateView;
+  ranked: RankedCandidate;
   invoice: MatchInvoice;
   service: boolean;
   unit: string;
@@ -51,8 +72,11 @@ function CandidateCard({
   locked: boolean;
   busy: boolean;
   group: string;
+  showLine: boolean;
+  fillValue: number;
   onValue: (next: string) => void;
 }) {
+  const { candidate } = ranked;
   const id = useId();
   const chosen = Number(value) > 0;
   const rejected = Boolean(candidate.rejected);
@@ -67,14 +91,21 @@ function CandidateCard({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <h4 className="text-[11px] font-semibold text-[#111827]">
               {service ? "PO" : SAP_TERMS.grpo} {candidate.docNum}
-              <span className="ml-1.5 text-[10px] font-normal text-[#6b5d50]">
-                Line {candidate.lineNum + 1}
-              </span>
+              {showLine ? (
+                <span className="ml-1.5 text-[10px] font-normal text-[#6b5d50]">
+                  Line {candidate.lineNum + 1}
+                </span>
+              ) : null}
             </h4>
             {chosen && !rejected ? (
               <span className="inline-flex items-center gap-0.5 rounded-full bg-[#dfefe4] px-1.5 py-0.5 text-[9px] font-medium text-[#24583e]">
                 <Check className="h-2.5 w-2.5" />
                 Selected
+              </span>
+            ) : null}
+            {ranked.otherInvoice && !rejected ? (
+              <span className="rounded-full bg-[#fbeceb] px-1.5 py-0.5 text-[9px] font-medium text-[#9b2923]">
+                Stores tagged invoice {ranked.otherInvoice}
               </span>
             ) : null}
           </div>
@@ -93,6 +124,7 @@ function CandidateCard({
             </p>
           ) : (
             <>
+              <Signals ranked={ranked} />
               {error ? (
                 <p
                   id={`${id}-error`}
@@ -101,17 +133,17 @@ function CandidateCard({
                   {error}
                 </p>
               ) : null}
-              {candidate.bad.length ? (
-                <p className="mt-0.5 text-[10px] leading-4 text-[#855009]">
-                  Also review: {candidate.bad.join("; ")}
+              {ranked.otherWarnings.length ? (
+                <p className="mt-1 text-[10px] leading-4 text-[#855009]">
+                  {ranked.otherWarnings.join("; ")}
                 </p>
               ) : null}
             </>
           )}
         </div>
         {!rejected ? (
-          <div className="w-24 shrink-0 text-right">
-            <p className="text-[10px] leading-4 text-[#6b5d50]">
+          <div className="shrink-0 text-right">
+            <p className="whitespace-nowrap text-[10px] leading-4 text-[#6b5d50]">
               <span
                 title={
                   locked
@@ -147,26 +179,31 @@ function CandidateCard({
                 Use this PO
               </label>
             ) : (
-              <>
-                <label
-                  htmlFor={id}
-                  className="mt-1 block text-[10px] text-[#3d3530]"
-                >
-                  {SAP_TERMS.allocateQty}
-                  {unit ? ` (${unit})` : ""}
-                </label>
+              <div className="mt-1 flex items-center justify-end gap-1">
+                {!chosen && fillValue > 0 ? (
+                  <button
+                    type="button"
+                    className="h-7 rounded-md border border-[#b6aca0] bg-white px-2 text-[10px] font-medium text-[#24583e] hover:bg-[#f3f9f5] disabled:opacity-50"
+                    disabled={busy}
+                    title={`Allocate ${amount(fillValue)} from this GRPO`}
+                    onClick={() => onValue(String(fillValue))}
+                  >
+                    Use {qty(fillValue)}
+                  </button>
+                ) : null}
                 <input
                   id={id}
-                  aria-label={`Quantity from GRPO ${candidate.docNum}, line ${candidate.lineNum + 1}`}
+                  aria-label={`Quantity from GRPO ${candidate.docNum}, line ${candidate.lineNum + 1}${unit ? ` (${unit})` : ""}`}
                   aria-invalid={Boolean(error)}
                   aria-describedby={error ? `${id}-error` : undefined}
-                  className={`mt-0.5 h-7 w-20 rounded-md border bg-white px-2 text-right text-[11px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[#2d6a4f] disabled:opacity-50 ${error ? "border-[#b3261e]" : "border-[#b6aca0]"}`}
+                  placeholder="0"
+                  className={`h-7 w-20 rounded-md border bg-white px-2 text-right text-[11px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[#2d6a4f] disabled:opacity-50 ${error ? "border-[#b3261e]" : "border-[#b6aca0]"}`}
                   inputMode="decimal"
                   disabled={busy}
                   value={value}
                   onChange={(event) => onValue(event.target.value)}
                 />
-              </>
+              </div>
             )}
           </div>
         ) : null}
@@ -238,70 +275,109 @@ export function ReceiptCandidatesPanel({
       (candidate) =>
         (selection.allocations[candidate.key] ?? 0) > candidate.open + 0.5,
     );
+  const ignorePo = !service && poNotOnInvoice(invoice, line.candidates);
+  const ranked = rankCandidates(invoice, line.candidates, ignorePo);
+  const lineCount = new Map<number, number>();
+  for (const candidate of line.candidates)
+    lineCount.set(candidate.docNum, (lineCount.get(candidate.docNum) ?? 0) + 1);
   const query = search.trim().toLowerCase();
-  const matches = (candidate: CandidateView) =>
+  const matches = ({ candidate }: RankedCandidate) =>
     [
       candidate.docNum,
       candidate.poRef,
       candidate.vehicle,
       candidate.date,
       candidate.rejected,
+      candidate.references?.invoice,
+      candidate.references?.eWayBill,
+      candidate.references?.lorryReceipt,
     ]
       .join(" ")
       .toLowerCase()
       .includes(query);
   // Keep groups stable while typing so editing never moves a focused input.
-  const selected = line.candidates.filter(
-    (candidate) => !candidate.rejected && candidate.allocated > 0,
+  const selected = ranked.filter(
+    ({ candidate }) => !candidate.rejected && candidate.allocated > 0,
   );
-  const available = line.candidates.filter(
-    (candidate) => !candidate.rejected && candidate.allocated <= 0,
+  const eligible = ranked.filter(
+    ({ candidate }) => !candidate.rejected && candidate.allocated <= 0,
   );
-  const excluded = line.candidates.filter((candidate) => candidate.rejected);
-  const renderCandidates = (candidates: CandidateView[]) => (
+  const likely = eligible.filter((entry) => entry.same > 0);
+  const others = eligible.filter((entry) => entry.same === 0);
+  const excluded = ranked.filter(({ candidate }) => candidate.rejected);
+  const remaining = Math.max(0, selection.remaining ?? 0);
+  const valueOf = (key: string, allocated: number) =>
+    edits[key] ?? (allocated > 0 ? String(allocated) : "");
+  const renderCandidates = (entries: RankedCandidate[]) => (
     <ul className="space-y-1.5">
-      {candidates.filter(matches).map((candidate) => (
-        <CandidateCard
-          key={candidate.key}
-          candidate={candidate}
-          invoice={invoice}
-          service={service}
-          unit={unit}
-          value={
-            edits[candidate.key] ??
-            (candidate.allocated > 0 ? String(candidate.allocated) : "")
-          }
-          error={selection.errors[candidate.key]}
-          locked={locked}
-          busy={busy}
-          group={`service-order-${caseId}-${line.index}`}
-          onValue={(next) => {
-            if (service) {
-              setEdits(
-                Object.fromEntries(
-                  line.candidates
-                    .filter((candidate) => !candidate.rejected)
-                    .map((option) => [
-                      option.key,
-                      option.key === candidate.key
-                        ? String(line.invoiceAmount ?? 0)
-                        : "0",
-                    ]),
-                ),
-              );
-            } else
-              setEdits((current) => ({ ...current, [candidate.key]: next }));
-          }}
-        />
-      ))}
+      {entries.filter(matches).map((entry) => {
+        const { candidate } = entry;
+        const value = valueOf(candidate.key, candidate.allocated);
+        return (
+          <CandidateCard
+            key={candidate.key}
+            ranked={entry}
+            invoice={invoice}
+            service={service}
+            unit={unit}
+            value={value}
+            error={selection.errors[candidate.key]}
+            locked={locked}
+            busy={busy}
+            group={`service-order-${caseId}-${line.index}`}
+            showLine={(lineCount.get(candidate.docNum) ?? 0) > 1}
+            fillValue={
+              Math.round(Math.min(candidate.open, remaining) * 1000) / 1000
+            }
+            onValue={(next) => {
+              if (service) {
+                setEdits(
+                  Object.fromEntries(
+                    line.candidates
+                      .filter((candidate) => !candidate.rejected)
+                      .map((option) => [
+                        option.key,
+                        option.key === candidate.key
+                          ? String(line.invoiceAmount ?? 0)
+                          : "0",
+                      ]),
+                  ),
+                );
+              } else
+                setEdits((current) => ({ ...current, [candidate.key]: next }));
+            }}
+          />
+        );
+      })}
     </ul>
   );
-  const groupTitle = (name: string, candidates: CandidateView[]) => (
+  const groupTitle = (name: string, entries: RankedCandidate[]) => (
     <h3 className="mb-2 text-[11px] font-semibold text-[#3d3530]">
-      {name} ({query ? `${candidates.filter(matches).length} of ` : ""}
-      {candidates.length})
+      {name} ({query ? `${entries.filter(matches).length} of ` : ""}
+      {entries.length})
     </h3>
   );
+  const invoiceRefs = [
+    invoice.vehicles.length ? `Vehicle ${invoice.vehicles.join(", ")}` : null,
+    invoice.eWayBill ? `E-way bill ${invoice.eWayBill}` : null,
+    invoice.lorryReceipt ? `LR ${invoice.lorryReceipt}` : null,
+    invoice.invoiceDate ? formatDate(invoice.invoiceDate) : null,
+  ].filter(Boolean);
+  const statusText = locked
+    ? "Read-only · balances and quantities from the saved comparison, not current SAP balances."
+    : hasErrors
+      ? "Correct the highlighted quantities before applying."
+      : overPo
+        ? "This bill exceeds the PO balance. Applying will require review."
+        : selection.remaining == null
+          ? `Vendor Invoice ${service ? "amount" : "quantity"} is unavailable. Review the invoice.`
+          : selection.remaining < 0
+            ? `${format(-selection.remaining)} above Invoice ${service ? "Amount" : "Qty."}. Applying will require review.`
+            : !matched
+              ? `${format(selection.remaining)} still to allocate.`
+              : selection.dirty
+                ? "Balanced. Apply to save this selection."
+                : "Balanced. No changes to apply.";
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -316,7 +392,7 @@ export function ReceiptCandidatesPanel({
       </DialogTrigger>
       <DialogPortal>
         <DialogOverlay className="bg-slate-950/25 backdrop-blur-none" />
-        <DialogContent className="fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-[480px] flex-col border-l border-[#e0d8cc] bg-[#faf8f4] shadow-2xl outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right motion-reduce:animate-none">
+        <DialogContent className="fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-[560px] flex-col border-l border-[#e0d8cc] bg-[#faf8f4] shadow-2xl outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right motion-reduce:animate-none">
           <header className="shrink-0 border-b border-[#e0d8cc] bg-white px-4 py-3">
             <DialogTitle className="pr-9 text-[13px] font-semibold text-[#111827]">
               {label} considered ({line.candidates.length})
@@ -329,6 +405,22 @@ export function ReceiptCandidatesPanel({
               <X className="h-3.5 w-3.5" />
               <span className="sr-only">Close {label} considered</span>
             </DialogClose>
+            {!service && invoiceRefs.length ? (
+              <p className="mt-1.5 text-[11px] leading-4 text-[#3d3530]">
+                <span className="text-[#6b5d50]">This invoice: </span>
+                {invoiceRefs.join(" · ")}
+              </p>
+            ) : null}
+            {ignorePo ? (
+              <p className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
+                The invoice prints{" "}
+                {invoice.poReferences.length
+                  ? invoice.poReferences.join(", ")
+                  : "no PO reference"}
+                , not a SAP PO number, so PO is not used to rank{" "}
+                {label}.
+              </p>
+            ) : null}
             <dl className="mt-2 grid grid-cols-3 gap-2 rounded-md bg-[#f6f3ee] px-2.5 py-2">
               {[
                 {
@@ -364,31 +456,6 @@ export function ReceiptCandidatesPanel({
                 </div>
               ))}
             </dl>
-            {locked || hasErrors || !matched || overPo || selection.dirty ? (
-              <p
-                role="status"
-                aria-live="polite"
-                aria-atomic="true"
-                className={`mt-1.5 text-[10px] leading-4 ${hasErrors || !matched || overPo ? "text-[#855009]" : "text-[#24583e]"}`}
-              >
-                {locked
-                  ? "Read-only · balances and quantities from the saved comparison, not current SAP balances."
-                  : hasErrors
-                    ? "Correct the highlighted quantities before applying."
-                    : overPo
-                      ? "This bill exceeds the PO balance. Applying will require review."
-                      : matched
-                        ? ""
-                        : selection.remaining == null
-                          ? `Vendor Invoice ${service ? "amount" : "quantity"} is unavailable. Review the invoice.`
-                          : selection.remaining < 0
-                            ? `${format(-selection.remaining)} above Invoice ${service ? "Amount" : "Qty."}. Applying will require review.`
-                            : `${format(selection.remaining)} still to allocate. Applying will require review.`}
-                {!locked && selection.dirty
-                  ? " Changes are not applied yet."
-                  : ""}
-              </p>
-            ) : null}
             {line.candidates.length > 6 ? (
               <div className="relative mt-2">
                 <Search className="pointer-events-none absolute left-2.5 top-2 h-3 w-3 text-[#6b5d50]" />
@@ -397,7 +464,7 @@ export function ReceiptCandidatesPanel({
                   placeholder={
                     service
                       ? "Filter by PO No. or Posting Date"
-                      : "Filter by GRPO No., PO No. or Vehicle No."
+                      : "Filter by GRPO, PO, vehicle, e-way bill, LR or invoice No."
                   }
                   className="h-7 w-full rounded-md border border-[#d4c9bc] bg-white pl-7 pr-2 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-[#2d6a4f]"
                   value={search}
@@ -418,22 +485,40 @@ export function ReceiptCandidatesPanel({
                 {renderCandidates(selected)}
               </section>
             ) : null}
-            {available.filter(matches).length ? (
+            {likely.filter(matches).length ? (
               <section>
                 {groupTitle(
-                  service ? "Other eligible POs" : "Other eligible GRPOs",
-                  available,
+                  service
+                    ? "Other eligible POs"
+                    : "Likely matches · at least one reference agrees",
+                  likely,
                 )}
-                {renderCandidates(available)}
+                {renderCandidates(likely)}
               </section>
             ) : null}
             {!selected.filter(matches).length &&
-            !available.filter(matches).length ? (
+            !eligible.filter(matches).length ? (
               <p className="text-[11px] text-[#6b5d50]">
                 {query
                   ? "No eligible candidates match your search."
                   : "No eligible candidates available."}
               </p>
+            ) : null}
+            {others.filter(matches).length ? (
+              <details
+                key={query ? "searching-others" : "others"}
+                open={query || !likely.length ? true : undefined}
+                className="border-t border-[#e0d8cc] pt-2"
+              >
+                <summary className="min-h-7 cursor-pointer text-[11px] font-semibold text-[#6b5d50]">
+                  {service
+                    ? "Other eligible POs"
+                    : "Same supplier and item, no matching reference"}{" "}
+                  ({query ? `${others.filter(matches).length} of ` : ""}
+                  {others.length})
+                </summary>
+                <div className="mt-1.5">{renderCandidates(others)}</div>
+              </details>
             ) : null}
             {excluded.filter(matches).length ? (
               <details
@@ -448,36 +533,52 @@ export function ReceiptCandidatesPanel({
               </details>
             ) : null}
           </div>
-          {!locked ? (
-            <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[#e0d8cc] bg-white px-4 py-2.5">
-              <Button
-                className="h-7 px-2.5 text-[11px]"
-                disabled={busy || !selection.dirty || hasErrors}
-                onClick={() => {
-                  if (busy || hasErrors || !selection.dirty) return;
-                  onAllocate(line.index, selection.allocations);
-                  setEdits({});
-                }}
-              >
-                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                Apply selection
-              </Button>
-              {line.manual || Object.keys(edits).length ? (
+          <footer className="shrink-0 border-t border-[#e0d8cc] bg-white px-4 py-2.5">
+            <p
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className={`text-[11px] leading-4 ${locked ? "text-[#6b5d50]" : hasErrors || !matched || overPo ? "text-[#855009]" : "text-[#24583e]"}`}
+            >
+              {!locked && selection.remaining != null ? (
+                <span className="font-semibold tabular-nums">
+                  {format(selection.total)} of {format(selection.billed)}
+                  {" · "}
+                </span>
+              ) : null}
+              {statusText}
+            </p>
+            {!locked ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
-                  variant="ghost"
-                  className="h-7 px-2.5 text-[11px] text-[#6b5d50]"
-                  disabled={busy}
+                  className="h-7 px-2.5 text-[11px]"
+                  disabled={busy || !selection.dirty || hasErrors}
                   onClick={() => {
+                    if (busy || hasErrors || !selection.dirty) return;
+                    onAllocate(line.index, selection.allocations);
                     setEdits({});
-                    if (line.manual) onResetAllocation(line.index);
                   }}
                 >
-                  <RotateCcw className="h-3 w-3" />
-                  Restore automatic selection
+                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                  Apply selection
                 </Button>
-              ) : null}
-            </footer>
-          ) : null}
+                {line.manual || Object.keys(edits).length ? (
+                  <Button
+                    variant="ghost"
+                    className="h-7 px-2.5 text-[11px] text-[#6b5d50]"
+                    disabled={busy}
+                    onClick={() => {
+                      setEdits({});
+                      if (line.manual) onResetAllocation(line.index);
+                    }}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Restore automatic selection
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </footer>
         </DialogContent>
       </DialogPortal>
     </Dialog>

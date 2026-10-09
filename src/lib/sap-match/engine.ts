@@ -31,6 +31,18 @@ export function normalizeRef(value: unknown): string {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+/**
+ * Stores add a part suffix when one invoice arrives on several trucks:
+ * "2413387831-2" on a receipt is part 2 of invoice 2413387831.
+ */
+export function invoicePart(sapRef: unknown, invoiceNumber: unknown) {
+  const match = String(sapRef ?? "")
+    .trim()
+    .match(/^(.*?)\s*[-/]\s*(\d{1,2})$/);
+  const base = normalizeRef(invoiceNumber);
+  return match && base && normalizeRef(match[1]) === base ? match[2] : null;
+}
+
 /** Key under which a vendor's item is remembered in the item-mapping table. */
 export function itemMappingKey(line: {
   vendorItemCode?: string | null;
@@ -156,10 +168,15 @@ function scoreReceipt(
   }
   const vendorRef = normalizeRef(receipt.vendorRef);
   if (vendorRef) {
+    const part = invoicePart(receipt.vendorRef, invoice.invoiceNumber);
     if (vendorRef === normalizeRef(invoice.invoiceNumber)) {
       score += 35;
       truck = true;
       good.push("stores wrote this invoice number on it");
+    } else if (part) {
+      score += 35;
+      truck = true;
+      good.push(`stores wrote this invoice number on it (part ${part})`);
     } else {
       score -= 30;
       bad.push(`stores linked it to another invoice (${receipt.vendorRef})`);

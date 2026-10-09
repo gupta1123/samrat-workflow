@@ -978,3 +978,13 @@ test("an unknown vendor blocks matching", () => {
   assert.equal(result.status, "blocked");
   assert.ok(result.checks.some((c) => c.id === "vendor" && c.sev === "block"));
 });
+
+test("a GRPO tagged with a part suffix of this invoice counts as this invoice", () => {
+  const result = evaluateMatch({
+    invoice: invoice(),
+    context: context([receipt(4412, { vendorRef: "1444099137-2" })]),
+  });
+  const candidate = result.lines[0].candidates[0];
+  assert.ok(candidate.good.some((reason) => /part 2/.test(reason)));
+  assert.ok(!candidate.bad.some((reason) => /another invoice/i.test(reason)));
+});

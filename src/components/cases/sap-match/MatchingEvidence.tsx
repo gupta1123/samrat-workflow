@@ -11,6 +11,7 @@ import {
   quantityBalances,
   type EvidenceRow,
 } from "@/lib/sap-match/evidence";
+import { poNotOnInvoice } from "@/lib/sap-match/candidate-ranking";
 import { inr, qty } from "./format";
 
 const color = {
@@ -363,6 +364,8 @@ export function MatchingEvidence({
   const missingReferences = selected
     .filter((candidate) => !candidate.references)
     .map((candidate) => `${candidate.kind} ${candidate.docNum}`);
+  const ignorePo =
+    !service && poNotOnInvoice(invoice, line.candidates);
   const evidence = selected.map((candidate) => ({
     candidate,
     rows: candidateEvidence(invoice, candidate),
@@ -381,7 +384,8 @@ export function MatchingEvidence({
       ),
     }))
     .filter(
-      ({ scanned, cells }) =>
+      ({ label, scanned, cells }) =>
+        !(ignorePo && label === "PO reference") &&
         scanned !== "Not recorded" &&
         cells.some(
           (cell) =>
@@ -396,6 +400,12 @@ export function MatchingEvidence({
         <p className="mb-2 text-[11px] leading-4 text-[#6b5d50]">
           {missingReferences.join(", ")}: reference values were not recorded in
           this saved check.
+        </p>
+      ) : null}
+      {ignorePo && selected.length ? (
+        <p className="mb-1 text-[10px] leading-4 text-[#6b5d50]">
+          The invoice prints {invoice.poReferences.join(", ") || "no PO reference"},
+          not a SAP PO number, so the PO is not compared here.
         </p>
       ) : null}
       {exceptions.length ? (

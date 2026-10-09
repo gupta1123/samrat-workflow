@@ -5,6 +5,7 @@ import type {
   MatchInvoice,
   MatchResult,
 } from "./types";
+import { invoicePart } from "./engine";
 
 export type EvidenceRow = {
   label: string;
@@ -23,16 +24,6 @@ const usable = (value: string) =>
 const placeholder = (value: string) =>
   Boolean(normalized(value) && /^0+$/.test(normalized(value)));
 
-/** Stores often add a part suffix per truck: 2413387831-2 is still invoice 2413387831. */
-function suffixOf(scanned: string, sap: string) {
-  const match = sap
-    .trim()
-    .match(/^(.*?)\s*[-/]\s*(\d{1,2})$/);
-  return match && normalized(match[1]) === normalized(scanned)
-    ? match[2]
-    : null;
-}
-
 function compare(
   label: string,
   scanned: string[],
@@ -47,7 +38,7 @@ function compare(
   const matched = left.filter((value) =>
     right.some((other) => {
       if (normalized(value) === normalized(other)) return true;
-      if (allowPartSuffix && suffixOf(value, other)) {
+      if (allowPartSuffix && invoicePart(other, value)) {
         suffixed.push(other);
         return true;
       }
