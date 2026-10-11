@@ -46,6 +46,8 @@ import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
 import { DraftHeaderFields } from "./sap-match/DraftHeaderFields";
 import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
+import { ReviewHeader } from "./sap-match/ReviewHeader";
+import { reviewModel } from "@/lib/sap-match/review-model";
 
 const STATUS: Record<
   MatchStatus,
@@ -512,6 +514,7 @@ function Matched({
   };
   const uncheckedLabel = (check: MatchCheck) =>
     uncheckedNames[check.id] ?? check.title.split(" (")[0];
+  const review = reviewModel(result, { approved: data.postable });
   const meta = STATUS[locked ? "ready" : result.status];
   const openCount = result.open.length;
 
@@ -623,63 +626,29 @@ function Matched({
 
   return (
     <div className="space-y-4 px-4 py-3">
-      {/* Verdict */}
-      <section
-        className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${ap ? "border-[#c4dfcf] bg-[#f1f8f4]" : meta.banner}`}
-      >
-        <meta.Icon className="h-5 w-5 shrink-0 text-[#3d3530]" />
-        <div className="min-w-0 basis-[calc(100%-2rem)] flex-1 sm:basis-auto">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="text-[13px] font-semibold text-[#111827]">
-              {ap
-                ? ap.status === "posted"
-                  ? `Posted as A/P Invoice ${ap.sap_docnum}`
-                  : `Draft Entry No. ${ap.sap_docnum} is saved in SAP`
-                : result.status === "ready"
-                  ? "Ready to create A/P Invoice Draft"
-                  : (first?.title ?? result.summary)}
-            </div>
-            {locked || result.status !== "ready" ? (
-              <StatusPill
-                status={locked ? "ready" : result.status}
-                label={
-                  ap
-                    ? ap.status === "posted"
-                      ? "Posted"
-                      : "A/P Invoice Draft"
-                    : undefined
-                }
-              />
-            ) : null}
-          </div>
-          <p className="mt-1 text-[11px] leading-4 text-[#6b5d50]">
-            {locked
-              ? `Comparison saved at draft creation · ${matchTimestamp(data.draftDetails?.recordedAt)}`
-              : `Last SAP check: ${matchTimestamp(result.checkedAt ?? data.matchJob?.finishedAt)}`}
-          </p>
-          <div className="mt-0.5 text-[11px] leading-4 text-[#6b5d50]">
-            {vendorLabel} · Vendor Ref. No. {invoice.invoiceNumber}
-            {!ap && result.status !== "ready" && openCount > 1
-              ? ` · ${openCount - 1} more thing${openCount > 2 ? "s" : ""} below`
-              : ""}
-          </div>
-        </div>
-        <span className="rounded-full bg-[#fff7ed] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#b45309] ring-1 ring-inset ring-[#fcd9b6]">
-          SAP {data.sapEnv === "test" ? "Test" : data.sapEnv}
-        </span>
-        {!locked ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2.5 text-[11px]"
-            disabled={busy}
-            onClick={onRefresh}
-          >
-            <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />{" "}
-            Re-check
-          </Button>
-        ) : null}
-      </section>
+      <ReviewHeader
+        title={
+          ap
+            ? ap.status === "posted"
+              ? `Posted as A/P Invoice ${ap.sap_docnum}`
+              : "Draft saved in SAP"
+            : review.title
+        }
+        tone={ap ? "ok" : review.tone}
+        env={data.sapEnv}
+        invoice={invoice}
+        vendor={data.vendor}
+        result={result}
+        unchecked={unchecked}
+        checkedAt={result.checkedAt ?? data.matchJob?.finishedAt}
+        savedLabel={
+          locked
+            ? `Comparison saved ${matchTimestamp(data.draftDetails?.recordedAt)}`
+            : null
+        }
+        busy={busy}
+        onRefresh={onRefresh}
+      />
 
       {locked ? (
         <p className="text-[11px] leading-4 text-[#6b5d50]">
@@ -730,28 +699,6 @@ function Matched({
           ) : null}
         </div>
       </details>
-
-      {unchecked.length ? (
-        <details className="border-l-2 border-[#d4c9bc] pl-2 text-[11px] leading-4 text-[#6b5d50]">
-          <summary className="cursor-pointer font-medium">
-            Not verified: {unchecked.map(uncheckedLabel).join(" · ")}
-            {!locked ? (
-              <span className="font-normal">
-                {" "}
-                · does not block the draft
-              </span>
-            ) : null}
-          </summary>
-          <ul className="mt-1 space-y-0.5">
-            {unchecked.map((check) => (
-              <li key={check.id}>
-                {check.title}
-                {check.help ? ` · ${check.help}` : ""}
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
 
       {actionError ? (
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">
