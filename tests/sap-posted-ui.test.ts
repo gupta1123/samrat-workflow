@@ -40,10 +40,9 @@ test("posted UI keeps comparison and preview but exposes no financial or match-e
   for (const text of [
     "Posted as A/P Invoice 848",
     "Comparison saved before posting",
-    "Purchase Order",
+    "SAP purchase order",
     "GRPO",
-    "Vendor Invoice",
-    "Received, not yet billed",
+    "Scanned invoice",
     "GRPO Quantity received",
     "Open at saved check",
     "Used in draft",

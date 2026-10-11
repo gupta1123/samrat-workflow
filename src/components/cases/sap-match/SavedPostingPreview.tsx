@@ -248,7 +248,7 @@ export function SavedPostingPreview({
       </div>
       <section>
         <h3 className="mb-2 text-[11px] font-semibold text-[#111827]">
-          Document
+          A/P Invoice {posted ? "" : "Draft "}· Document
         </h3>
         <PostingFieldGrid fields={docFields} />
         <div className="mt-1.5 text-[10px] text-[#8a7f72]">
@@ -276,7 +276,7 @@ export function SavedPostingPreview({
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[480px] text-left text-[11px]">
-            <thead className="border-b border-[#ece6dc] text-[10px] text-[#8a7f72]">
+            <thead className="border-b border-[#e0d8cc] bg-[#faf8f4] text-[10px] uppercase tracking-wider text-[#8a7f72]">
               <tr>
                 {[
                   "Item",
@@ -287,7 +287,7 @@ export function SavedPostingPreview({
                 ].map((label, index) => (
                   <th
                     key={label}
-                    className={`py-1.5 font-medium ${index > 1 ? "text-right" : ""}`}
+                    className={`px-2 py-1.5 font-semibold ${index > 1 ? "text-right" : ""}`}
                   >
                     {label}
                   </th>
@@ -301,7 +301,7 @@ export function SavedPostingPreview({
                     key={index}
                     className="border-b border-[#f0ece4] last:border-0"
                   >
-                    <td className="py-1.5 pr-3">
+                    <td className="px-2 py-1.5 pr-3">
                       <span>
                         {scalar(line.ItemDescription) ??
                           scalar(line.ItemCode) ??

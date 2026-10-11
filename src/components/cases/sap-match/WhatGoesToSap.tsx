@@ -58,7 +58,7 @@ export function WhatGoesToSap({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
         <div>
           <div className="text-[10px] text-[#8a7f72]">
-            Draft total · before tax
+            {saved ? "Submitted before tax" : "Draft total · before tax"}
           </div>
           <div className="text-[14px] font-semibold tabular-nums text-[#111827]">
             {inr(plan.bookedTaxable)}
@@ -88,7 +88,9 @@ export function WhatGoesToSap({
         onToggle={(event) => setExpanded(event.currentTarget.open)}
       >
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[12px] font-semibold text-[#111827] [&::-webkit-details-marker]:hidden">
-          <span>View draft posting details</span>
+          <span>
+            {saved ? "Saved A/P Invoice Draft Preview" : "View draft posting details"}
+          </span>
           <span className="ml-auto flex items-center gap-1 text-[11px] font-medium text-[#6b4a33]">
             <ChevronDown
               className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}

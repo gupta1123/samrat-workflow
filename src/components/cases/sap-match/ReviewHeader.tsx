@@ -137,7 +137,7 @@ function buildTiles(
     const po = services[0].po;
     receipts = {
       key: "receipts",
-      label: "Purchase order",
+      label: "Purchase Order",
       value: po?.docNum != null ? `PO ${po.docNum}` : "No PO",
       sub:
         services.length > 1

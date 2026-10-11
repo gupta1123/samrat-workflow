@@ -41,6 +41,10 @@ export function poNotOnInvoice(
   candidates: CandidateView[],
 ) {
   if (!candidates.some((candidate) => candidate.references)) return false;
+  // A printed number shaped like a SAP PO that no GRPO carries is a real
+  // mismatch the reviewer must see; only foreign numbers (sales orders) are noise.
+  if (invoice.poReferences.some((ref) => /^\d{5,}$/.test(ref.trim())))
+    return false;
   return !candidates.some((candidate) => {
     const row = candidateEvidence(invoice, candidate).find(
       (entry) => entry.label === "PO reference",
