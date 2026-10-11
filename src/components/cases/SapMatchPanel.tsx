@@ -732,6 +732,7 @@ function Matched({
           busy={busy}
           vendorFound={Boolean(data.vendor)}
           rateTolerancePct={data.rules.rateTolerancePct}
+          lineCount={result.lines.length}
           onChoose={onChoose}
           onUndo={onUndo}
           onAllocate={onAllocate}

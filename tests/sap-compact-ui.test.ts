@@ -36,7 +36,7 @@ const { MatchLineCard } = requireComponent(
   resolve(outputDir, "MatchLineCard.js"),
 );
 
-test("hidden field headers have a positioned cell on both responsive layouts", () => {
+test("the line card uses one comparison table for every screen size", () => {
   const html = renderToStaticMarkup(
     createElement(MatchLineCard, {
       caseId: "layout-test",
@@ -55,14 +55,10 @@ test("hidden field headers have a positioned cell on both responsive layouts", (
   );
   assert.ok(
     html.includes(
-      '<th scope="col" class="relative w-[22%] pb-2 font-medium"><span class="sr-only">Field</span>',
+      '<th scope="col" class="w-20 px-3 py-1.5"><span class="sr-only">Field</span>',
     ),
   );
-  assert.ok(
-    html.includes(
-      '<th scope="col" class="relative w-20 pb-1 font-semibold"><span class="sr-only">Field</span>',
-    ),
-  );
+  assert.equal(html.includes("sm:hidden"), false);
 });
 
 test("one-choice quantity review uses a named action and keeps the remaining balance visible", () => {
@@ -95,7 +91,6 @@ test("one-choice quantity review uses a named action and keeps the remaining bal
   assert.match(html, /other 8.2 stays open/);
   assert.match(html, /<button[^>]*>Confirm partial invoicing<\/button>/);
   assert.doesNotMatch(html, /Choose this|Recommended|Billed 41.8 of 50/);
-  assert.match(html, /Decision details/);
   assert.match(html, /8.2 waits for the next invoice/);
 });
 
