@@ -506,16 +506,7 @@ function Matched({
   const unchecked = result.checks.filter(
     (check) => check.sev === "unchecked" && check.lineIndex === null,
   );
-  const uncheckedNames: Record<string, string> = {
-    branch: "Branch",
-    period: "Posting Period",
-    tax: "GST type",
-    total: "Invoice total",
-  };
-  const uncheckedLabel = (check: MatchCheck) =>
-    uncheckedNames[check.id] ?? check.title.split(" (")[0];
   const review = reviewModel(result, { approved: data.postable });
-  const meta = STATUS[locked ? "ready" : result.status];
   const openCount = result.open.length;
 
   if (variant === "sidebar") {
@@ -622,7 +613,6 @@ function Matched({
       )}
     </div>
   ) : null;
-  const first = result.open[0];
 
   return (
     <div className="space-y-4 px-4 py-3">

@@ -5,7 +5,7 @@ import { Check, Minus, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { matchTimestamp } from "@/lib/sap-match/evidence";
-import type { ReviewModel, ReviewTone } from "@/lib/sap-match/review-model";
+import type { ReviewTone } from "@/lib/sap-match/review-model";
 import type {
   MatchCheck,
   MatchInvoice,
