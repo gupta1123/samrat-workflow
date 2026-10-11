@@ -41,7 +41,7 @@ export function FinalPostSection({
 
   if (status === "posted") {
     return (
-      <div className="rounded-lg border border-[#c3dfcb] bg-[#ebf5ee] px-4 py-3 text-[#1b4332]">
+      <div className="rounded-xl border border-[#c3dfcb] bg-[#ebf5ee] px-4 py-2.5 text-[11px] text-[#1b4332]">
         <div className="flex items-start gap-2.5">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
@@ -142,7 +142,7 @@ export function FinalPostSection({
   }
 
   return (
-    <div className="rounded-lg border border-[#c3dfcb] bg-[#ebf5ee] px-4 py-3 text-[#1b4332]">
+    <div className="rounded-xl border border-[#c3dfcb] bg-[#ebf5ee] px-4 py-2.5 text-[11px] text-[#1b4332]">
       <div className="flex items-start gap-2.5">
         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">

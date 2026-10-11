@@ -29,23 +29,120 @@ import {
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
 import type { LineResult, MatchInvoice } from "@/lib/sap-match/types";
 import { formatDate, inr, qty } from "./format";
-import { CandidateEvidence } from "./MatchingEvidence";
+import { candidateEvidence } from "@/lib/sap-match/evidence";
 
-function Signals({ ranked }: { ranked: RankedCandidate }) {
-  if (!ranked.signals.length) return null;
+const SEG_COLORS = ["#3f8a63", "#5f7fb8", "#c08a3e", "#8a5fb0", "#3f8a8a"];
+
+type Verdict = "strong" | "maybe" | "conflict" | "none";
+const VERDICT: Record<Verdict, { label: string; tone: string }> = {
+  strong: { label: "Same invoice", tone: "bg-[#e3f1e8] text-[#24583e]" },
+  maybe: { label: "Same truck only", tone: "bg-[#fdf1dc] text-[#855009]" },
+  conflict: { label: "Other invoice", tone: "bg-[#fbeceb] text-[#9b2923]" },
+  none: { label: "No link", tone: "bg-[#f2efe9] text-[#6b5d50]" },
+};
+// Whether the reference trail ties this delivery to this invoice.
+function verdictOf(ranked: RankedCandidate): Verdict {
+  const by = (label: string) =>
+    ranked.signals.find((signal) => signal.label === label)?.status;
+  if (by("Invoice") === "different") return "conflict";
+  if (
+    by("Invoice") === "same" ||
+    by("E-way bill") === "same" ||
+    by("Lorry receipt") === "same"
+  )
+    return "strong";
+  if (by("Vehicle") === "same") return "maybe";
+  return "none";
+}
+
+const EVIDENCE_KEYS = ["Invoice", "E-way bill", "Vehicle"] as const;
+function EvidenceDots({ ranked }: { ranked: RankedCandidate }) {
   return (
-    <ul className="mt-1 flex flex-wrap gap-1" aria-label="Reference checks">
-      {ranked.signals.map((signal) => (
-        <li
-          key={signal.label}
-          title={signal.note ?? `SAP: ${signal.sap}`}
-          className={`rounded px-1.5 py-0.5 text-[10px] leading-3 ${signal.status === "same" ? "bg-[#e3f1e8] text-[#24583e]" : "bg-[#fbeceb] text-[#9b2923]"}`}
-        >
-          {signal.status === "same" ? "✓" : "≠"} {signal.label}
-          {signal.status === "different" ? ` ${signal.sap}` : ""}
-        </li>
-      ))}
-    </ul>
+    <span className="inline-flex items-center gap-1.5" aria-label="Reference checks">
+      {EVIDENCE_KEYS.map((key) => {
+        const signal = ranked.signals.find((entry) => entry.label === key);
+        const mark = !signal ? "–" : signal.status === "same" ? "✓" : "≠";
+        const tone = !signal
+          ? "text-[#a89c8e]"
+          : signal.status === "same"
+            ? "text-[#24583e]"
+            : "text-[#9b2923]";
+        const tip = !signal
+          ? `${key}: nothing in SAP to compare`
+          : signal.status === "same"
+            ? `${key} matches`
+            : `${key} differs: ${signal.sap}`;
+        return (
+          <span key={key} title={tip} className={`text-[10px] ${tone}`}>
+            {key === "Vehicle" ? "Truck" : key} {mark}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+const TONE_CLASS = {
+  Matched: "text-[#24583e]",
+  "Partly matched": "text-[#855009]",
+  Different: "text-[#9b2923]",
+  "Not checked": "text-[#6b5d50]",
+} as const;
+const FIELD_NAME: Record<string, string> = {
+  "PO reference": "PO",
+  "Invoice No.": "Invoice no.",
+  "E-Way Bill No.": "E-way bill",
+  "Lorry Receipt No.": "Lorry receipt",
+  "Vehicle No.": "Truck",
+};
+function SideBySide({
+  invoice,
+  ranked,
+  service,
+  amount,
+}: {
+  invoice: MatchInvoice;
+  ranked: RankedCandidate;
+  service: boolean;
+  amount: (value: number) => string;
+}) {
+  const { candidate } = ranked;
+  const rows = candidateEvidence(invoice, candidate);
+  return (
+    <div className="mt-1.5 space-y-1.5 border-t border-[#ece6dc] pt-1.5">
+      <table className="w-full text-[10px]">
+        <thead>
+          <tr className="text-left text-[#8a7f72]">
+            <th className="w-20 py-0.5 font-medium" />
+            <th className="py-0.5 font-medium">This invoice</th>
+            <th className="py-0.5 font-medium">{service ? "PO" : "GRPO"} {candidate.docNum}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label} className="align-top">
+              <td className="py-0.5 pr-2 text-[#6b5d50]">
+                {FIELD_NAME[row.label] ?? row.label}
+              </td>
+              <td className="py-0.5 pr-2 font-mono text-[#3d3530]">{row.scanned}</td>
+              <td className={`py-0.5 font-mono ${TONE_CLASS[row.status]}`}>
+                {row.sap}
+                {row.note ? (
+                  <span className="block font-sans text-[10px] text-[#8a7f72]">{row.note}</span>
+                ) : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-[10px] text-[#6b5d50]">
+        {!service ? <>Received {amount(candidate.quantity)} · </> : null}
+        Still open {amount(candidate.open)} · {formatDate(candidate.date)}
+        {candidate.note && !/^Based On Purchase Orders/i.test(candidate.note.trim())
+          ? ` · ${candidate.note}`
+          : ""}
+      </p>
+    </div>
   );
 }
 
@@ -103,9 +200,17 @@ function CandidateCard({
                 Selected
               </span>
             ) : null}
-            {ranked.otherInvoice && !rejected ? (
-              <span className="rounded-full bg-[#fbeceb] px-1.5 py-0.5 text-[9px] font-medium text-[#9b2923]">
-                Stores tagged invoice {ranked.otherInvoice}
+            {!rejected && !service ? (
+              <span
+                title={
+                  ranked.otherInvoice
+                    ? `Stores tagged invoice ${ranked.otherInvoice}`
+                    : undefined
+                }
+                className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${VERDICT[verdictOf(ranked)].tone}`}
+              >
+                {VERDICT[verdictOf(ranked)].label}
+                {ranked.otherInvoice ? ` ${ranked.otherInvoice}` : ""}
               </span>
             ) : null}
           </div>
@@ -124,7 +229,11 @@ function CandidateCard({
             </p>
           ) : (
             <>
-              <Signals ranked={ranked} />
+              {!service ? (
+                <p className="mt-1">
+                  <EvidenceDots ranked={ranked} />
+                </p>
+              ) : null}
               {error ? (
                 <p
                   id={`${id}-error`}
@@ -211,22 +320,14 @@ function CandidateCard({
       {!rejected ? (
         <details className="mt-0.5 text-[10px] text-[#6b5d50]">
           <summary className="cursor-pointer leading-4 font-medium">
-            Matching details
+            Compare with this invoice
           </summary>
-          <div className="mt-1 space-y-0.5 border-t border-[#e0d8cc] pt-1 leading-4">
-            {!service ? (
-              <p>Received Qty.: {amount(candidate.quantity)}</p>
-            ) : null}
-            <CandidateEvidence
-              invoice={invoice}
-              candidate={candidate}
-              compact
-            />
-            {candidate.note &&
-            !/^Based On Purchase Orders\b/i.test(candidate.note.trim()) ? (
-              <p>{candidate.note}</p>
-            ) : null}
-          </div>
+          <SideBySide
+            invoice={invoice}
+            ranked={ranked}
+            service={service}
+            amount={amount}
+          />
         </details>
       ) : null}
     </li>
@@ -420,6 +521,27 @@ export function ReceiptCandidatesPanel({
                 , not a SAP PO number, so PO is not used to rank{" "}
                 {label}.
               </p>
+            ) : null}
+            {!service && selection.billed ? (
+              <div className="mt-2" aria-hidden="true">
+                <div className="flex h-1.5 overflow-hidden rounded-full bg-[#ece6dc]">
+                  {ranked
+                    .filter(
+                      ({ candidate }) =>
+                        (selection.allocations[candidate.key] ?? 0) > 0,
+                    )
+                    .map(({ candidate }, index) => (
+                      <span
+                        key={candidate.key}
+                        title={`GRPO ${candidate.docNum} · ${qty(selection.allocations[candidate.key])}`}
+                        style={{
+                          flexBasis: `${(selection.allocations[candidate.key] / Math.max(selection.billed ?? 0, selection.total)) * 100}%`,
+                          background: SEG_COLORS[index % SEG_COLORS.length],
+                        }}
+                      />
+                    ))}
+                </div>
+              </div>
             ) : null}
             <dl className="mt-2 grid grid-cols-3 gap-2 rounded-md bg-[#f6f3ee] px-2.5 py-2">
               {[

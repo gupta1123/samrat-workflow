@@ -51,8 +51,8 @@ export function PostedInvoice({
     : null;
   const vendor = details?.vendorName ?? details?.vendorCode;
   return (
-    <div className="space-y-4 px-4 py-3">
-      <section className="flex flex-wrap items-start gap-3 rounded-xl border border-[#c4dfcf] bg-[#f1f8f4] px-4 py-4">
+    <div className="space-y-3 px-4 py-3">
+      <section className="flex flex-wrap items-start gap-3 rounded-xl border border-[#c4dfcf] bg-[#f1f8f4] px-4 py-3">
         <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#2c6a4f]" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
