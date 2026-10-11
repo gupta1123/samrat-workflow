@@ -8,6 +8,7 @@ import type {
   DraftFieldChoices,
   DraftHeaderPreview,
 } from "@/lib/sap-draft-fields";
+import { SearchSelect } from "@/components/ui/search-select";
 import { PostingFieldGrid } from "./PostingFieldGrid";
 
 /** Only fetch SAP field definitions when the user opens the posting review. */
@@ -88,34 +89,25 @@ export function DraftHeaderFields({
           {confirming ? (
             <div className="grid gap-2 sm:grid-cols-2">
               {(["transporter", "materialForm"] as const).map((key) => (
-                <label key={key} className="space-y-1">
-                  <span className="block font-medium">
+                <div key={key} className="space-y-1">
+                  <span className="block text-[10px] font-medium text-[#6b5d50]">
                     {key === "transporter" ? "Transporter" : "Material Form"}
                   </span>
-                  <select
-                    aria-label={
+                  <SearchSelect
+                    ariaLabel={
                       key === "transporter"
                         ? "Draft Transporter"
                         : "Draft Material Form"
                     }
                     disabled={busy}
+                    options={preview[key].options}
                     value={choices[key] ?? ""}
-                    onChange={(event) =>
-                      setChoices((current) => ({
-                        ...current,
-                        [key]: event.target.value,
-                      }))
+                    placeholder="Search SAP…"
+                    onChange={(value) =>
+                      setChoices((current) => ({ ...current, [key]: value }))
                     }
-                    className="h-8 w-full rounded-md border border-[#e0d8cc] bg-white px-2 text-[11px]"
-                  >
-                    <option value="">Select from SAP…</option>
-                    {preview[key].options.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  />
+                </div>
               ))}
             </div>
           ) : (

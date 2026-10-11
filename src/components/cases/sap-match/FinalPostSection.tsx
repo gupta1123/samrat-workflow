@@ -6,6 +6,7 @@ import { CheckCircle2, Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sapMessage } from "@/lib/sap-match/terminology";
 import { apiFetch } from "@/lib/api-client";
+import { SearchSelect } from "@/components/ui/search-select";
 
 type MaterialFormConfig = {
   fieldName: string;
@@ -167,26 +168,26 @@ export function FinalPostSection({
                 be undone from this app.
               </div>
               {materialForm ? (
-                <label className="mt-3 block text-[10px] font-semibold text-[#3d3530]">
-                  {materialForm.description}
-                  <select
-                    className="mt-1 block h-9 w-full rounded-md border border-[#cfc4b8] bg-white px-2 text-[11px] font-normal text-[#111827] outline-none focus:border-[#2d6a4f] focus:ring-1 focus:ring-[#2d6a4f]"
-                    value={selectedMaterialForm}
+                <div className="mt-3 max-w-md space-y-1">
+                  <span className="block text-[10px] font-medium text-[#6b5d50]">
+                    {materialForm.description}
+                  </span>
+                  <SearchSelect
+                    ariaLabel="Material Form"
                     disabled={posting}
-                    onChange={(event) => {
-                      setSelectedMaterialForm(event.target.value);
+                    options={materialForm.options.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    }))}
+                    value={selectedMaterialForm}
+                    placeholder="Search material form…"
+                    onChange={(value) => {
+                      setSelectedMaterialForm(value);
                       setMessage(null);
                       setFailed(false);
                     }}
-                  >
-                    <option value="">Select material form</option>
-                    {materialForm.options.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label} ({option.value})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  />
+                </div>
               ) : null}
               <div className="mt-2 flex items-center gap-2">
                 <Button
