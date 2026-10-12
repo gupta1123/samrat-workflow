@@ -35,7 +35,10 @@ import type {
 } from "@/lib/sap-match/types";
 import { DEFAULT_MATCH_RULES, EMPTY_MATCH_STATE } from "@/lib/sap-match/types";
 import { matchTimestamp, truthfulChecks } from "@/lib/sap-match/evidence";
-import { SupplierEvidence } from "./sap-match/MatchingEvidence";
+import {
+  ItemMatchingEvidence,
+  SupplierEvidence,
+} from "./sap-match/MatchingEvidence";
 import { CheckBlock } from "./sap-match/CheckBlock";
 import { FinalPostSection } from "./sap-match/FinalPostSection";
 import { PostedInvoice } from "./sap-match/PostedInvoice";
@@ -506,6 +509,20 @@ function Matched({
   const unchecked = result.checks.filter(
     (check) => check.sev === "unchecked" && check.lineIndex === null,
   );
+  const rs = result.method !== "2-way" ? result.receiptSearch : null;
+  const searchNote = rs
+    ? `SAP searched ${
+        rs.method === "identifier"
+          ? rs.identifiers?.length
+            ? `by ${rs.identifiers.map((identifier) => `${identifier.field} ${identifier.value}`).join("; ")}`
+            : rs.field
+              ? `by ${rs.field} ${rs.value}`
+              : "by packet references"
+          : `the open GRPOs of supplier ${data.vendor?.cardCode ?? ""}`
+      } · ${rs.documentsRead} document${rs.documentsRead === 1 ? "" : "s"} returned${
+        rs.documentsRead >= rs.limit ? ` (search limit ${rs.limit} reached)` : ""
+      }`
+    : null;
   const [receiptsLine, setReceiptsLine] = useState<number | null>(null);
   const review = reviewModel(result, { approved: data.postable });
   const openCount = result.open.length;
@@ -632,6 +649,27 @@ function Matched({
         result={result}
         unchecked={unchecked}
         onOpenReceipts={(lineIndex) => setReceiptsLine(lineIndex)}
+        extras={{
+          supplier: (
+            <SupplierEvidence
+              invoice={invoice}
+              vendor={data.vendor}
+              result={result}
+            />
+          ),
+          item: (
+            <div className="space-y-2">
+              {result.lines.map((line) => (
+                <ItemMatchingEvidence
+                  key={line.index}
+                  invoice={invoice}
+                  line={line}
+                  bare
+                />
+              ))}
+            </div>
+          ),
+        }}
         checkedAt={result.checkedAt ?? data.matchJob?.finishedAt}
         savedLabel={
           locked
@@ -649,48 +687,6 @@ function Matched({
           SAP validates the draft again before posting.
         </p>
       ) : null}
-
-      <details className="text-[11px]">
-        <summary className="w-fit cursor-pointer py-1 font-medium text-[#6b4a33]">
-          Supplier and search details
-        </summary>
-        <div className="mt-2 space-y-2">
-          <SupplierEvidence
-            invoice={invoice}
-            vendor={data.vendor}
-            result={result}
-          />
-
-          {result.method !== "2-way" && result.receiptSearch ? (
-            <p className="text-[10px] leading-4 text-[#6b5d50]">
-              SAP Service Layer ·{" "}
-              {result.receiptSearch.method === "identifier"
-                ? result.receiptSearch.identifiers?.length
-                  ? `GRPO search by ${result.receiptSearch.identifiers
-                      .map(
-                        (identifier) =>
-                          `${identifier.field} ${identifier.value}`,
-                      )
-                      .join("; ")}`
-                  : result.receiptSearch.field
-                    ? `GRPO search by ${result.receiptSearch.field} ${result.receiptSearch.value}`
-                    : "GRPO search by packet references"
-                : `Open GRPO search for supplier ${data.vendor?.cardCode ?? ""}`}{" "}
-              · {result.receiptSearch.documentsRead} document
-              {result.receiptSearch.documentsRead === 1 ? "" : "s"} returned
-              {result.receiptSearch.documentsRead >= result.receiptSearch.limit
-                ? ` (search limit ${result.receiptSearch.limit} reached)`
-                : ""}
-              .{" "}
-              {result.receiptSearch.method === "identifier"
-                ? result.receiptSearch.supplementedByVendor
-                  ? "Exact packet-reference matches are combined with this supplier’s complete open-GRPO list and de-duplicated by SAP document entry."
-                  : "Candidates combine every exact packet-reference search and are de-duplicated by SAP document entry."
-                : "Only this supplier’s open GRPOs were searched."}
-            </p>
-          ) : null}
-        </div>
-      </details>
 
       {actionError ? (
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">
@@ -735,6 +731,7 @@ function Matched({
           vendorFound={Boolean(data.vendor)}
           rateTolerancePct={data.rules.rateTolerancePct}
           lineCount={result.lines.length}
+          searchNote={searchNote}
           receiptsOpen={receiptsLine === line.index}
           onReceiptsOpenChange={(open) =>
             setReceiptsLine(open ? line.index : null)

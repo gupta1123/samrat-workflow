@@ -264,6 +264,7 @@ export function ReviewHeader({
   busy,
   onRefresh,
   onOpenReceipts,
+  extras,
 }: {
   title: string;
   tone: ReviewTone;
@@ -279,6 +280,8 @@ export function ReviewHeader({
   onRefresh: () => void;
   /** Opens the receipts drawer for a line; the Receipts tile calls it. */
   onOpenReceipts?: (lineIndex: number) => void;
+  /** Extra evidence shown at the bottom of a tile's detail panel. */
+  extras?: Partial<Record<TileKey, ReactNode>>;
 }) {
   const [open, setOpen] = useState<TileKey | null>(null);
   const tiles = buildTiles(invoice, vendor, result);
@@ -356,7 +359,7 @@ export function ReviewHeader({
           {(["invoice", "sap"] as const).map((side) => (
             <div
               key={side}
-              className="min-w-0 px-[18px] py-3 sm:[&+div]:border-l sm:[&+div]:border-[rgba(43,26,16,0.1)]"
+              className={`min-w-0 px-[18px] py-3 ${side === "sap" ? "sm:border-l sm:border-[rgba(43,26,16,0.1)]" : ""}`}
             >
               <div className="mb-1 text-[10.5px] text-[#6b5d50]">
                 {side === "invoice" ? "On the invoice" : "In SAP"}
@@ -369,6 +372,14 @@ export function ReviewHeader({
               </div>
             </div>
           ))}
+          {extras?.[active.key] ? (
+            <div className="min-w-0 border-t border-[rgba(43,26,16,0.1)] px-[18px] py-3 text-[11px] sm:col-span-2">
+              <div className="mb-1.5 text-[10.5px] text-[#6b5d50]">
+                How it was matched
+              </div>
+              {extras[active.key]}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

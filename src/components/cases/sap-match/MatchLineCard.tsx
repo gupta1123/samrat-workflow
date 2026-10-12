@@ -11,7 +11,8 @@ import { ItemLinker } from "./ItemLinker";
 import { ReceiptCandidatesPanel } from "./ReceiptCandidatesPanel";
 import { priceReviewDetails } from "@/lib/sap-match/price-review";
 import { quantityBalances } from "@/lib/sap-match/evidence";
-import { ItemMatchingEvidence, MatchingEvidence } from "./MatchingEvidence";
+import { ItemMatchingEvidence } from "./MatchingEvidence";
+import { receiptProblems } from "@/lib/sap-match/receipt-problems";
 import { SupplierOrdersPanel } from "./SupplierOrdersPanel";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
@@ -70,6 +71,7 @@ export function MatchLineCard({
   lineCount = 1,
   receiptsOpen,
   onReceiptsOpenChange,
+  searchNote,
   onChoose,
   onUndo,
   onAllocate,
@@ -89,6 +91,7 @@ export function MatchLineCard({
   /** Controlled state of the receipts drawer, so the Receipts tile can open it. */
   receiptsOpen?: boolean;
   onReceiptsOpenChange?: (open: boolean) => void;
+  searchNote?: string | null;
   onChoose: (check: MatchCheck, choice: string, reason: string) => void;
   onUndo: (check: MatchCheck) => void;
   onAllocate: (lineIndex: number, allocations: Record<string, number>) => void;
@@ -114,7 +117,7 @@ export function MatchLineCard({
   const unit = invoiceLine?.unit ?? "";
   const quantity = (value: number | null) =>
     value == null ? "—" : `${qty(value)}${unit ? ` ${unit}` : ""}`;
-  const unchecked = checks.filter((check) => check.sev === "unchecked");
+  const problems = receiptProblems(invoice, line);
 
   const rateDelta =
     !service && line.po?.rate != null && line.invoiceRate != null
@@ -127,13 +130,6 @@ export function MatchLineCard({
         .map((candidate) => candidate.docNum),
     ),
   ];
-  const grpoSplit =
-    grpoNumbers.length > 1
-      ? selected
-          .filter((candidate) => candidate.kind === "GRPO")
-          .map((candidate) => `${candidate.docNum}: ${quantity(candidate.allocated)}`)
-          .join(" · ")
-      : null;
   const sameAsTitle =
     (line.itemName ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "") ===
     title.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -204,16 +200,7 @@ export function MatchLineCard({
       <div className="space-y-2.5 px-4 py-3">
         {unmapped ? (
           <ItemMatchingEvidence invoice={invoice} line={line} />
-        ) : (
-          <details className="text-[11px]">
-            <summary className="w-fit cursor-pointer font-medium text-[#6b4a33]">
-              How the item matched
-            </summary>
-            <div className="mt-1.5">
-              <ItemMatchingEvidence invoice={invoice} line={line} />
-            </div>
-          </details>
-        )}
+        ) : null}
         {unmapped && mapCheck ? (
           <ItemLinker
             caseId={caseId}
@@ -302,15 +289,28 @@ export function MatchLineCard({
                           }
                         />
                       </tr>
+                      <tr className="border-t border-[#f0ece4]">
+                        {rowLabel("Line total")}
+                        <Cell
+                          value={
+                            !grpoRateFallback &&
+                            line.po?.rate != null &&
+                            line.invoiceQty != null
+                              ? inr(line.po.rate * line.invoiceQty)
+                              : "—"
+                          }
+                          dim={grpoRateFallback || line.po?.rate == null}
+                        />
+                        <Cell value="—" dim />
+                        <Cell
+                          value={inr(line.invoiceAmount ?? invoiceLine?.amount ?? null)}
+                        />
+                      </tr>
                     </>
                   )}
                 </tbody>
               </table>
             </div>
-            {grpoSplit ? (
-              <p className="text-[11px] text-[#6b5d50]">Split: {grpoSplit}</p>
-            ) : null}
-
             {!service &&
             selected.length &&
             !checks.some(
@@ -349,13 +349,29 @@ export function MatchLineCard({
                 />
               ))}
 
-            {unchecked.length ? (
-              <p className="text-[11px] text-[#6b5d50]">
-                Not checked: {unchecked.map((check) => check.title).join("; ")}
-              </p>
+            {problems.rows.length || problems.missingNote ? (
+              <ul className="space-y-1" aria-label="Receipt reference problems">
+                {problems.rows.map((row) => (
+                  <li
+                    key={row}
+                    className="flex items-start gap-2 text-[11px] text-[#b3261e]"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#fbe7e5] text-[10px] font-bold"
+                    >
+                      ✕
+                    </span>
+                    {row}
+                  </li>
+                ))}
+                {problems.missingNote ? (
+                  <li className="text-[11px] text-[#6b5d50]">
+                    {problems.missingNote}
+                  </li>
+                ) : null}
+              </ul>
             ) : null}
-
-            <MatchingEvidence invoice={invoice} line={line} locked={locked} />
 
             <div className="flex flex-wrap items-center justify-end gap-2">
               {line.candidates.length ? (
@@ -371,6 +387,7 @@ export function MatchLineCard({
                   onResetAllocation={onResetAllocation}
                   open={receiptsOpen}
                   onOpenChange={onReceiptsOpenChange}
+                  searchNote={searchNote}
                 />
               ) : null}
               {vendorFound && line.kind === "material" ? (

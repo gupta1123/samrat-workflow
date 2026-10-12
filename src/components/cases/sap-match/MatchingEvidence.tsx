@@ -240,9 +240,12 @@ export function CandidateEvidence({
 export function ItemMatchingEvidence({
   invoice,
   line,
+  bare = false,
 }: {
   invoice: MatchInvoice;
   line: LineResult;
+  /** Only how the item was matched, without the invoice/SAP table (the Item tile shows that). */
+  bare?: boolean;
 }) {
   const source = invoice.lines.find((entry) => entry.index === line.index);
   const identification = line.itemIdentification;
@@ -275,6 +278,15 @@ export function ItemMatchingEvidence({
     );
   }
 
+  if (bare)
+    return (
+      <p aria-label="Item matching" className="text-[11px] leading-4 text-[#3d3530]">
+        <span className="font-medium text-[#6b4a33]">
+          {line.itemCode ? itemIdentificationLabel(line) : "Item not linked"}
+        </span>
+        {explanation ? ` · ${explanation}` : ""}
+      </p>
+    );
   return (
     <section
       aria-label="Item matching"
@@ -339,233 +351,6 @@ export function ItemMatchingEvidence({
             .join(" · ")}
         </p>
       ) : null}
-    </section>
-  );
-}
-
-export function MatchingEvidence({
-  invoice,
-  line,
-  locked,
-}: {
-  invoice: MatchInvoice;
-  line: LineResult;
-  locked: boolean;
-}) {
-  const selected = line.candidates.filter(
-    (candidate) => candidate.allocated > 0,
-  );
-  const balances = quantityBalances(line);
-  const service = line.kind === "service";
-  const amount = (value: number) =>
-    service
-      ? inr(value)
-      : `${qty(value)}${invoice.lines[line.index]?.unit ? ` ${invoice.lines[line.index].unit}` : ""}`;
-  const missingReferences = selected
-    .filter((candidate) => !candidate.references)
-    .map((candidate) => `${candidate.kind} ${candidate.docNum}`);
-  const ignorePo =
-    !service && poNotOnInvoice(invoice, line.candidates);
-  const evidence = selected.map((candidate) => ({
-    candidate,
-    rows: candidateEvidence(invoice, candidate),
-  }));
-  const exceptions = [
-    ...new Set(evidence.flatMap(({ rows }) => rows.map((row) => row.label))),
-  ]
-    .map((label) => ({
-      label,
-      scanned:
-        evidence
-          .map(({ rows }) => rows.find((row) => row.label === label)?.scanned)
-          .find((value) => value && value !== "Not recorded") ?? "Not recorded",
-      cells: evidence.map(({ rows }) =>
-        rows.find((row) => row.label === label),
-      ),
-    }))
-    .filter(
-      ({ label, scanned, cells }) =>
-        !(ignorePo && label === "PO reference") &&
-        scanned !== "Not recorded" &&
-        cells.some(
-          (cell) =>
-            cell &&
-            cell.status !== "Matched" &&
-            cell.sap !== "Not recorded in saved check",
-        ),
-    );
-  return (
-    <section>
-      {missingReferences.length ? (
-        <p className="mb-2 text-[11px] leading-4 text-[#6b5d50]">
-          {missingReferences.join(", ")}: reference values were not recorded in
-          this saved check.
-        </p>
-      ) : null}
-      {ignorePo && selected.length ? (
-        <p className="mb-1 text-[10px] leading-4 text-[#6b5d50]">
-          The invoice prints {invoice.poReferences.join(", ") || "no PO reference"},
-          not a SAP PO number, so the PO is not compared here.
-        </p>
-      ) : null}
-      {exceptions.length ? (
-        <div className="mb-2 overflow-x-auto">
-          <table
-            aria-label="Reference checks to note"
-            className="w-full min-w-[360px] text-left text-[11px] leading-4"
-          >
-            <thead className="text-[10px] text-[#6b5d50]">
-              <tr>
-                <th scope="col" className="pb-1 pr-3 font-medium">
-                  Reference
-                </th>
-                <th scope="col" className="pb-1 pr-3 font-medium">
-                  Invoice packet
-                </th>
-                {evidence.map(({ candidate }) => (
-                  <th
-                    key={candidate.key}
-                    scope="col"
-                    className="pb-1 pr-3 font-medium"
-                  >
-                    {candidate.kind} {candidate.docNum}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {exceptions.map((row) => (
-                <tr
-                  key={row.label}
-                  className="border-t border-[#f0ece4] align-top"
-                >
-                  <th
-                    scope="row"
-                    className="py-1.5 pr-3 font-normal text-[#6b5d50]"
-                  >
-                    {row.label}
-                  </th>
-                  <td className="break-words py-1.5 pr-3 text-[#111827]">
-                    {row.scanned}
-                  </td>
-                  {row.cells.map((cell, index) => (
-                    <td
-                      key={evidence[index].candidate.key}
-                      className="break-words py-1.5 pr-3"
-                      title={cell?.note}
-                    >
-                      {!cell ? (
-                        <span className="text-[#6b5d50]">—</span>
-                      ) : (
-                        <>
-                          <span className={color[cell.status]}>
-                            {cell.status === "Matched"
-                              ? "✓"
-                              : cell.status === "Different"
-                                ? "≠"
-                                : cell.status === "Partly matched"
-                                  ? "~"
-                                  : "?"}
-                          </span>{" "}
-                          <span className="text-[#111827]">{cell.sap}</span>
-                        </>
-                      )}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-1 text-[10px] text-[#6b5d50]">
-            ✓ same · ≠ different · ~ partly matched · ? cannot be confirmed
-          </p>
-        </div>
-      ) : null}
-      <details className="text-[11px]">
-        <summary className="w-fit cursor-pointer py-1 font-medium text-[#6b4a33]">
-          Matching evidence
-        </summary>
-        <div className="mt-2 border-t border-[#ece6dc] pt-2">
-          {invoice.source ? (
-            <p className="mb-2 text-[11px] text-[#6b5d50]">
-              Scanned invoice:{" "}
-              {[invoice.source.fileName, invoice.source.pageLabel]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          ) : null}
-          {selected.length ? (
-            <dl className="mb-2 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-              {[
-                ...(!service
-                  ? [
-                      ["GRPO Quantity received", balances.received],
-                      ...(line.po?.qty != null
-                        ? [["PO Quantity", line.po.qty]]
-                        : []),
-                    ]
-                  : []),
-                [
-                  locked
-                    ? "Open at saved check"
-                    : service
-                      ? "PO Open Amount"
-                      : "GRPO Open Qty.",
-                  balances.available,
-                ],
-                [locked ? "Used in draft" : "Allocated", balances.used],
-                [
-                  locked
-                    ? "Remaining at saved check"
-                    : "Remaining after allocation",
-                  balances.remaining,
-                ],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <dt className="text-[#6b5d50]">{label}</dt>
-                  <dd className="mt-0.5 font-medium text-[#111827]">
-                    {amount(value as number)}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          ) : null}
-          <div className="mb-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px]">
-            <h3 className="font-semibold text-[#111827]">How this matched</h3>
-            <span className="text-[#6b5d50]">
-              {itemIdentificationLabel(line)}
-            </span>
-          </div>
-          <p className="mb-1 text-[10px] leading-4 text-[#6b5d50]">
-            {selected.length
-              ? `${locked ? "Saved selection" : line.manual ? "Reviewer selection" : "Automatic selection"} · ${line.kind === "service" ? "Supplier, item and PO reference checked; GRPO not required for services." : "Supplier and SAP item restrict the candidates; references and open quantity rank the GRPOs."}`
-              : "No base document selected. The candidate list below explains what was found or excluded."}
-          </p>
-          {!selected.length ? (
-            <p className="text-[11px] leading-4 text-[#6b5d50]">
-              Scanned packet PO references:{" "}
-              {invoice.poReferences.join(", ") || "Not recorded"}
-              {line.po?.docNum != null
-                ? ` · SAP PO ${line.po.docNum} found; no GRPO selected.`
-                : ""}
-            </p>
-          ) : null}
-          {selected.map((candidate) => (
-            <div key={candidate.key} className="mt-2">
-              <p className="mb-1 text-[11px] font-medium text-[#3d3530]">
-                {candidate.kind} {candidate.docNum}, line{" "}
-                {candidate.lineNum + 1}
-                {candidate.kind === "GRPO"
-                  ? candidate.purchaseOrder
-                    ? ` → PO ${candidate.purchaseOrder.docNum ?? `Entry ${candidate.purchaseOrder.docEntry}`}${candidate.purchaseOrder.lineNum != null ? `, line ${candidate.purchaseOrder.lineNum + 1}` : " (line not recorded)"}`
-                    : " → PO link not recorded in check"
-                  : ""}
-              </p>
-              <CandidateEvidence invoice={invoice} candidate={candidate} />
-            </div>
-          ))}
-        </div>
-      </details>
     </section>
   );
 }

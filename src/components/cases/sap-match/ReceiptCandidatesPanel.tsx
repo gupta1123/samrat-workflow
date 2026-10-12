@@ -138,6 +138,11 @@ function Detail({
   return (
     <div className="dt">
       <p className={`dt-sum ${verdict}`}>{summary}</p>
+      {ranked.otherWarnings.length ? (
+        <p className="gr-note" style={{ margin: "8px 14px 0", paddingBottom: 0 }}>
+          {ranked.otherWarnings.join("; ")}
+        </p>
+      ) : null}
       <div className="dt-grid" role="table">
         <div className="dt-h" role="row">
           <span role="columnheader" />
@@ -198,6 +203,7 @@ export function ReceiptCandidatesPanel({
   onResetAllocation,
   open: controlledOpen,
   onOpenChange,
+  searchNote,
 }: {
   caseId: string;
   invoice: MatchInvoice;
@@ -211,6 +217,8 @@ export function ReceiptCandidatesPanel({
   /** Lets the page open the drawer, e.g. from the Receipts tile. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** How SAP was searched for these receipts, shown once under the title. */
+  searchNote?: string | null;
 }) {
   const [ownOpen, setOwnOpen] = useState(false);
   const open = controlledOpen ?? ownOpen;
@@ -544,7 +552,17 @@ export function ReceiptCandidatesPanel({
           type="button"
           className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[#d4c9bc] bg-[#fcfbf9] px-2.5 py-1 text-[11px] font-medium text-[#5d422e] hover:bg-[#f0ece4] focus-visible:outline-2 focus-visible:outline-[#2d6a4f]"
         >
-          {label} considered ({line.candidates.length})
+          {locked
+            ? service
+              ? "View PO"
+              : "View receipts"
+            : line.candidates.some((candidate) => candidate.allocated > 0)
+              ? service
+                ? "Change PO"
+                : "Change receipts"
+              : service
+                ? "Choose PO"
+                : "Choose receipts"}
           <ChevronRight className="h-3 w-3" />
         </button>
       </DialogTrigger>
@@ -562,6 +580,11 @@ export function ReceiptCandidatesPanel({
                 <DialogTitle asChild>
                   <h2>{heading}</h2>
                 </DialogTitle>
+                {searchNote ? (
+                  <p className="eyebrow" style={{ marginTop: 4 }}>
+                    {searchNote}
+                  </p>
+                ) : null}
               </div>
               <DialogClose className="icon-btn" aria-label="Close">
                 <X size={16} />

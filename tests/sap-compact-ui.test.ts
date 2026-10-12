@@ -7,12 +7,12 @@ import { buildSync } from "esbuild";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { matchFixture } from "./sap-posted-fixture";
+import { receiptProblems } from "../src/lib/sap-match/receipt-problems";
 
 const outputDir = resolve("tmp/compact-ui-test");
 mkdirSync(outputDir, { recursive: true });
 buildSync({
   entryPoints: [
-    "src/components/cases/sap-match/MatchingEvidence.tsx",
     "src/components/cases/sap-match/WhatGoesToSap.tsx",
     "src/components/cases/sap-match/CheckBlock.tsx",
     "src/components/cases/sap-match/MatchLineCard.tsx",
@@ -25,9 +25,6 @@ buildSync({
   external: ["react", "react-dom"],
 });
 const requireComponent = createRequire(resolve("package.json"));
-const { MatchingEvidence } = requireComponent(
-  resolve(outputDir, "MatchingEvidence.js"),
-);
 const { WhatGoesToSap } = requireComponent(
   resolve(outputDir, "WhatGoesToSap.js"),
 );
@@ -94,7 +91,7 @@ test("one-choice quantity review uses a named action and keeps the remaining bal
   assert.match(html, /8.2 waits for the next invoice/);
 });
 
-test("reference exceptions stay visible while the full matching trail is collapsed", () => {
+test("receipt reference problems are one short line per receipt in use", () => {
   const invoice = {
     ...matchFixture.invoice,
     poReferences: ["274", "UNLINKED-PO"],
@@ -107,22 +104,12 @@ test("reference exceptions stay visible while the full matching trail is collaps
       references: { ...candidate.references!, lorryReceipt: "0" },
     })),
   };
-  const html = renderToStaticMarkup(
-    createElement(MatchingEvidence, { invoice, line, locked: false }),
-  );
-  const visibleNotice = html.slice(0, html.indexOf("<details"));
-  assert.match(visibleNotice, /UNLINKED-PO/);
-  assert.match(visibleNotice, /LR42.*Blank in SAP/);
-  assert.match(
-    html,
-    /<details[^>]*><summary[^>]*>Matching evidence<\/summary>/,
-  );
-  assert.doesNotMatch(html, /<details[^>]*\bopen(?:[ =>])/);
-  assert.match(html, /GRPO Quantity received/);
-  assert.match(html, /GRPO 718, line 1.*PO 274, line 1/);
+  const { rows, missingNote } = receiptProblems(invoice, line);
+  assert.equal(missingNote, null);
+  assert.ok(rows.some((row) => /GRPO 718: .*lorry receipt.*Blank in SAP/.test(row)), rows.join("|"));
 });
 
-test("missing historical reference evidence is summarized once without hiding a known vehicle conflict", () => {
+test("missing historical reference evidence is summarized once and a known truck conflict stays", () => {
   const original = matchFixture.result.lines[0];
   const line = {
     ...original,
@@ -132,20 +119,9 @@ test("missing historical reference evidence is summarized once without hiding a 
       vehicle: "OTHER",
     })),
   };
-  const html = renderToStaticMarkup(
-    createElement(MatchingEvidence, {
-      invoice: matchFixture.invoice,
-      line,
-      locked: true,
-    }),
-  );
-  const visibleNotice = html.slice(0, html.indexOf("<details"));
-  assert.equal(
-    (visibleNotice.match(/reference values were not recorded/g) ?? []).length,
-    1,
-  );
-  assert.match(visibleNotice, /Vehicle No\..*TRUCK1.*OTHER/);
-  assert.match(html, /Open at saved check/);
+  const { rows, missingNote } = receiptProblems(matchFixture.invoice, line);
+  assert.match(missingNote ?? "", /GRPO 718: reference values were not recorded/);
+  assert.ok(rows.some((row) => /different truck \(OTHER\)/.test(row)), rows.join("|"));
 });
 
 test("draft sheet opens with the invoice layout and ends with the match line and action", () => {
