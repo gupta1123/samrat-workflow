@@ -206,16 +206,16 @@ function TileButton({
   const Icon = tile.mode === "ok" ? Check : tile.mode === "off" ? Minus : null;
   const inner = (
     <>
-      <span className="flex items-center gap-1.5 text-[10px] font-medium text-[#6b5d50]">
+      <span className="flex items-center gap-1.5 text-[11px] text-[#6b5d50]">
         <span
-          className={`flex h-3.5 w-3.5 items-center justify-center rounded-full text-[9px] font-bold ${tile.mode === "warn" ? "bg-[#fdf1dc] text-[#8a5207]" : tile.mode === "off" ? "bg-[#ece6dc] text-[#a89c8e]" : "bg-[#e3f1e8] text-[#2c6a4f]"}`}
+          className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${tile.mode === "warn" ? "bg-[#fdf1dc] text-[#8a5207]" : tile.mode === "off" ? "bg-[#ece6dc] text-[#a89c8e]" : "bg-[#e3f1e8] text-[#2c6a4f]"}`}
         >
-          {Icon ? <Icon className="h-2.5 w-2.5" strokeWidth={3} /> : "!"}
+          {Icon ? <Icon className="h-2.5 w-2.5" strokeWidth={3.2} /> : "!"}
         </span>
         {tile.label}
       </span>
       <span
-        className={`mt-1 block truncate text-[12px] font-semibold ${valueTone}`}
+        className={`block truncate text-[13px] font-semibold ${valueTone}`}
       >
         {tile.value}
       </span>
@@ -224,7 +224,7 @@ function TileButton({
       </span>
     </>
   );
-  const className = `min-w-0 rounded-lg border px-3 py-2 text-left ${tone}`;
+  const className = `grid min-w-0 gap-[3px] rounded-[10px] border px-3.5 py-3 text-left ${tone}`;
   if (!tile.detail)
     return <div className={className}>{inner}</div>;
   return (
@@ -232,7 +232,7 @@ function TileButton({
       type="button"
       aria-expanded={open}
       onClick={onToggle}
-      className={`${className} transition-colors hover:border-[#c9bfae] ${open ? "ring-1 ring-[#6b4a33]/30" : ""}`}
+      className={`${className} transition-colors hover:border-[#c9bfae] ${open ? "border-[#3f8a63] shadow-[0_0_0_3px_rgba(63,138,99,0.1)]" : ""}`}
     >
       {inner}
     </button>
@@ -284,11 +284,11 @@ export function ReviewHeader({
     <div className="space-y-2">
       <section className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <h2 className="flex items-center gap-2.5 text-[18px] font-semibold tracking-[-0.02em] text-[#111827]">
-          <span className={`h-2 w-2 rounded-full ${DOT[tone]}`} />
+          <span className={`h-[9px] w-[9px] rounded-full ${DOT[tone]}`} />
           {title}
         </h2>
         <div className="ml-auto flex items-center gap-2">
-          <span className="rounded-full bg-[#fff7ed] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#b45309] ring-1 ring-inset ring-[#fcd9b6]">
+          <span className="rounded-md bg-[#fdf1dc] px-2 py-1 text-[10.5px] font-semibold uppercase tracking-[0.04em] text-[#8a5207]">
             SAP {env === "test" ? "Test" : env}
           </span>
           {savedLabel ? (
@@ -303,13 +303,15 @@ export function ReviewHeader({
               title="Re-check with SAP"
             >
               <RefreshCw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />
-              {matchTimestamp(checkedAt)}
+              {matchTimestamp(checkedAt) === "Time not recorded"
+                ? "Re-check"
+                : matchTimestamp(checkedAt)}
             </Button>
           )}
         </div>
       </section>
 
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         {tiles.map((tile) => (
           <TileButton
             key={tile.key}
@@ -322,25 +324,37 @@ export function ReviewHeader({
 
       {active?.detail ? (
         <div
-          className="grid gap-px overflow-hidden rounded-lg border border-[#e0d8cc] bg-[#e0d8cc] sm:grid-cols-2"
+          className="relative mt-1.5 grid rounded-[10px] bg-[#efeae1] py-1 sm:grid-cols-2"
           data-tile={index}
         >
+          <span
+            aria-hidden="true"
+            style={{
+              left: `calc((100% - 30px) / 4 * ${index + 0.5} + 10px * ${index} - 5px)`,
+            }}
+            className="absolute -top-[5px] hidden h-2.5 w-2.5 rotate-45 rounded-tl-sm bg-[#efeae1] lg:block"
+          />
           {(["invoice", "sap"] as const).map((side) => (
-            <div key={side} className="bg-white px-3 py-2 text-[11px]">
-              <div className="text-[10px] font-medium uppercase tracking-wider text-[#8a7f72]">
+            <div
+              key={side}
+              className="min-w-0 px-[18px] py-3 sm:[&+div]:border-l sm:[&+div]:border-[rgba(43,26,16,0.1)]"
+            >
+              <div className="mb-1 text-[10.5px] text-[#6b5d50]">
                 {side === "invoice" ? "On the invoice" : "In SAP"}
               </div>
-              <div className="mt-0.5 text-[12px] font-medium text-[#111827]">
+              <div className="break-words text-[12.5px] font-medium leading-[1.35] text-[#111827]">
                 {active.detail![side].main}
               </div>
-              <div className="text-[#6b5d50]">{active.detail![side].sub}</div>
+              <div className="mt-0.5 text-[11.5px] text-[#6b5d50]">
+                {active.detail![side].sub}
+              </div>
             </div>
           ))}
         </div>
       ) : null}
 
       {names.length ? (
-        <p className="text-[11px] text-[#6b5d50]">
+        <p className="text-[11.5px] text-[#6b5d50]">
           {list.charAt(0).toUpperCase() + list.slice(1)}{" "}
           {names.length > 1 ? "are" : "is"} not checked.
         </p>
