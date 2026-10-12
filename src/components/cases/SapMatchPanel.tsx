@@ -506,6 +506,7 @@ function Matched({
   const unchecked = result.checks.filter(
     (check) => check.sev === "unchecked" && check.lineIndex === null,
   );
+  const [receiptsLine, setReceiptsLine] = useState<number | null>(null);
   const review = reviewModel(result, { approved: data.postable });
   const openCount = result.open.length;
 
@@ -630,6 +631,7 @@ function Matched({
         vendor={data.vendor}
         result={result}
         unchecked={unchecked}
+        onOpenReceipts={(lineIndex) => setReceiptsLine(lineIndex)}
         checkedAt={result.checkedAt ?? data.matchJob?.finishedAt}
         savedLabel={
           locked
@@ -733,6 +735,10 @@ function Matched({
           vendorFound={Boolean(data.vendor)}
           rateTolerancePct={data.rules.rateTolerancePct}
           lineCount={result.lines.length}
+          receiptsOpen={receiptsLine === line.index}
+          onReceiptsOpenChange={(open) =>
+            setReceiptsLine(open ? line.index : null)
+          }
           onChoose={onChoose}
           onUndo={onUndo}
           onAllocate={onAllocate}

@@ -196,6 +196,8 @@ export function ReceiptCandidatesPanel({
   busy,
   onAllocate,
   onResetAllocation,
+  open: controlledOpen,
+  onOpenChange,
 }: {
   caseId: string;
   invoice: MatchInvoice;
@@ -206,8 +208,16 @@ export function ReceiptCandidatesPanel({
   busy: boolean;
   onAllocate: (index: number, allocations: Record<string, number>) => void;
   onResetAllocation: (index: number) => void;
+  /** Lets the page open the drawer, e.g. from the Receipts tile. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    setOwnOpen(next);
+    onOpenChange?.(next);
+  };
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

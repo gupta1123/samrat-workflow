@@ -32,6 +32,8 @@ type Tile = {
   value: ReactNode;
   sub: ReactNode;
   mode: TileMode;
+  /** Clicking the tile opens the receipts drawer of this invoice line. */
+  opens?: number;
   detail?: {
     invoice: { main: ReactNode; sub: ReactNode };
     sap: { main: ReactNode; sub: ReactNode };
@@ -163,6 +165,14 @@ function buildTiles(
       (n, line) => n + line.candidates.length,
       0,
     );
+    const target =
+      material.find(
+        (line) =>
+          !line.candidates.some(
+            (candidate) => candidate.kind === "GRPO" && candidate.allocated > 0,
+          ),
+      ) ?? material[0];
+    const opens = considered ? target.index : undefined;
     receipts = chosen.length
       ? {
           key: "receipts",
@@ -170,6 +180,7 @@ function buildTiles(
           value: `${chosen.length} GRPO${chosen.length === 1 ? "" : "s"}`,
           sub: [...new Set(chosen.map((c) => c.docNum))].slice(0, 4).join(", "),
           mode: "ok",
+          opens,
         }
       : {
           key: "receipts",
@@ -177,6 +188,7 @@ function buildTiles(
           value: "No GRPO found",
           sub: `${considered} considered`,
           mode: "warn",
+          opens,
         };
   }
   return [supplier, item, total, receipts];
@@ -225,12 +237,12 @@ function TileButton({
     </>
   );
   const className = `grid min-w-0 gap-[3px] rounded-[10px] border px-3.5 py-3 text-left ${tone}`;
-  if (!tile.detail)
+  if (!tile.detail && tile.opens === undefined)
     return <div className={className}>{inner}</div>;
   return (
     <button
       type="button"
-      aria-expanded={open}
+      {...(tile.detail ? { "aria-expanded": open } : { "aria-haspopup": "dialog" })}
       onClick={onToggle}
       className={`${className} transition-colors hover:border-[#c9bfae] ${open ? "border-[#3f8a63] shadow-[0_0_0_3px_rgba(63,138,99,0.1)]" : ""}`}
     >
@@ -251,6 +263,7 @@ export function ReviewHeader({
   savedLabel,
   busy,
   onRefresh,
+  onOpenReceipts,
 }: {
   title: string;
   tone: ReviewTone;
@@ -264,6 +277,8 @@ export function ReviewHeader({
   savedLabel?: string | null;
   busy: boolean;
   onRefresh: () => void;
+  /** Opens the receipts drawer for a line; the Receipts tile calls it. */
+  onOpenReceipts?: (lineIndex: number) => void;
 }) {
   const [open, setOpen] = useState<TileKey | null>(null);
   const tiles = buildTiles(invoice, vendor, result);
@@ -317,7 +332,11 @@ export function ReviewHeader({
             key={tile.key}
             tile={tile}
             open={open === tile.key}
-            onToggle={() => setOpen(open === tile.key ? null : tile.key)}
+            onToggle={() =>
+              tile.opens !== undefined
+                ? onOpenReceipts?.(tile.opens)
+                : setOpen(open === tile.key ? null : tile.key)
+            }
           />
         ))}
       </div>

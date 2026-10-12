@@ -68,6 +68,8 @@ export function MatchLineCard({
   vendorFound,
   rateTolerancePct,
   lineCount = 1,
+  receiptsOpen,
+  onReceiptsOpenChange,
   onChoose,
   onUndo,
   onAllocate,
@@ -84,6 +86,9 @@ export function MatchLineCard({
   rateTolerancePct?: number;
   /** How many lines the invoice has; the card only labels itself when there are several. */
   lineCount?: number;
+  /** Controlled state of the receipts drawer, so the Receipts tile can open it. */
+  receiptsOpen?: boolean;
+  onReceiptsOpenChange?: (open: boolean) => void;
   onChoose: (check: MatchCheck, choice: string, reason: string) => void;
   onUndo: (check: MatchCheck) => void;
   onAllocate: (lineIndex: number, allocations: Record<string, number>) => void;
@@ -364,6 +369,8 @@ export function MatchLineCard({
                   busy={busy}
                   onAllocate={onAllocate}
                   onResetAllocation={onResetAllocation}
+                  open={receiptsOpen}
+                  onOpenChange={onReceiptsOpenChange}
                 />
               ) : null}
               {vendorFound && line.kind === "material" ? (
