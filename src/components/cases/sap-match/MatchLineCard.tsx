@@ -13,7 +13,6 @@ import { priceReviewDetails } from "@/lib/sap-match/price-review";
 import { quantityBalances } from "@/lib/sap-match/evidence";
 import { ItemMatchingEvidence } from "./MatchingEvidence";
 import { receiptProblems } from "@/lib/sap-match/receipt-problems";
-import { SupplierOrdersPanel } from "./SupplierOrdersPanel";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -400,13 +399,6 @@ export function MatchLineCard({
                   open={receiptsOpen}
                   onOpenChange={onReceiptsOpenChange}
                   searchNote={searchNote}
-                />
-              ) : null}
-              {vendorFound && line.kind === "material" ? (
-                <SupplierOrdersPanel
-                  caseId={caseId}
-                  line={line}
-                  invoiceNumber={invoice.invoiceNumber}
                 />
               ) : null}
             </div>
