@@ -283,7 +283,7 @@ export function ReviewHeader({
   return (
     <div className="space-y-2">
       <section className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <h2 className="flex items-center gap-2 text-[13px] font-semibold text-[#111827]">
+        <h2 className="flex items-center gap-2.5 text-[18px] font-semibold tracking-[-0.02em] text-[#111827]">
           <span className={`h-2 w-2 rounded-full ${DOT[tone]}`} />
           {title}
         </h2>

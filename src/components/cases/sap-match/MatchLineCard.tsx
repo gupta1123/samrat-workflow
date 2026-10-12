@@ -197,7 +197,18 @@ export function MatchLineCard({
       </header>
 
       <div className="space-y-2.5 px-4 py-3">
-        <ItemMatchingEvidence invoice={invoice} line={line} />
+        {unmapped ? (
+          <ItemMatchingEvidence invoice={invoice} line={line} />
+        ) : (
+          <details className="text-[11px]">
+            <summary className="w-fit cursor-pointer font-medium text-[#6b4a33]">
+              How the item matched
+            </summary>
+            <div className="mt-1.5">
+              <ItemMatchingEvidence invoice={invoice} line={line} />
+            </div>
+          </details>
+        )}
         {unmapped && mapCheck ? (
           <ItemLinker
             caseId={caseId}

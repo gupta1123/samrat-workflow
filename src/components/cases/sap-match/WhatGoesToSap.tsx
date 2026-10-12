@@ -29,7 +29,7 @@ export function WhatGoesToSap({
   savedDetails?: PostedSapDetails;
   actions?: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   if (saved && caseId && savedDetails)
     return <SavedPostingCard caseId={caseId} details={savedDetails} />;
   const plan = result.payload;
@@ -55,41 +55,14 @@ export function WhatGoesToSap({
 
   return (
     <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-        <div>
-          <div className="text-[10px] text-[#8a7f72]">
-            {saved ? "Submitted before tax" : "Draft total · before tax"}
-          </div>
-          <div className="text-[14px] font-semibold tabular-nums text-[#111827]">
-            {inr(plan.bookedTaxable)}
-          </div>
-        </div>
-        {differs ? (
-          rounding ? (
-            <span className="text-[11px] text-[#24583e]">
-              ✓ Matches invoice {inr(plan.invoiceTaxable)} (rounding{" "}
-              {inr(plan.difference)})
-            </span>
-          ) : (
-            <span className="text-[11px] text-[#9a5a0a]">
-              Differs from invoice {inr(plan.invoiceTaxable)} by{" "}
-              {inr(plan.difference)}
-            </span>
-          )
-        ) : (
-          <span className="text-[11px] text-[#24583e]">
-            ✓ Matches invoice {inr(plan.invoiceTaxable)}
-          </span>
-        )}
-        <div className="ml-auto min-w-0">{actions}</div>
-      </div>
       <details
-        className="border-t border-[#ece6dc]"
+        open
         onToggle={(event) => setExpanded(event.currentTarget.open)}
       >
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[12px] font-semibold text-[#111827] [&::-webkit-details-marker]:hidden">
-          <span>
-            {saved ? "Saved A/P Invoice Draft Preview" : "View draft posting details"}
+          <span>{saved ? "Saved A/P Invoice Draft Preview" : "A/P Invoice Draft"}</span>
+          <span className="rounded-full bg-[#f2efe9] px-2 py-0.5 text-[10px] font-medium text-[#6b5d50]">
+            {saved ? "Submitted" : "Not created yet"}
           </span>
           <span className="ml-auto flex items-center gap-1 text-[11px] font-medium text-[#6b4a33]">
             <ChevronDown
@@ -213,7 +186,7 @@ export function WhatGoesToSap({
                     <dd>{inr(plan.freightExcluded)}</dd>
                   </div>
                 ) : null}
-                <div className="flex justify-between gap-3 border-t border-[#e0d8cc] pt-1 font-semibold text-[#111827]">
+                <div className="-mx-1 flex justify-between gap-3 rounded-md bg-[#f6f3ee] px-2 py-1.5 text-[12px] font-semibold text-[#111827]">
                   <dt>Total before tax</dt>
                   <dd>{inr(plan.bookedTaxable)}</dd>
                 </div>
@@ -226,6 +199,26 @@ export function WhatGoesToSap({
           </article>
         </div>
       </details>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#ece6dc] px-4 py-3">
+        {differs ? (
+          rounding ? (
+            <span className="text-[11px] text-[#24583e]">
+              ✓ Matches invoice {inr(plan.invoiceTaxable)} (rounding{" "}
+              {inr(plan.difference)})
+            </span>
+          ) : (
+            <span className="text-[11px] text-[#9a5a0a]">
+              Differs from invoice {inr(plan.invoiceTaxable)} by{" "}
+              {inr(plan.difference)}
+            </span>
+          )
+        ) : (
+          <span className="text-[11px] text-[#24583e]">
+            ✓ Matches invoice {inr(plan.invoiceTaxable)}
+          </span>
+        )}
+        <div className="ml-auto min-w-0">{actions}</div>
+      </div>
 
     </section>
   );

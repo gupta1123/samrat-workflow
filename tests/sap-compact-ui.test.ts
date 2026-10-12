@@ -148,7 +148,7 @@ test("missing historical reference evidence is summarized once without hiding a 
   assert.match(html, /Open at saved check/);
 });
 
-test("draft total and action precede collapsed posting details", () => {
+test("draft sheet opens with the invoice layout and ends with the match line and action", () => {
   const html = renderToStaticMarkup(
     createElement(WhatGoesToSap, {
       result: matchFixture.result,
@@ -157,11 +157,14 @@ test("draft total and action precede collapsed posting details", () => {
       actions: createElement("button", null, "Create draft"),
     }),
   );
-  const summary = html.slice(0, html.indexOf("<details"));
-  assert.match(summary, /Draft total.*₹200/);
-  assert.match(summary, /Create draft/);
-  assert.doesNotMatch(summary, /4130067129|TSPL001|Base Document/);
-  assert.match(html, /View draft posting details/);
-  assert.doesNotMatch(html, /<details[^>]*\bopen(?:[ =>])/);
+  assert.match(html, /A\/P Invoice Draft/);
+  assert.match(html, /Not created yet/);
+  assert.match(html, /TSPL001/);
+  assert.match(html, /Base document/);
   assert.match(html, /GRPO.*718/);
+  assert.match(html, /Total before tax/);
+  assert.match(html, /Added by SAP/);
+  const afterSheet = html.slice(html.lastIndexOf("</details>"));
+  assert.match(afterSheet, /Matches invoice.*₹200/);
+  assert.match(afterSheet, /Create draft/);
 });
