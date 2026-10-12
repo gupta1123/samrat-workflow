@@ -1,16 +1,9 @@
 "use client";
 
-import { useId, useState } from "react";
+import "./grpo-drawer.css";
+import { useState, type CSSProperties } from "react";
 import { Content as DialogContent } from "@radix-ui/react-dialog";
-import {
-  Check,
-  ChevronRight,
-  Loader2,
-  RotateCcw,
-  Search,
-  X,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Check, ChevronRight, Search, X } from "lucide-react";
 import {
   Dialog,
   DialogClose,
@@ -26,22 +19,24 @@ import {
   rankCandidates,
   type RankedCandidate,
 } from "@/lib/sap-match/candidate-ranking";
+import { candidateEvidence } from "@/lib/sap-match/evidence";
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
 import type { LineResult, MatchInvoice } from "@/lib/sap-match/types";
 import { formatDate, inr, qty } from "./format";
-import { candidateEvidence } from "@/lib/sap-match/evidence";
 
 const SEG_COLORS = ["#3f8a63", "#5f7fb8", "#c08a3e", "#8a5fb0", "#3f8a8a"];
 
-type Verdict = "strong" | "maybe" | "conflict" | "none";
-const VERDICT: Record<Verdict, { label: string; tone: string }> = {
-  strong: { label: "Same invoice", tone: "bg-[#e3f1e8] text-[#24583e]" },
-  maybe: { label: "Same truck only", tone: "bg-[#fdf1dc] text-[#855009]" },
-  conflict: { label: "Other invoice", tone: "bg-[#fbeceb] text-[#9b2923]" },
-  none: { label: "No link", tone: "bg-[#f2efe9] text-[#6b5d50]" },
+type Verdict = "strong" | "maybe" | "conflict" | "none" | "na";
+const VERDICT_LABEL: Record<Exclude<Verdict, "na">, string> = {
+  strong: "Same invoice",
+  maybe: "Same truck only",
+  conflict: "Other invoice",
+  none: "No link",
 };
+
 // Whether the reference trail ties this delivery to this invoice.
 function verdictOf(ranked: RankedCandidate): Verdict {
+  if (ranked.candidate.rejected) return "na";
   const by = (label: string) =>
     ranked.signals.find((signal) => signal.label === label)?.status;
   if (by("Invoice") === "different") return "conflict";
@@ -55,39 +50,6 @@ function verdictOf(ranked: RankedCandidate): Verdict {
   return "none";
 }
 
-const EVIDENCE_KEYS = ["Invoice", "E-way bill", "Vehicle"] as const;
-function EvidenceDots({ ranked }: { ranked: RankedCandidate }) {
-  return (
-    <span className="inline-flex items-center gap-1.5" aria-label="Reference checks">
-      {EVIDENCE_KEYS.map((key) => {
-        const signal = ranked.signals.find((entry) => entry.label === key);
-        const mark = !signal ? "–" : signal.status === "same" ? "✓" : "≠";
-        const tone = !signal
-          ? "text-[#a89c8e]"
-          : signal.status === "same"
-            ? "text-[#24583e]"
-            : "text-[#9b2923]";
-        const tip = !signal
-          ? `${key}: nothing in SAP to compare`
-          : signal.status === "same"
-            ? `${key} matches`
-            : `${key} differs: ${signal.sap}`;
-        return (
-          <span key={key} title={tip} className={`text-[10px] ${tone}`}>
-            {key === "Vehicle" ? "Truck" : key} {mark}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
-const TONE_CLASS = {
-  Matched: "text-[#24583e]",
-  "Partly matched": "text-[#855009]",
-  Different: "text-[#9b2923]",
-  "Not checked": "text-[#6b5d50]",
-} as const;
 const FIELD_NAME: Record<string, string> = {
   "PO reference": "PO",
   "Invoice No.": "Invoice no.",
@@ -95,247 +57,137 @@ const FIELD_NAME: Record<string, string> = {
   "Lorry Receipt No.": "Lorry receipt",
   "Vehicle No.": "Truck",
 };
-function SideBySide({
-  invoice,
+const TONE = {
+  Matched: "same",
+  "Partly matched": "part",
+  Different: "diff",
+  "Not checked": "unknown",
+} as const;
+const ICON_STYLE = {
+  same: { background: "#e3f1e8", color: "#2c6a4f" },
+  diff: { background: "#fbe7e5", color: "#b3261e" },
+  part: { background: "#fdf1dc", color: "#8a5207" },
+  unknown: { background: "#f0ece4", color: "#a49a8e" },
+} as const;
+const MARK = { same: "✓", diff: "≠", part: "~", unknown: "–" } as const;
+
+const fmt = (value: number) => String(+Number(value).toFixed(3));
+const shortDate = (value: string | null | undefined) =>
+  value
+    ? new Date(value).toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+      })
+    : "";
+
+function Detail({
   ranked,
+  verdict,
+  invoice,
+  ignorePo,
   service,
   amount,
 }: {
-  invoice: MatchInvoice;
   ranked: RankedCandidate;
+  verdict: Verdict;
+  invoice: MatchInvoice;
+  ignorePo: boolean;
   service: boolean;
   amount: (value: number) => string;
 }) {
   const { candidate } = ranked;
+  if (verdict === "na")
+    return (
+      <div className="dt">
+        <p className="dt-sum na">{candidate.rejected}</p>
+      </div>
+    );
   const rows = candidateEvidence(invoice, candidate);
+  const proof = rows.filter((row) => row.label !== "PO reference");
+  const names = (tone: string) =>
+    proof
+      .filter((row) => TONE[row.status] === tone)
+      .map((row) => (FIELD_NAME[row.label] ?? row.label).toLowerCase());
+  const list = (items: string[]) =>
+    items.length > 1
+      ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`
+      : items[0];
+  const same = names("same");
+  const diff = names("diff");
+  const summary =
+    verdict === "conflict"
+      ? `Stores linked this delivery to invoice ${ranked.otherInvoice ?? "another invoice"}.`
+      : [
+          same.length
+            ? `Confirmed by ${list(same)}`
+            : "Nothing confirms this delivery",
+          diff.length
+            ? `${list(diff)} ${diff.length > 1 ? "are" : "is"} different`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+  const hint = (row: (typeof rows)[number]) =>
+    ignorePo && row.label === "PO reference"
+      ? "Invoice shows the supplier's order no., not a SAP PO"
+      : row.note?.includes("part suffix")
+        ? "Same invoice, part suffix"
+        : row.note?.includes("Stores left this blank")
+          ? "Not filled in by Stores"
+          : "";
   return (
-    <div className="mt-1.5 space-y-1.5 border-t border-[#ece6dc] pt-1.5">
-      <table className="w-full text-[10px]">
-        <thead>
-          <tr className="text-left text-[#8a7f72]">
-            <th className="w-20 py-0.5 font-medium" />
-            <th className="py-0.5 font-medium">This invoice</th>
-            <th className="py-0.5 font-medium">{service ? "PO" : "GRPO"} {candidate.docNum}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.label} className="align-top">
-              <td className="py-0.5 pr-2 text-[#6b5d50]">
+    <div className="dt">
+      <p className={`dt-sum ${verdict}`}>{summary}</p>
+      <div className="dt-grid" role="table">
+        <div className="dt-h" role="row">
+          <span role="columnheader" />
+          <span role="columnheader">This invoice</span>
+          <span role="columnheader">
+            {service ? "PO" : "GRPO"} {candidate.docNum}
+          </span>
+        </div>
+        {rows.map((row) => {
+          const tone = TONE[row.status];
+          return (
+            <div className="dt-r" role="row" key={row.label}>
+              <span className="dt-k" role="rowheader">
                 {FIELD_NAME[row.label] ?? row.label}
-              </td>
-              <td className="py-0.5 pr-2 font-mono text-[#3d3530]">{row.scanned}</td>
-              <td className={`py-0.5 font-mono ${TONE_CLASS[row.status]}`}>
-                {row.sap}
-                {row.note ? (
-                  <span className="block font-sans text-[10px] text-[#8a7f72]">{row.note}</span>
-                ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="text-[10px] text-[#6b5d50]">
-        {!service ? <>Received {amount(candidate.quantity)} · </> : null}
-        Still open {amount(candidate.open)} · {formatDate(candidate.date)}
-        {candidate.note && !/^Based On Purchase Orders/i.test(candidate.note.trim())
-          ? ` · ${candidate.note}`
-          : ""}
-      </p>
+              </span>
+              <span className="dt-v mono" role="cell">
+                {row.scanned}
+              </span>
+              <span className={`dt-v mono ${tone}`} role="cell">
+                <span className="st-i" style={ICON_STYLE[tone]}>
+                  {MARK[tone]}
+                </span>
+                <span>
+                  {row.sap}
+                  {hint(row) ? <small>{hint(row)}</small> : null}
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <dl className="dt-facts">
+        <div>
+          <dt>Received</dt>
+          <dd>{amount(candidate.quantity)}</dd>
+        </div>
+        <div>
+          <dt>Still open</dt>
+          <dd>{amount(candidate.open)}</dd>
+        </div>
+        <div>
+          <dt>Received on</dt>
+          <dd>{formatDate(candidate.date)}</dd>
+        </div>
+      </dl>
     </div>
   );
 }
 
-function CandidateCard({
-  ranked,
-  invoice,
-  service,
-  unit,
-  value,
-  error,
-  locked,
-  busy,
-  group,
-  showLine,
-  fillValue,
-  onValue,
-}: {
-  ranked: RankedCandidate;
-  invoice: MatchInvoice;
-  service: boolean;
-  unit: string;
-  value: string;
-  error?: string;
-  locked: boolean;
-  busy: boolean;
-  group: string;
-  showLine: boolean;
-  fillValue: number;
-  onValue: (next: string) => void;
-}) {
-  const { candidate } = ranked;
-  const id = useId();
-  const chosen = Number(value) > 0;
-  const rejected = Boolean(candidate.rejected);
-  const amount = (value: number) =>
-    service ? inr(value) : `${qty(value)}${unit ? ` ${unit}` : ""}`;
-  return (
-    <li
-      className={`rounded-md border px-3 py-2 ${rejected ? "border-[#e0d8cc] bg-[#f6f3ee]" : chosen ? "border-[#8bb59b] bg-[#f3f9f5]" : "border-[#e0d8cc] bg-white"}`}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <h4 className="text-[11px] font-semibold text-[#111827]">
-              {service ? "PO" : SAP_TERMS.grpo} {candidate.docNum}
-              {showLine ? (
-                <span className="ml-1.5 text-[10px] font-normal text-[#6b5d50]">
-                  Line {candidate.lineNum + 1}
-                </span>
-              ) : null}
-            </h4>
-            {chosen && !rejected ? (
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-[#dfefe4] px-1.5 py-0.5 text-[9px] font-medium text-[#24583e]">
-                <Check className="h-2.5 w-2.5" />
-                Selected
-              </span>
-            ) : null}
-            {!rejected && !service ? (
-              <span
-                title={
-                  ranked.otherInvoice
-                    ? `Stores tagged invoice ${ranked.otherInvoice}`
-                    : undefined
-                }
-                className={`rounded-full px-1.5 py-0.5 text-[9px] font-medium ${VERDICT[verdictOf(ranked)].tone}`}
-              >
-                {VERDICT[verdictOf(ranked)].label}
-                {ranked.otherInvoice ? ` ${ranked.otherInvoice}` : ""}
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-0.5 text-[10px] leading-4 text-[#6b5d50]">
-            {[
-              formatDate(candidate.date),
-              candidate.poRef ? `PO ${candidate.poRef}` : null,
-              candidate.vehicle,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-          {rejected ? (
-            <p className="mt-1 text-[10px] leading-4 text-[#9b2923]">
-              Excluded: {candidate.rejected}
-            </p>
-          ) : (
-            <>
-              {!service ? (
-                <p className="mt-1">
-                  <EvidenceDots ranked={ranked} />
-                </p>
-              ) : null}
-              {error ? (
-                <p
-                  id={`${id}-error`}
-                  className="mt-1 text-[10px] leading-4 text-[#b3261e]"
-                >
-                  {error}
-                </p>
-              ) : null}
-              {ranked.otherWarnings.length ? (
-                <p className="mt-1 text-[10px] leading-4 text-[#855009]">
-                  {ranked.otherWarnings.join("; ")}
-                </p>
-              ) : null}
-            </>
-          )}
-        </div>
-        {!rejected ? (
-          <div className="shrink-0 text-right">
-            <p className="whitespace-nowrap text-[10px] leading-4 text-[#6b5d50]">
-              <span
-                title={
-                  locked
-                    ? "Open balance at the saved check"
-                    : "Open balance available for this invoice"
-                }
-              >
-                {service ? SAP_TERMS.openAmount : SAP_TERMS.openQty}
-              </span>
-              {locked ? " (saved)" : ""}:{" "}
-              <span className="font-semibold tabular-nums text-[#111827]">
-                {amount(candidate.open)}
-              </span>
-            </p>
-            {locked ? (
-              <p className="mt-1 text-[11px] text-[#3d3530]">
-                Used:{" "}
-                <span className="font-semibold tabular-nums">
-                  {amount(candidate.allocated)}
-                </span>
-              </p>
-            ) : service ? (
-              <label className="mt-1 flex h-7 cursor-pointer items-center justify-end gap-1.5 text-[11px] font-medium text-[#24583e]">
-                <input
-                  className="h-3 w-3 accent-[#2d6a4f]"
-                  type="radio"
-                  name={group}
-                  checked={chosen}
-                  disabled={busy}
-                  aria-label={`Use purchase order ${candidate.docNum}, line ${candidate.lineNum + 1}`}
-                  onChange={() => onValue("use")}
-                />
-                Use this PO
-              </label>
-            ) : (
-              <div className="mt-1 flex items-center justify-end gap-1">
-                {!chosen && fillValue > 0 ? (
-                  <button
-                    type="button"
-                    className="h-7 rounded-md border border-[#b6aca0] bg-white px-2 text-[10px] font-medium text-[#24583e] hover:bg-[#f3f9f5] disabled:opacity-50"
-                    disabled={busy}
-                    title={`Allocate ${amount(fillValue)} from this GRPO`}
-                    onClick={() => onValue(String(fillValue))}
-                  >
-                    Use {qty(fillValue)}
-                  </button>
-                ) : null}
-                <input
-                  id={id}
-                  aria-label={`Quantity from GRPO ${candidate.docNum}, line ${candidate.lineNum + 1}${unit ? ` (${unit})` : ""}`}
-                  aria-invalid={Boolean(error)}
-                  aria-describedby={error ? `${id}-error` : undefined}
-                  placeholder="0"
-                  className={`h-7 w-20 rounded-md border bg-white px-2 text-right text-[11px] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[#2d6a4f] disabled:opacity-50 ${error ? "border-[#b3261e]" : "border-[#b6aca0]"}`}
-                  inputMode="decimal"
-                  disabled={busy}
-                  value={value}
-                  onChange={(event) => onValue(event.target.value)}
-                />
-              </div>
-            )}
-          </div>
-        ) : null}
-      </div>
-      {!rejected ? (
-        <details className="mt-0.5 text-[10px] text-[#6b5d50]">
-          <summary className="cursor-pointer leading-4 font-medium">
-            Compare with this invoice
-          </summary>
-          <SideBySide
-            invoice={invoice}
-            ranked={ranked}
-            service={service}
-            amount={amount}
-          />
-        </details>
-      ) : null}
-    </li>
-  );
-}
-
 export function ReceiptCandidatesPanel({
-  caseId,
   invoice,
   line,
   title,
@@ -358,127 +210,322 @@ export function ReceiptCandidatesPanel({
   const [open, setOpen] = useState(false);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [folds, setFolds] = useState<Set<string>>(new Set());
   const service = line.kind === "service";
   const label = service ? "POs" : SAP_TERMS.grpos;
   const selection = receiptSelection(line, locked ? {} : edits);
-  const format = (value: number | null) =>
+  const unitLabel = service ? "" : unit;
+  const money = (value: number | null) =>
     value == null
       ? "—"
       : service
         ? inr(value)
-        : `${qty(value)}${unit ? ` ${unit}` : ""}`;
+        : `${fmt(value)}${unitLabel ? ` ${unitLabel}` : ""}`;
+  const amount = (value: number) =>
+    service ? inr(value) : `${qty(value)}${unitLabel ? ` ${unitLabel}` : ""}`;
   const hasErrors = Object.keys(selection.errors).length > 0;
-  const matched =
-    selection.remaining != null && Math.abs(selection.remaining) < 0.000001;
-  const overPo =
-    service &&
-    line.candidates.some(
-      (candidate) =>
-        (selection.allocations[candidate.key] ?? 0) > candidate.open + 0.5,
-    );
   const ignorePo = !service && poNotOnInvoice(invoice, line.candidates);
   const ranked = rankCandidates(invoice, line.candidates, ignorePo);
-  const lineCount = new Map<number, number>();
-  for (const candidate of line.candidates)
-    lineCount.set(candidate.docNum, (lineCount.get(candidate.docNum) ?? 0) + 1);
+  const verdictRank: Record<Verdict, number> = {
+    strong: 0,
+    maybe: 1,
+    conflict: 2,
+    none: 3,
+    na: 4,
+  };
+  const rows = ranked
+    .map((entry) => ({ entry, verdict: verdictOf(entry) }))
+    .sort((a, b) => verdictRank[a.verdict] - verdictRank[b.verdict]);
   const query = search.trim().toLowerCase();
-  const matches = ({ candidate }: RankedCandidate) =>
+  type Row = (typeof rows)[number];
+  const matches = ({ entry }: Row) =>
+    !query ||
     [
-      candidate.docNum,
-      candidate.poRef,
-      candidate.vehicle,
-      candidate.date,
-      candidate.rejected,
-      candidate.references?.invoice,
-      candidate.references?.eWayBill,
-      candidate.references?.lorryReceipt,
+      entry.candidate.docNum,
+      entry.candidate.poRef,
+      entry.candidate.vehicle,
+      entry.candidate.date,
+      entry.candidate.references?.invoice,
+      entry.candidate.references?.eWayBill,
+      entry.candidate.references?.lorryReceipt,
     ]
       .join(" ")
       .toLowerCase()
       .includes(query);
-  // Keep groups stable while typing so editing never moves a focused input.
-  const selected = ranked.filter(
-    ({ candidate }) => !candidate.rejected && candidate.allocated > 0,
+  // Groups follow the applied selection so rows never jump while editing.
+  const applied = rows.filter(
+    ({ entry }) => !entry.candidate.rejected && entry.candidate.allocated > 0,
   );
-  const eligible = ranked.filter(
-    ({ candidate }) => !candidate.rejected && candidate.allocated <= 0,
-  );
-  const likely = eligible.filter((entry) => entry.same > 0);
-  const others = eligible.filter((entry) => entry.same === 0);
-  const excluded = ranked.filter(({ candidate }) => candidate.rejected);
-  const remaining = Math.max(0, selection.remaining ?? 0);
+  const rest = rows.filter(({ entry }) => !(entry.candidate.allocated > 0));
+  const groups: { key: string; title: string; xs: Row[]; fold?: boolean }[] = [
+    { key: "in", title: "In this invoice", xs: applied },
+    {
+      key: "sug",
+      title: "Suggested",
+      xs: rest.filter(
+        ({ verdict }) => verdict === "strong" || verdict === "maybe",
+      ),
+    },
+    {
+      key: "none",
+      title: "No link to this invoice",
+      xs: rest.filter(({ verdict }) => verdict === "none"),
+      fold: true,
+    },
+    {
+      key: "other",
+      title: "Billed on other invoices",
+      xs: rest.filter(({ verdict }) => verdict === "conflict"),
+      fold: true,
+    },
+    {
+      key: "na",
+      title: "Not available",
+      xs: rest.filter(({ verdict }) => verdict === "na"),
+      fold: true,
+    },
+  ];
+  const visible = groups
+    .map((group) => ({ ...group, shown: group.xs.filter(matches) }))
+    .filter((group) => group.shown.length);
+  const hasMain = visible.some((group) => !group.fold);
+  const firstFold = visible.find((group) => group.fold)?.key;
+
   const valueOf = (key: string, allocated: number) =>
     edits[key] ?? (allocated > 0 ? String(allocated) : "");
-  const renderCandidates = (entries: RankedCandidate[]) => (
-    <ul className="space-y-1.5">
-      {entries.filter(matches).map((entry) => {
-        const { candidate } = entry;
-        const value = valueOf(candidate.key, candidate.allocated);
-        return (
-          <CandidateCard
-            key={candidate.key}
-            ranked={entry}
-            invoice={invoice}
-            service={service}
-            unit={unit}
-            value={value}
-            error={selection.errors[candidate.key]}
-            locked={locked}
-            busy={busy}
-            group={`service-order-${caseId}-${line.index}`}
-            showLine={(lineCount.get(candidate.docNum) ?? 0) > 1}
-            fillValue={
-              Math.round(Math.min(candidate.open, remaining) * 1000) / 1000
-            }
-            onValue={(next) => {
-              if (service) {
-                setEdits(
-                  Object.fromEntries(
-                    line.candidates
-                      .filter((candidate) => !candidate.rejected)
-                      .map((option) => [
-                        option.key,
-                        option.key === candidate.key
-                          ? String(line.invoiceAmount ?? 0)
-                          : "0",
-                      ]),
-                  ),
+  const numberOf = (key: string, allocated: number) =>
+    Number(valueOf(key, allocated)) || 0;
+  const usage = (entry: RankedCandidate) => {
+    const value = numberOf(entry.candidate.key, entry.candidate.allocated);
+    return {
+      pct:
+        entry.candidate.open > 0
+          ? Math.round((value / entry.candidate.open) * 100)
+          : 0,
+      over: !service && value > entry.candidate.open + 0.0005,
+    };
+  };
+  const picked = ranked.filter(
+    ({ candidate }) =>
+      !candidate.rejected && numberOf(candidate.key, candidate.allocated) > 0,
+  );
+  const colorOf = (entry: RankedCandidate) => {
+    const index = picked.indexOf(entry);
+    return index < 0 ? "transparent" : SEG_COLORS[index % SEG_COLORS.length];
+  };
+  const remaining = Math.max(0, selection.remaining ?? 0);
+  const setValue = (key: string, next: string) =>
+    setEdits((current) => ({ ...current, [key]: next }));
+  const pickService = (key: string) =>
+    setEdits(
+      Object.fromEntries(
+        line.candidates
+          .filter((candidate) => !candidate.rejected)
+          .map((option) => [
+            option.key,
+            option.key === key ? String(line.invoiceAmount ?? 0) : "0",
+          ]),
+      ),
+    );
+  const toggle = (set: Set<string>, key: string) => {
+    const next = new Set(set);
+    if (!next.delete(key)) next.add(key);
+    return next;
+  };
+
+  const billed = selection.billed;
+  const balanced =
+    selection.remaining != null && Math.abs(selection.remaining) < 0.0005;
+  const overRow = ranked.find(
+    (entry) => !entry.candidate.rejected && usage(entry).over,
+  );
+  const meterStatus: "ok" | "over" | "short" = locked
+    ? "ok"
+    : overRow || (selection.remaining ?? 0) < 0
+      ? "over"
+      : balanced
+        ? "ok"
+        : "short";
+  const meterLabel = locked
+    ? "Saved comparison"
+    : overRow
+      ? `GRPO ${overRow.candidate.docNum} has only ${money(overRow.candidate.open)} open`
+      : selection.remaining == null
+        ? "Invoice amount unavailable"
+        : meterStatus === "over"
+          ? `${money(-selection.remaining)} too much`
+          : meterStatus === "ok"
+            ? "Adds up"
+            : `${money(selection.remaining)} to cover`;
+  const scale = Math.max(billed ?? 0, selection.total) || 1;
+  const footMessage = locked
+    ? "Read-only · quantities from the saved comparison, not current SAP balances."
+    : overRow
+      ? `Reduce ${service ? "PO" : "GRPO"} ${overRow.candidate.docNum} to ${money(overRow.candidate.open)} or less`
+      : hasErrors
+        ? "Correct the highlighted quantities"
+        : !selection.dirty
+          ? "No changes"
+          : selection.remaining == null
+            ? "Review the invoice amount"
+            : balanced
+              ? "Ready to apply"
+              : selection.remaining < 0
+                ? "More than the invoice bills"
+                : "Invoice not fully covered";
+
+  const renderRow = ({ entry, verdict }: Row) => {
+    const { candidate } = entry;
+    const value = valueOf(candidate.key, candidate.allocated);
+    const used = numberOf(candidate.key, candidate.allocated);
+    const isPicked = used > 0;
+    const isOpen = expanded.has(candidate.key);
+    const use = usage(entry);
+    const na = verdict === "na";
+    const unitSuffix = unitLabel ? ` ${unitLabel}` : "";
+    const error = selection.errors[candidate.key];
+    const note = use.over
+      ? `More than this delivery has open (${fmt(candidate.open)}${unitSuffix}).`
+      : !service && isPicked && used < candidate.open - 0.0005
+        ? `Part delivery · ${fmt(used)} of ${fmt(candidate.open)}${unitSuffix} · ${fmt(candidate.open - used)}${unitSuffix} stays open for a later invoice`
+        : "";
+    const why =
+      verdict === "strong"
+        ? "Same invoice"
+        : verdict === "maybe"
+          ? "Same truck only, nothing else confirms it"
+          : verdict === "conflict"
+            ? `Stores tagged it to invoice ${entry.otherInvoice}`
+            : verdict === "none"
+              ? "Nothing links it to this invoice"
+              : (candidate.rejected ?? "");
+    return (
+      <li
+        key={candidate.key}
+        className={`gr ${isPicked ? "picked" : ""} ${isOpen ? "open" : ""} v-${verdict}`}
+        style={{ "--seg": colorOf(entry) } as CSSProperties}
+      >
+        <div className="gr-main">
+          {locked ? (
+            <span
+              className={`gr-check ${isPicked ? "on" : ""}`}
+              aria-hidden="true"
+            >
+              {isPicked ? <Check strokeWidth={3} /> : null}
+            </span>
+          ) : na ? (
+            <span className="gr-check na" aria-hidden="true" />
+          ) : (
+            <button
+              type="button"
+              className={`gr-check ${isPicked ? "on" : ""}`}
+              role="checkbox"
+              aria-checked={isPicked}
+              aria-label={`Use ${service ? "PO" : "GRPO"} ${candidate.docNum}`}
+              disabled={busy}
+              onClick={() => {
+                if (service) return pickService(candidate.key);
+                const fill =
+                  Math.round(Math.min(candidate.open, remaining) * 1000) / 1000;
+                setValue(
+                  candidate.key,
+                  isPicked ? "0" : String(fill > 0 ? fill : candidate.open),
                 );
-              } else
-                setEdits((current) => ({ ...current, [candidate.key]: next }));
-            }}
+              }}
+            >
+              <Check strokeWidth={3} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="gr-body"
+            aria-expanded={isOpen}
+            title={why}
+            onClick={() =>
+              setExpanded((current) => toggle(current, candidate.key))
+            }
+          >
+            <span className="gr-id">
+              <b>{candidate.docNum}</b>
+              <small>
+                {candidate.poRef ? `PO ${candidate.poRef} · ` : ""}
+                Received {shortDate(candidate.date)}
+              </small>
+            </span>
+            <span className="gr-truck mono">{candidate.vehicle || "—"}</span>
+            {na ? (
+              <span className="gr-na">{candidate.rejected}</span>
+            ) : (
+              <span className={`verdict ${verdict}`}>
+                {VERDICT_LABEL[verdict as Exclude<Verdict, "na">]}
+              </span>
+            )}
+            <span className="gr-chev">
+              <ChevronRight />
+            </span>
+          </button>
+          {locked && isPicked ? (
+            <span className="gr-qty">
+              <span className="num">{amount(candidate.allocated)}</span>
+              <small>used</small>
+            </span>
+          ) : isPicked && !service ? (
+            <span className="gr-qty picked">
+              <span className="gr-alloc">
+                <input
+                  className={`gr-input num ${use.over || error ? "over" : ""}`}
+                  inputMode="decimal"
+                  disabled={busy}
+                  value={value}
+                  onChange={(event) =>
+                    setValue(candidate.key, event.target.value)
+                  }
+                  aria-label={`Quantity from GRPO ${candidate.docNum}, ${fmt(candidate.open)}${unitSuffix} open`}
+                  aria-invalid={Boolean(error)}
+                />
+                <small>of {fmt(candidate.open)}</small>
+              </span>
+              <span
+                className={`gr-use ${use.over ? "over" : ""}`}
+                title={`Using ${use.pct}% of what this GRPO has open`}
+              >
+                <span style={{ width: `${Math.min(100, use.pct)}%` }} />
+              </span>
+            </span>
+          ) : (
+            <span className="gr-qty">
+              <span className="num">
+                {service ? inr(candidate.open) : fmt(candidate.open)}
+              </span>
+              <small>{service ? "open" : `${unitLabel || "qty"} open`}</small>
+            </span>
+          )}
+        </div>
+        <div className={`gr-note ${use.over || error ? "error" : ""}`}>
+          {error ?? note}
+        </div>
+        {isOpen ? (
+          <Detail
+            ranked={entry}
+            verdict={verdict}
+            invoice={invoice}
+            ignorePo={ignorePo}
+            service={service}
+            amount={amount}
           />
-        );
-      })}
-    </ul>
-  );
-  const groupTitle = (name: string, entries: RankedCandidate[]) => (
-    <h3 className="mb-2 text-[11px] font-semibold text-[#3d3530]">
-      {name} ({query ? `${entries.filter(matches).length} of ` : ""}
-      {entries.length})
-    </h3>
-  );
-  const invoiceRefs = [
-    invoice.vehicles.length ? `Vehicle ${invoice.vehicles.join(", ")}` : null,
-    invoice.eWayBill ? `E-way bill ${invoice.eWayBill}` : null,
-    invoice.lorryReceipt ? `LR ${invoice.lorryReceipt}` : null,
-    invoice.invoiceDate ? formatDate(invoice.invoiceDate) : null,
-  ].filter(Boolean);
-  const statusText = locked
-    ? "Read-only · balances and quantities from the saved comparison, not current SAP balances."
-    : hasErrors
-      ? "Correct the highlighted quantities before applying."
-      : overPo
-        ? "This bill exceeds the PO balance. Applying will require review."
-        : selection.remaining == null
-          ? `Vendor Invoice ${service ? "amount" : "quantity"} is unavailable. Review the invoice.`
-          : selection.remaining < 0
-            ? `${format(-selection.remaining)} above Invoice ${service ? "Amount" : "Qty."}. Applying will require review.`
-            : !matched
-              ? `${format(selection.remaining)} still to allocate.`
-              : selection.dirty
-                ? "Balanced. Apply to save this selection."
-                : "Balanced. No changes to apply.";
+        ) : null}
+      </li>
+    );
+  };
+
+  const heading = locked
+    ? "Deliveries this invoice paid for"
+    : "Which deliveries does this invoice pay for?";
+  const discard = () => {
+    setEdits({});
+    setOpen(false);
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -492,213 +539,230 @@ export function ReceiptCandidatesPanel({
         </button>
       </DialogTrigger>
       <DialogPortal>
-        <DialogOverlay className="bg-slate-950/25 backdrop-blur-none" />
-        <DialogContent className="fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-[560px] flex-col border-l border-[#e0d8cc] bg-[#faf8f4] shadow-2xl outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right motion-reduce:animate-none">
-          <header className="shrink-0 border-b border-[#e0d8cc] bg-white px-4 py-3">
-            <DialogTitle className="pr-9 text-[13px] font-semibold text-[#111827]">
-              {label} considered ({line.candidates.length})
-            </DialogTitle>
-            <DialogDescription className="mt-0.5 pr-8 text-[11px] leading-4 text-[#6b5d50]">
-              Invoice line {line.index + 1} · {title}
-              {line.itemCode ? ` · ${line.itemCode}` : ""}
-            </DialogDescription>
-            <DialogClose className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full text-[#6b5d50] hover:bg-[#f0ece4] focus-visible:outline-2 focus-visible:outline-[#2d6a4f]">
-              <X className="h-3.5 w-3.5" />
-              <span className="sr-only">Close {label} considered</span>
-            </DialogClose>
-            {!service && invoiceRefs.length ? (
-              <p className="mt-1.5 text-[11px] leading-4 text-[#3d3530]">
-                <span className="text-[#6b5d50]">This invoice: </span>
-                {invoiceRefs.join(" · ")}
-              </p>
-            ) : null}
-            {ignorePo ? (
-              <p className="mt-1 text-[10px] leading-4 text-[#6b5d50]">
-                The invoice prints{" "}
-                {invoice.poReferences.length
-                  ? invoice.poReferences.join(", ")
-                  : "no PO reference"}
-                , not a SAP PO number, so PO is not used to rank{" "}
-                {label}.
-              </p>
-            ) : null}
-            {!service && selection.billed ? (
-              <div className="mt-2" aria-hidden="true">
-                <div className="flex h-1.5 overflow-hidden rounded-full bg-[#ece6dc]">
-                  {ranked
-                    .filter(
-                      ({ candidate }) =>
-                        (selection.allocations[candidate.key] ?? 0) > 0,
-                    )
-                    .map(({ candidate }, index) => (
-                      <span
-                        key={candidate.key}
-                        title={`GRPO ${candidate.docNum} · ${qty(selection.allocations[candidate.key])}`}
+        <DialogOverlay className="bg-[rgba(28,20,14,0.28)] backdrop-blur-none" />
+        <DialogContent className="gd fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-[640px] flex-col bg-white shadow-[-24px_0_48px_rgba(43,26,16,0.14)] outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right motion-reduce:animate-none">
+          <header className="v3-head">
+            <div className="v3-top">
+              <div>
+                <DialogDescription className="eyebrow">
+                  {title}
+                  {line.itemCode ? ` · ${line.itemCode}` : ""} · invoice line{" "}
+                  {line.index + 1}
+                </DialogDescription>
+                <DialogTitle asChild>
+                  <h2>{heading}</h2>
+                </DialogTitle>
+              </div>
+              <DialogClose className="icon-btn" aria-label="Close">
+                <X size={16} />
+              </DialogClose>
+            </div>
+            <div className="meter">
+              <div className="m-row">
+                <span className="m-big num">
+                  {service ? inr(selection.total) : fmt(selection.total)}
+                  <span>
+                    {" "}
+                    /{" "}
+                    {billed == null ? "—" : service ? inr(billed) : fmt(billed)}
+                    {unitLabel ? ` ${unitLabel}` : ""}
+                  </span>
+                </span>
+                <span className={`m-state ${meterStatus}`}>
+                  {meterStatus === "ok" ? <Check /> : null}
+                  {meterLabel}
+                </span>
+              </div>
+              <div className="seg">
+                {picked.map((entry, index) => {
+                  const part = numberOf(
+                    entry.candidate.key,
+                    entry.candidate.allocated,
+                  );
+                  return (
+                    <span
+                      key={entry.candidate.key}
+                      title={`${service ? "PO" : "GRPO"} ${entry.candidate.docNum} · ${fmt(part)}`}
+                      style={{
+                        flexBasis: `${(part / scale) * 100}%`,
+                        background: SEG_COLORS[index % SEG_COLORS.length],
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="seg-legend">
+                {picked.length ? (
+                  picked.map((entry, index) => (
+                    <span key={entry.candidate.key}>
+                      <i
                         style={{
-                          flexBasis: `${(selection.allocations[candidate.key] / Math.max(selection.billed ?? 0, selection.total)) * 100}%`,
                           background: SEG_COLORS[index % SEG_COLORS.length],
                         }}
                       />
-                    ))}
-                </div>
-              </div>
-            ) : null}
-            <dl className="mt-2 grid grid-cols-3 gap-2 rounded-md bg-[#f6f3ee] px-2.5 py-2">
-              {[
-                {
-                  label: service
-                    ? SAP_TERMS.invoiceAmount
-                    : SAP_TERMS.invoiceQty,
-                  value: selection.billed,
-                },
-                {
-                  label: `${service ? "Allocated Amount" : SAP_TERMS.allocatedQty}${selection.dirty ? " (edited)" : ""}`,
-                  value: selection.total,
-                },
-                {
-                  label:
-                    selection.remaining != null && selection.remaining < 0
-                      ? service
-                        ? "Excess Amount"
-                        : "Excess Qty."
-                      : service
-                        ? "Unallocated Amount"
-                        : "Unallocated Qty.",
-                  value:
-                    selection.remaining == null
-                      ? null
-                      : Math.abs(selection.remaining),
-                },
-              ].map((entry) => (
-                <div key={entry.label}>
-                  <dt className="text-[10px] text-[#6b5d50]">{entry.label}</dt>
-                  <dd className="mt-0.5 break-words text-[12px] font-semibold tabular-nums text-[#111827]">
-                    {format(entry.value)}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            {line.candidates.length > 6 ? (
-              <div className="relative mt-2">
-                <Search className="pointer-events-none absolute left-2.5 top-2 h-3 w-3 text-[#6b5d50]" />
-                <input
-                  aria-label={`Search considered ${label}`}
-                  placeholder={
-                    service
-                      ? "Filter by PO No. or Posting Date"
-                      : "Filter by GRPO, PO, vehicle, e-way bill, LR or invoice No."
-                  }
-                  className="h-7 w-full rounded-md border border-[#d4c9bc] bg-white pl-7 pr-2 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-[#2d6a4f]"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-              </div>
-            ) : null}
-          </header>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3">
-            {selected.filter(matches).length ? (
-              <section>
-                {line.candidates.length > 1 || selection.dirty
-                  ? groupTitle(
-                      selection.dirty ? "Currently applied" : "Selected",
-                      selected,
-                    )
-                  : null}
-                {renderCandidates(selected)}
-              </section>
-            ) : null}
-            {likely.filter(matches).length ? (
-              <section>
-                {groupTitle(
-                  service
-                    ? "Other eligible POs"
-                    : "Likely matches · at least one reference agrees",
-                  likely,
+                      {entry.candidate.docNum}
+                      <b>
+                        {fmt(
+                          numberOf(
+                            entry.candidate.key,
+                            entry.candidate.allocated,
+                          ),
+                        )}
+                      </b>
+                    </span>
+                  ))
+                ) : (
+                  <span>No delivery picked</span>
                 )}
-                {renderCandidates(likely)}
-              </section>
-            ) : null}
-            {!selected.filter(matches).length &&
-            !eligible.filter(matches).length ? (
-              <p className="text-[11px] text-[#6b5d50]">
+              </div>
+            </div>
+            <label className="v3-search">
+              <Search size={15} />
+              <input
+                aria-label={`Search considered ${label}`}
+                placeholder="Find by GRPO, truck, e-way bill or invoice no."
+                autoComplete="off"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </label>
+          </header>
+          <div className="v3-body">
+            {visible.length ? (
+              <>
+                <div className="cols" aria-hidden="true">
+                  <span />
+                  <span>{service ? "PO" : "GRPO"}</span>
+                  <span>Truck</span>
+                  <span>Match</span>
+                  <span />
+                  <span className="cols-qty">{unitLabel || "Qty"}</span>
+                </div>
+                {visible.map((group) => {
+                  const isOpen =
+                    !group.fold ||
+                    Boolean(query) ||
+                    folds.has(group.key) ||
+                    (!hasMain &&
+                      group.key === firstFold &&
+                      !folds.has("x:" + group.key));
+                  const canExpandAll =
+                    group.shown.length > 1 &&
+                    (group.key === "in" ||
+                      (group.key === "sug" && group.shown.length <= 5));
+                  const allOpen = group.shown.every(({ entry }) =>
+                    expanded.has(entry.candidate.key),
+                  );
+                  return (
+                    <section className="grp" key={group.key}>
+                      <div className="grp-bar">
+                        <button
+                          type="button"
+                          className="grp-head"
+                          disabled={!group.fold}
+                          aria-expanded={group.fold ? isOpen : undefined}
+                          onClick={() => {
+                            if (!group.fold) return;
+                            const auto =
+                              !hasMain &&
+                              group.key === firstFold &&
+                              !folds.has(group.key);
+                            setFolds((current) =>
+                              toggle(
+                                current,
+                                auto && isOpen ? "x:" + group.key : group.key,
+                              ),
+                            );
+                          }}
+                        >
+                          {group.fold ? (
+                            <span
+                              className={`grp-chev ${isOpen ? "down" : ""}`}
+                            >
+                              <ChevronRight />
+                            </span>
+                          ) : null}
+                          <span>{group.title}</span>
+                          <span className="grp-count">
+                            {group.shown.length}
+                          </span>
+                        </button>
+                        {canExpandAll ? (
+                          <button
+                            type="button"
+                            className="grp-all"
+                            onClick={() =>
+                              setExpanded((current) => {
+                                const next = new Set(current);
+                                for (const { entry } of group.shown) {
+                                  if (allOpen) next.delete(entry.candidate.key);
+                                  else next.add(entry.candidate.key);
+                                }
+                                return next;
+                              })
+                            }
+                          >
+                            {allOpen ? "Hide details" : "Show details"}
+                          </button>
+                        ) : null}
+                      </div>
+                      {isOpen ? (
+                        <ul className="gr-list">
+                          {group.shown.map(renderRow)}
+                        </ul>
+                      ) : null}
+                    </section>
+                  );
+                })}
+              </>
+            ) : (
+              <p className="empty">
                 {query
-                  ? "No eligible candidates match your search."
+                  ? `No delivery matches “${search}”.`
                   : "No eligible candidates available."}
               </p>
-            ) : null}
-            {others.filter(matches).length ? (
-              <details
-                key={query ? "searching-others" : "others"}
-                open={query || !likely.length ? true : undefined}
-                className="border-t border-[#e0d8cc] pt-2"
-              >
-                <summary className="min-h-7 cursor-pointer text-[11px] font-semibold text-[#6b5d50]">
-                  {service
-                    ? "Other eligible POs"
-                    : "Same supplier and item, no matching reference"}{" "}
-                  ({query ? `${others.filter(matches).length} of ` : ""}
-                  {others.length})
-                </summary>
-                <div className="mt-1.5">{renderCandidates(others)}</div>
-              </details>
-            ) : null}
-            {excluded.filter(matches).length ? (
-              <details
-                key={query ? "searching" : "all"}
-                open={query ? true : undefined}
-                className="border-t border-[#e0d8cc] pt-2"
-              >
-                <summary className="min-h-7 cursor-pointer text-[11px] font-semibold text-[#6b5d50]">
-                  Excluded {label} ({excluded.filter(matches).length})
-                </summary>
-                <div className="mt-1.5">{renderCandidates(excluded)}</div>
-              </details>
-            ) : null}
+            )}
           </div>
-          <footer className="shrink-0 border-t border-[#e0d8cc] bg-white px-4 py-2.5">
-            <p
+          <footer className="v3-foot">
+            <span
               role="status"
               aria-live="polite"
-              aria-atomic="true"
-              className={`text-[11px] leading-4 ${locked ? "text-[#6b5d50]" : hasErrors || !matched || overPo ? "text-[#855009]" : "text-[#24583e]"}`}
+              className={`f-msg ${overRow || hasErrors ? "error" : selection.dirty && !balanced ? "warn" : ""}`}
             >
-              {!locked && selection.remaining != null ? (
-                <span className="font-semibold tabular-nums">
-                  {format(selection.total)} of {format(selection.billed)}
-                  {" · "}
-                </span>
-              ) : null}
-              {statusText}
-            </p>
+              {footMessage}
+            </span>
+            {!locked && (line.manual || Object.keys(edits).length) ? (
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={busy}
+                onClick={() => {
+                  setEdits({});
+                  if (line.manual) onResetAllocation(line.index);
+                }}
+              >
+                Restore automatic
+              </button>
+            ) : null}
+            <button type="button" className="btn ghost" onClick={discard}>
+              {selection.dirty && !locked ? "Discard" : "Close"}
+            </button>
             {!locked ? (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Button
-                  className="h-7 px-2.5 text-[11px]"
-                  disabled={busy || !selection.dirty || hasErrors}
-                  onClick={() => {
-                    if (busy || hasErrors || !selection.dirty) return;
-                    onAllocate(line.index, selection.allocations);
-                    setEdits({});
-                  }}
-                >
-                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                  Apply selection
-                </Button>
-                {line.manual || Object.keys(edits).length ? (
-                  <Button
-                    variant="ghost"
-                    className="h-7 px-2.5 text-[11px] text-[#6b5d50]"
-                    disabled={busy}
-                    onClick={() => {
-                      setEdits({});
-                      if (line.manual) onResetAllocation(line.index);
-                    }}
-                  >
-                    <RotateCcw className="h-3 w-3" />
-                    Restore automatic selection
-                  </Button>
-                ) : null}
-              </div>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={
+                  busy || !selection.dirty || hasErrors || Boolean(overRow)
+                }
+                onClick={() => {
+                  if (busy || hasErrors || !selection.dirty) return;
+                  onAllocate(line.index, selection.allocations);
+                  setEdits({});
+                  setOpen(false);
+                }}
+              >
+                Apply
+              </button>
             ) : null}
           </footer>
         </DialogContent>
