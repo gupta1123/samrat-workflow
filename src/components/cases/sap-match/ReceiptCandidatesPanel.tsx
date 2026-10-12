@@ -183,6 +183,17 @@ function Detail({
           <dt>Still open</dt>
           <dd>{amount(candidate.open)}</dd>
         </div>
+        {candidate.purchaseOrder?.docNum != null ? (
+          <div>
+            <dt>Based on</dt>
+            <dd>
+              PO {candidate.purchaseOrder?.docNum}
+              {candidate.purchaseOrder?.lineNum != null
+                ? ` · line ${candidate.purchaseOrder?.lineNum + 1}`
+                : ""}
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt>Received on</dt>
           <dd>{formatDate(candidate.date)}</dd>

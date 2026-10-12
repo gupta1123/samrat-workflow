@@ -225,7 +225,12 @@ export function MatchLineCard({
                           grpoLabel,
                         )
                       : null}
-                    {header("Scanned invoice", invoice.source?.pageLabel ?? "PDF")}
+                    {header(
+                      "Scanned invoice",
+                      [invoice.source?.fileName, invoice.source?.pageLabel ?? "PDF"]
+                        .filter(Boolean)
+                        .join(" · "),
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -348,6 +353,13 @@ export function MatchLineCard({
                   onUndo={() => onUndo(check)}
                 />
               ))}
+
+            {problems.ignoredPo?.length ? (
+              <p className="text-[11px] text-[#6b5d50]">
+                The invoice prints {problems.ignoredPo.join(", ")}, not a SAP PO
+                number, so the PO is not compared.
+              </p>
+            ) : null}
 
             {problems.rows.length || problems.missingNote ? (
               <ul className="space-y-1" aria-label="Receipt reference problems">
