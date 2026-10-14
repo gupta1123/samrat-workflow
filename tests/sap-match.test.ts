@@ -833,7 +833,7 @@ test("a service bill within the PO is a 2-way match", () => {
   assert.equal(result.payload!.lines[0].lineTotal, 38500);
 });
 
-test("a service bill above the PO needs a reason", () => {
+test("a service bill above the PO remains blocked until the PO or invoice is corrected", () => {
   const po: SapPoLine = {
     kind: "PO",
     docEntry: 71102,
@@ -878,8 +878,8 @@ test("a service bill above the PO needs a reason", () => {
     poLines: [po],
   });
   const result = evaluateMatch({ invoice: inv, context: ctx });
-  assert.equal(result.status, "review");
-  assert.equal(result.checks.find((c) => c.id === "amt-0")!.sev, "confirm");
+  assert.equal(result.status, "blocked");
+  assert.equal(result.checks.find((c) => c.id === "amt-0")!.sev, "block");
   const done = evaluateMatch({
     invoice: inv,
     context: ctx,
@@ -890,7 +890,7 @@ test("a service bill above the PO needs a reason", () => {
       "Extra parts approved on site",
     ),
   });
-  assert.equal(done.status, "ready");
+  assert.equal(done.status, "blocked");
 });
 
 test("a closed SAP month can be booked on today's date, keeping the GST date", () => {

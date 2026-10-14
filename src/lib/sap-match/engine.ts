@@ -372,6 +372,9 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
   const checks = new Checks(state);
   const lineResults: LineResult[] = [];
   const planned: PlannedDocumentLine[] = [];
+  const remainingServiceAmount = new Map(
+    context.poLines.map((po) => [receiptKey(po), po.openAmount]),
+  );
   // One GRPO line is one finite SAP balance for the whole vendor invoice. Keep
   // a shared balance so two scanned invoice lines cannot both spend it.
   const remainingReceiptQty = new Map(
@@ -592,6 +595,38 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     };
     lineResults.push(result);
 
+    const matchingAccountPos = context.poLines.filter(
+      (po) =>
+        po.documentType === "dDocument_Service" &&
+        po.cardCode === context.vendor?.cardCode &&
+        po.poRefs.some((ref) =>
+          invoice.poReferences.map(normalizeRef).includes(normalizeRef(ref)),
+        ),
+    );
+    const accountBasedService =
+      !info &&
+      (invoice.supplyNature === "services" ||
+        (invoice.supplyNature !== "goods" &&
+          invoice.supplyNature !== "mixed" &&
+          matchingAccountPos.length > 0));
+    if (accountBasedService) {
+      result.kind = "service";
+      if (context.vendor)
+        evaluateServiceLine({
+          ln,
+          itemCode: null,
+          result,
+          invoice,
+          context,
+          state,
+          checks,
+          planned,
+          remainingServiceAmount,
+          rules,
+        });
+      continue;
+    }
+
     if (!itemCode) {
       checks.push({
         id: `map-${ln.index}`,
@@ -617,7 +652,21 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     });
     if (!context.vendor) continue;
 
-    const isService = info?.inventory === false;
+    const isService =
+      info?.inventory === false &&
+      invoice.supplyNature !== "goods" &&
+      invoice.supplyNature !== "mixed";
+    if (invoice.supplyNature === "services" && info?.inventory === true) {
+      checks.push({
+        id: `kind-${ln.index}`,
+        lineIndex: ln.index,
+        sev: "block",
+        title:
+          "The invoice describes a service, but the selected SAP item is a stock item",
+        help: "Confirm the correct service PO or non-stock item. The goods checks will not be bypassed.",
+      });
+      continue;
+    }
     result.kind = isService ? "service" : "material";
     if (isService) {
       evaluateServiceLine({
@@ -629,6 +678,8 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
         state,
         checks,
         planned,
+        remainingServiceAmount,
+        rules,
       });
     } else {
       bookedQtyTotal += evaluateMaterialLine({
@@ -758,6 +809,18 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
   }
 
   // ---- Status ----
+  if (
+    new Set(planned.map((line) => line.documentType ?? "dDocument_Items"))
+      .size > 1
+  ) {
+    checks.push({
+      id: "document-type",
+      lineIndex: null,
+      sev: "block",
+      title: "SAP item and account-based service lines need separate drafts",
+      help: "SAP uses a different document type for each. Split the invoice workflow before creating a draft; no lines will be silently omitted.",
+    });
+  }
   const all = checks.list();
   const open = all
     .filter((check) => check.open)
@@ -1343,25 +1406,54 @@ function evaluateMaterialLine(args: {
 
 function evaluateServiceLine(args: {
   ln: MatchInvoiceLine;
-  itemCode: string;
+  itemCode: string | null;
   result: LineResult;
   invoice: MatchInvoice;
   context: MatchContext;
   state: MatchState;
   checks: Checks;
   planned: PlannedDocumentLine[];
+  remainingServiceAmount: Map<string, number | null>;
+  rules: MatchRules;
 }) {
-  const { ln, itemCode, result, invoice, context, state, checks, planned } =
-    args;
+  const {
+    ln,
+    itemCode,
+    result,
+    invoice,
+    context,
+    state,
+    checks,
+    planned,
+    remainingServiceAmount,
+    rules,
+  } = args;
   const i = ln.index;
   const vendor = context.vendor!;
-  const amount = ln.amount ?? 0;
+  const amount = ln.amount;
+  if (amount === null || !Number.isFinite(amount) || amount <= 0) {
+    checks.push({
+      id: `amt-${i}`,
+      lineIndex: i,
+      sev: "block",
+      title: "The service invoice line needs its printed pre-tax amount",
+      help: "Review the invoice amount. No zero amount or weight will be assumed.",
+    });
+    return;
+  }
   const invoicePos = invoice.poReferences.map(normalizeRef).filter(Boolean);
 
   const candidates = context.poLines
-    .filter((po) => po.cardCode === vendor.cardCode && po.itemCode === itemCode)
+    .filter(
+      (po) =>
+        po.cardCode === vendor.cardCode &&
+        (itemCode
+          ? po.itemCode === itemCode
+          : po.documentType === "dDocument_Service"),
+    )
     .map((po) => {
-      const open = r2(po.openAmount ?? 0);
+      const available = remainingServiceAmount.get(receiptKey(po));
+      const open = available == null ? 0 : r2(available);
       const view = candidateView(receiptKey(po), "PO", po, open);
       if (
         context.branch?.bplId != null &&
@@ -1371,38 +1463,67 @@ function evaluateServiceLine(args: {
         view.rejected = "Different branch";
         return { view, po };
       }
-      if (open <= 0.5) {
-        view.rejected = "Fully billed already";
+      if (available === null || available === undefined || open <= 0) {
+        view.rejected =
+          available == null
+            ? "SAP did not return this service line's open amount"
+            : "Fully billed already";
         return { view, po };
       }
-      let score = 30;
-      view.good.push("same service");
+      const score = 0; // Presentation only; never use a ranking score to choose a service PO.
+      if (itemCode) view.good.push("same SAP service item");
       if (po.poRefs.some((ref) => invoicePos.includes(normalizeRef(ref)))) {
-        score += 50;
         view.good.unshift("PO number is on the bill");
       } else {
         view.bad.push("PO number not on the bill");
       }
       if (open >= amount) {
-        score += 20;
         view.good.push("enough value left");
       } else {
         view.bad.push(`only ${inr(open)} left`);
       }
       view.score = score;
+      view.note =
+        [
+          po.description,
+          po.accountCode ? `SAP account ${po.accountCode}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null;
       return { view, po };
     });
 
   const manual = state.allocations[String(i)];
-  const eligible = candidates
-    .filter((candidate) => !candidate.view.rejected)
-    .sort((a, b) => b.view.score - a.view.score);
+  const eligible = candidates.filter((candidate) => !candidate.view.rejected);
   let pick: (typeof candidates)[number] | undefined;
   if (manual) {
     result.manual = true;
-    pick = eligible.find((candidate) => manual[candidate.view.key] != null);
-  } else if (eligible[0] && eligible[0].view.score >= 50) {
-    pick = eligible[0];
+    const selections = Object.entries(manual).filter(([, value]) => value > 0);
+    if (selections.length === 1) {
+      pick = eligible.find(
+        (candidate) => candidate.view.key === selections[0][0],
+      );
+    }
+  } else {
+    const exactPos = eligible.filter(({ po }) =>
+      po.poRefs.some((ref) => invoicePos.includes(normalizeRef(ref))),
+    );
+    const identified = exactPos.filter(({ po }) =>
+      ln.poLineReference != null
+        ? ln.poLineReference === String(po.lineNum)
+        : itemCode ||
+          (ln.description &&
+            po.description &&
+            ln.description.trim().toLocaleLowerCase("en-IN") ===
+              po.description.trim().toLocaleLowerCase("en-IN")),
+    );
+    if (identified.length === 1) pick = identified[0];
+    else if (
+      !identified.length &&
+      ln.poLineReference == null &&
+      exactPos.length === 1
+    )
+      pick = exactPos[0];
   }
   if (pick) pick.view.allocated = amount;
   result.candidates = candidates.map((candidate) => candidate.view);
@@ -1419,8 +1540,12 @@ function evaluateServiceLine(args: {
       id: `rcpt-${i}`,
       lineIndex: i,
       sev: "block",
-      title: "No open PO for this service",
-      help: "A service bill needs an approved PO with value left. Ask purchasing to raise one.",
+      title: eligible.length
+        ? "Confirm the correct service PO line"
+        : "No open PO for this service",
+      help: eligible.length
+        ? "Choose a supplier PO line below. No PO is selected by amount or description similarity."
+        : "A service bill needs an approved PO with value left. Ask purchasing to raise one.",
       options: [RETURN_OPTION],
     });
     return;
@@ -1431,6 +1556,7 @@ function evaluateServiceLine(args: {
     qty: pick.po.quantity,
     rate: pick.po.price,
     rateSource: "po",
+    accountCode: pick.po.accountCode,
   };
   checks.push({
     id: `rcpt-${i}`,
@@ -1439,7 +1565,7 @@ function evaluateServiceLine(args: {
     title: `Matched to PO ${pick.po.docNum}`,
   });
   const open = pick.view.open;
-  if (amount <= open + 0.5) {
+  if (amount <= open + 0.005) {
     checks.push({
       id: `amt-${i}`,
       lineIndex: i,
@@ -1451,38 +1577,100 @@ function evaluateServiceLine(args: {
     checks.push({
       id: `amt-${i}`,
       lineIndex: i,
-      sev: "confirm",
-      ask: "Pay more than the PO allows?",
+      sev: "block",
       title: `Bill is ${inr(over)} more than the PO allows`,
-      help: `The PO has ${inr(open)} left; the vendor billed ${inr(amount)} (${((over / open) * 100).toFixed(0)}% more). Confirm with a reason, or return the invoice.`,
-      options: [
-        {
-          choice: "confirm",
-          title: "Pay the full amount",
-          lines: [
-            `Pay ${inr(amount)} plus tax`,
-            "The reason is saved in the audit trail",
-          ],
-          effect: "resolve",
-          needsReason: true,
-        },
-        {
-          ...RETURN_OPTION,
-          recommended: true,
-          lines: [
-            `Ask them to bill ${inr(open)} now`,
-            "Extra only after a PO increase",
-          ],
-        },
-      ],
+      help: `The PO has ${inr(open)} left; the invoice needs ${inr(amount)}. Amend the PO or correct the invoice, then re-check. A review decision cannot increase SAP's remaining balance.`,
+      options: [RETURN_OPTION],
     });
+    return;
   }
+  const itemDocument = pick.po.documentType === "dDocument_Items";
+  if (
+    itemDocument &&
+    (ln.quantity === null ||
+      ln.quantity <= 0 ||
+      ln.rate === null ||
+      ln.rate < 0)
+  ) {
+    checks.push({
+      id: `basis-${i}`,
+      lineIndex: i,
+      sev: "block",
+      title:
+        "This non-stock SAP item PO needs the invoice quantity and unit price",
+      help: "Use the printed hours, months or other billing unit. Do not substitute a weight or quantity of one.",
+    });
+    return;
+  }
+  if (itemDocument) {
+    const reserved = sum(
+      planned
+        .filter(
+          (line) =>
+            line.baseType === 22 &&
+            line.baseEntry === pick.po.docEntry &&
+            line.baseLine === pick.po.lineNum,
+        )
+        .map((line) => line.quantity),
+    );
+    if (reserved + ln.quantity! > pick.po.openQty + 0.0005) {
+      checks.push({
+        id: `qty-${i}`,
+        lineIndex: i,
+        sev: "block",
+        title: "The service PO does not have enough unbilled units",
+        help: "Correct the invoice billing units or amend the PO, then re-check.",
+      });
+      return;
+    }
+    if (pick.po.price == null || pick.po.price <= 0) {
+      checks.push({
+        id: `rate-${i}`,
+        lineIndex: i,
+        sev: "unchecked",
+        title: "Service unit price not verified (SAP PO price unavailable)",
+      });
+    } else if (Math.abs(ln.rate! - pick.po.price) < 0.005) {
+      checks.push({
+        id: `rate-${i}`,
+        lineIndex: i,
+        sev: "pass",
+        title: "Service unit price matches the PO",
+      });
+    } else {
+      const pct = Math.abs((ln.rate! - pick.po.price) / pick.po.price) * 100;
+      const within = pct <= rules.rateTolerancePct;
+      checks.push({
+        id: `rate-${i}`,
+        lineIndex: i,
+        sev: within ? "ack" : "confirm",
+        title: "The service invoice and PO unit prices differ",
+        help: `Invoice ${inr(ln.rate!)}; PO ${inr(pick.po.price)} per ${ln.unit ?? "billing unit"}. Difference ${pct.toFixed(2)}%; configured tolerance ${rules.rateTolerancePct}%.`,
+        options: [
+          {
+            choice: within ? "ok" : "confirm",
+            title: "Use the invoice unit price",
+            lines: ["The PO balance and billed units must still be sufficient"],
+            effect: "resolve",
+            needsReason: !within,
+          },
+          RETURN_OPTION,
+        ],
+      });
+    }
+  }
+  remainingServiceAmount.set(
+    receiptKey(pick.po),
+    Math.max(0, r2(open - amount)),
+  );
   planned.push({
     invoiceLineIndex: i,
-    itemCode,
-    quantity: 1,
-    unitPrice: null,
-    lineTotal: amount,
+    itemCode: itemCode ?? "",
+    documentType: pick.po.documentType ?? "dDocument_Service",
+    accountCode: pick.po.accountCode,
+    quantity: itemDocument ? ln.quantity! : 1,
+    unitPrice: itemDocument ? ln.rate : null,
+    lineTotal: itemDocument ? null : amount,
     baseType: 22,
     baseEntry: pick.po.docEntry,
     baseLine: pick.po.lineNum,

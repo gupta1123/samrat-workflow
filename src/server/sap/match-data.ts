@@ -389,7 +389,7 @@ export async function computeCaseMatch(params: {
   // A legal supplier name need not equal SAP's division-specific BP name.
   // Discover the BP through literal invoice/e-way references before giving up.
   // Do not persist a mapping or invent a missing invoice GSTIN.
-  if (!vendor && !selectedCardCode) {
+  if (!vendor && !selectedCardCode && invoice.supplyNature !== "services") {
     try {
       const documents = await client.findOpenReceiptDocumentsForInvoice({
         invoiceNumber: invoice.invoiceNumber,
@@ -461,23 +461,27 @@ export async function computeCaseMatch(params: {
       vendorPurchaseOrders,
       loadedItemMap,
     ] = await Promise.all([
-      discoveredReceipts !== null
-        ? Promise.resolve(discoveredReceipts)
-        : client.findOpenReceiptDocumentsForInvoice({
-            cardCode: vendor.cardCode,
-            invoiceNumber: invoice.invoiceNumber,
-            eWayBill: invoice.eWayBill,
-            lorryReceipt: invoice.lorryReceipt,
-            vehicles: invoice.vehicles,
-            invoiceRefField: config.invoiceRefField,
-            eWayBillField: config.eWayBillField,
-            lorryReceiptField: config.lorryReceiptField,
-            vehicleField: config.vehicleField,
-            onSearch: (search) => {
-              receiptSearch = { method: "identifier", ...search };
-            },
-          }),
-      client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
+      invoice.supplyNature === "services"
+        ? Promise.resolve([])
+        : discoveredReceipts !== null
+          ? Promise.resolve(discoveredReceipts)
+          : client.findOpenReceiptDocumentsForInvoice({
+              cardCode: vendor.cardCode,
+              invoiceNumber: invoice.invoiceNumber,
+              eWayBill: invoice.eWayBill,
+              lorryReceipt: invoice.lorryReceipt,
+              vehicles: invoice.vehicles,
+              invoiceRefField: config.invoiceRefField,
+              eWayBillField: config.eWayBillField,
+              lorryReceiptField: config.lorryReceiptField,
+              vehicleField: config.vehicleField,
+              onSearch: (search) => {
+                receiptSearch = { method: "identifier", ...search };
+              },
+            }),
+      invoice.supplyNature === "services"
+        ? Promise.resolve([])
+        : client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
       client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
       loadItemMappings(db, vendor.cardCode),
     ]);
@@ -598,12 +602,20 @@ export async function computeCaseMatch(params: {
       }
     }
   }
-  const poLines = mapPoLines(purchaseOrders, config);
+  const localCurrency = purchaseOrders.some(
+    (po) => po.DocType === "dDocument_Service",
+  )
+    ? await client
+        .getAdminCurrencies()
+        .then((admin) => admin.LocalCurrency)
+        .catch(() => undefined)
+    : undefined;
+  const poLines = mapPoLines(purchaseOrders, config, localCurrency);
   const itemCodes = [
     ...receipts.map((line) => line.itemCode),
     ...poLines.map((line) => line.itemCode),
     ...Object.values(itemMap),
-  ];
+  ].filter(Boolean);
   const itemRows = itemCodes.length
     ? await client.listItemsByCodes(itemCodes)
     : [];

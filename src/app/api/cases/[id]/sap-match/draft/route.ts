@@ -17,6 +17,7 @@ import {
   DRAFT_FIELD_NAMES,
 } from "@/server/sap/draft-fields";
 import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
+import { draftSelectionsComplete } from "@/lib/sap-draft-fields";
 import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import { saveSapMatch } from "@/lib/sap-posted-details";
 import { sapDocumentSnapshot } from "@/lib/sap-posting-preview";
@@ -192,8 +193,10 @@ export async function POST(request: Request, context: Context) {
         }
         const header = await loadHeader(db, client, id, match, choices);
         if (
-          !header.preview.materialForm.selectedValue ||
-          !header.preview.transporter.selectedValue
+          !draftSelectionsComplete(header.preview, {
+            materialForm: header.preview.materialForm.selectedValue,
+            transporter: header.preview.transporter.selectedValue,
+          })
         ) {
           throw new ApiError(
             "Select Material Form and Transporter from the SAP choices before creating a draft.",
@@ -268,6 +271,11 @@ export async function POST(request: Request, context: Context) {
           bases,
           freightExpenseCode: freightExpenseCode(),
           invoiceRates: match.invoice.lines.map((line) => line.rate),
+          localCurrency: [...bases.values()].some(
+            (base) => base.DocType === "dDocument_Service",
+          )
+            ? (await client.getAdminCurrencies()).LocalCurrency
+            : undefined,
         });
         Object.assign(payload, header.values);
         const [grpos, pos] = await Promise.all([
@@ -345,6 +353,7 @@ export async function POST(request: Request, context: Context) {
           documentType: "APInvoiceDraft",
           caseId: id,
           matched: true,
+          serviceInvoice: match.result.method === "2-way",
           matchSnapshot: saveSapMatch(match, created.postingDate),
           method: match.result.method,
           baseKind: match.result.baseDocuments.some((doc) => doc.kind === "PO")

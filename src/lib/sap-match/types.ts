@@ -36,6 +36,7 @@ export const DEFAULT_MATCH_RULES: MatchRules = {
 // ---- Invoice (from the extracted packet) ----
 
 export type MatchInvoiceLine = {
+  poLineReference?: string | null;
   index: number;
   /** The vendor's own material code (e.g. Tata's 3434405). */
   vendorItemCode: string | null;
@@ -49,6 +50,8 @@ export type MatchInvoiceLine = {
 };
 
 export type MatchInvoice = {
+  supplyNature?: import("@/lib/supply-nature").SupplyNature["kind"];
+  servicePeriod?: string | null;
   invoiceNumber: string;
   /** Saved source review found an incomplete or unverified item table. */
   extractionIssue?: string;
@@ -115,6 +118,8 @@ export type SapReceiptLine = {
 };
 
 export type SapPoLine = {
+  documentType?: "dDocument_Service" | "dDocument_Items";
+  accountCode?: string | null;
   kind: "PO";
   docEntry: number;
   docNum: number;
@@ -319,10 +324,13 @@ export type LineResult = {
     rate: number | null;
     /** A GRPO rate can be used when the linked PO price is unavailable. */
     rateSource?: "po" | "grpo";
+    accountCode?: string | null;
   } | null;
 };
 
 export type PlannedDocumentLine = {
+  documentType?: "dDocument_Service" | "dDocument_Items";
+  accountCode?: string | null;
   invoiceLineIndex: number;
   itemCode: string;
   quantity: number;

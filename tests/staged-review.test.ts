@@ -49,6 +49,10 @@ async function compact(document: CaseDoc) {
   );
   return {
     sourceVerdict: "verified",
+    supplyNature: {
+      kind: "unknown",
+      evidence: [] as Array<{ pageNumber: string; quote: string }>,
+    },
     logisticsRows: [],
     fieldChecks: Object.fromEntries(
       context.fieldChecksInOrder.map((key) => [key, "supported"]),
@@ -138,6 +142,35 @@ async function compact(document: CaseDoc) {
     reason: "Own-source values verified.",
   };
 }
+
+test("supply nature requires evidence on the document's own original page", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const doc = { ...documents[0], md: "Monthly advisory services" };
+  const raw = await compact(doc);
+  raw.supplyNature = {
+    kind: "services",
+    evidence: [{ pageNumber: "p1", quote: "Monthly advisory services" }],
+  };
+  const result = parseCompactSourceAudit(JSON.stringify(raw), doc, [pages[0]]);
+  assert.equal(result.document.supplyNature?.kind, "services");
+  assert.equal(result.document.supplyNature?.evidence[0].sourcePage, 1);
+  for (const evidence of [
+    [],
+    [{ pageNumber: "p999", quote: "Monthly advisory services" }],
+  ]) {
+    assert.throws(() =>
+      parseCompactSourceAudit(
+        JSON.stringify({
+          ...raw,
+          supplyNature: { kind: "services", evidence },
+        }),
+        doc,
+        [pages[0]],
+      ),
+    );
+  }
+});
 
 test("review retains every transport/weight row only with individual own-page cell evidence", async () => {
   const { parseCompactSourceAudit } =
@@ -2296,6 +2329,7 @@ test("an inconsistent source audit is repaired from its own page without fabrica
           Object.fromEntries(
             [
               "fieldChanges",
+              "supplyNature",
               "sourceVerdict",
               "fieldChecks",
               "lineItemChecks",

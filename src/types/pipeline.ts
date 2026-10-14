@@ -1,4 +1,5 @@
 export type FieldKey =
+  | "servicePeriod"
   | "vendorName"
   | "supplierGstin"
   | "buyerName"
@@ -155,6 +156,7 @@ export interface CaseDoc {
   fields: Partial<Record<FieldKey, string>>;
   lineItems?: CommercialLineItem[];
   logisticsRows?: LogisticsRow[];
+  supplyNature?: import("@/lib/supply-nature").SupplyNature;
   tableCoverage?: {
     status: "complete" | "not_present" | "unreadable" | "unverified";
     rows: Array<{ sourceFileName: string; pageNumber: number; quote: string }>;

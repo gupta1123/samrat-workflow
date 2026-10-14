@@ -1,6 +1,7 @@
 import { PDFDocument, type PDFImage } from "pdf-lib";
 import sharp from "sharp";
 import { readStoredLogisticsRows } from "@/lib/extracted-source-rows";
+import { storedSupplyNature } from "@/lib/supply-nature";
 
 import { DOCUMENT_READABILITY_FIELD } from "@/lib/document-readability";
 import type { CaseDoc, ExtractionQualityIssue } from "@/types/pipeline";
@@ -414,6 +415,7 @@ export function toCurrentCaseDocument(row: Record<string, unknown>): CaseDoc {
     fields: fields as CaseDoc["fields"],
     lineItems: storedLineItems,
     logisticsRows: readStoredLogisticsRows(extractedFields),
+    supplyNature: storedSupplyNature(extractedFields),
     qualityIssues: Array.isArray(row.quality_issues)
       ? (row.quality_issues as ExtractionQualityIssue[])
       : undefined,

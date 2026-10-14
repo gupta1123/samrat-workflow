@@ -235,7 +235,14 @@ test("service lines need a service-type PO and use the billed value", () => {
           CardCode: "V-TATA01",
           DocCurrency: "INR",
           DocType: docType,
-          DocumentLines: [{ LineNum: 0, LineStatus: "bost_Open" }],
+          DocumentLines: [
+            {
+              LineNum: 0,
+              LineStatus: "bost_Open",
+              OpenAmount: 50000,
+              AccountCode: "EXP-SERVICE",
+            },
+          ],
         },
       ],
     ]);
@@ -243,11 +250,18 @@ test("service lines need a service-type PO and use the billed value", () => {
     caseId: "c",
     plan: service,
     bases: po("dDocument_Service"),
+    localCurrency: "INR",
     freightExpenseCode: null,
   });
   assert.equal(payload.DocType, "dDocument_Service");
   assert.deepEqual(payload.DocumentLines, [
-    { BaseType: 22, BaseEntry: 71091, BaseLine: 0, LineTotal: 38500 },
+    {
+      BaseType: 22,
+      BaseEntry: 71091,
+      BaseLine: 0,
+      LineTotal: 38500,
+      AccountCode: "EXP-SERVICE",
+    },
   ]);
   assert.throws(
     () =>
@@ -334,7 +348,9 @@ test("different GRPO attachment groups do not block a combined draft or pick one
   Object.assign(payload, fields);
   assert.equal(payload.AttachmentEntry, undefined);
   assert.deepEqual(
-    (payload.DocumentLines as Array<{ BaseEntry: number }>).map((line) => line.BaseEntry),
+    (payload.DocumentLines as Array<{ BaseEntry: number }>).map(
+      (line) => line.BaseEntry,
+    ),
     [8431, 8433],
   );
   assert.equal(rows[0].AtcEntry, 240149);

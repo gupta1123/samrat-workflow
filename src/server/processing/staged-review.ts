@@ -280,6 +280,7 @@ const SOURCE_REVIEW_INSTRUCTION =
   "You are the Pro source-reviewer for ONE document. Return ONLY the required compact JSON. " +
   "Independently read the original pages. Previously extracted values are deliberately withheld to prevent copying a wrong proposal. The original page images are the source of truth. " +
   SOURCE_VALUE_INSTRUCTION +
+  "Return supplyNature {kind:goods|services|mixed|unknown,evidence:[{pageNumber,quote}]}. Decide from the substance of the invoice's billed lines and the PO's scope, not supplier names, filenames, missing logistics documents, amount patterns or a non-stock flag. Services have no transfer of physical goods; a non-inventory consumable is still goods. Quote the source service/goods descriptions. Use mixed when both are billed, unknown when undecidable. A services/goods/mixed decision requires own-page evidence. Read servicePeriod only when a billing/service period is printed. Services may be billed by hours, months or a lump sum: preserve the printed basis and amounts without inventing weights. " +
   LOGISTICS_SOURCE_ROLES_INSTRUCTION +
   "Independently return the COMPLETE logisticsRows inventory from this document, even when initial extraction missed every row. Each review row has kind, cells and pageNumber (a supplied p pointer, not sourcePage). Each cell is {field:one allowed logistics field, value:literal printed value, quote:own-page label/column-and-value quote proving that cell's role}. Use each field once per row; omit absent cells. No transport/weighment entries means []. Logistics rows never count as commercial tableCoverage rows. " +
   "Every pageNumber is a supplied sourcePagePointers pointer such as p1, NOT an integer. The app binds it to the exact original page. Do not use local numbers or an extracted table's sourcePage. " +
@@ -334,6 +335,7 @@ const SOURCE_FIELD_CHANGES_REPAIR_INSTRUCTION =
   "Return exactly the requested fieldChecksInOrder keys. If the source does not supply a requested field, mark it unsupported and explain that absence/role in removalEvidence; never fabricate a value to satisfy an earlier supported vote. Return removalEvidence as an own-page {pageNumber,quote} object. Do not return references, row support votes, quality findings, structure changes or any other audit fields.";
 
 const SOURCE_AUDIT_REPAIR_KEYS = [
+  "supplyNature",
   "fieldChanges",
   "sourceVerdict",
   "fieldChecks",
@@ -349,9 +351,10 @@ const SOURCE_AUDIT_REPAIR_KEYS = [
 
 const SOURCE_AUDIT_REPAIR_INSTRUCTION =
   "You are repairing ONLY the source-audit consistency for one document after its full audit failed validation. " +
-  "Return exactly sourceVerdict, fieldChecks, lineItemChecks, fieldChanges, logisticsRows, tableCoverage, removalEvidence, structureChange, pageQuality, reviewIssues and reason. Re-read the supplied original page images. " +
+  "Return exactly supplyNature, sourceVerdict, fieldChecks, lineItemChecks, fieldChanges, logisticsRows, tableCoverage, removalEvidence, structureChange, pageQuality, reviewIssues and reason. Re-read the supplied original page images. " +
   "Always supply removalEvidence as an own-page {pageNumber,quote} object describing the unsupported fields/roles, or the inspected source inventory if no removals are needed. Never return null. " +
   SOURCE_VALUE_INSTRUCTION +
+  "Return supplyNature with kind goods/services/mixed/unknown and own-page evidence [{pageNumber,quote}] from the billed descriptions. Do not classify from missing documents or non-stock status. " +
   "Return every transport or weighment row in logisticsRows with kind, cells:[{field,value,quote}], and an own-page p pointer in pageNumber. Cell field must be an allowed logistics field, not a printed column heading; value and own-page proof are paired in that cell. Return [] when none exist. " +
   "Independently inventory every commercial goods/service row in tableCoverage.rows with its own-page quote. Complete coverage must correspond one-to-one, in order, to the final saved rows; recover any missing rows in structureChange.lineItems from this source only. Do not count tax totals or delivery allocation subrows as additional invoice goods. not_present requires genuinely no commercial rows; unreadable requires sourceVerdict needs_review. Supply tableCoverage.evidence explaining the assessment. Never lower the inventory merely to fit an incomplete extraction. " +
   "Every structureChange.lineItems row uses {pageNumber,cells:[{field,value,quote}]}, pairing every retained property with its literal own-page proof. Unit cells quote the printed unit header when needed; never normalize the source unit. Do not return flat line-item objects. " +
@@ -1138,6 +1141,7 @@ export function packetPointerAliases(documents: CaseDoc[]) {
 const PACKET_INSTRUCTION =
   "You are the SAME Pro review role performing whole-packet reconciliation AFTER mandatory own-source audits. Return compact JSON for ONLY this task. " +
   "All supplied document fields are source-audited. Their sourceAudits/pageQuality describe verified corrections and reading limits. " +
+  "Respect each invoice's source-audited supplyNature. For a pure services packet, goods logistics (GRPO, LR, weighment, e-way bill, goods certificate and truck details) are not applicable: never report their absence as a mismatch. Retain actual invoice/supplier/tax/amount conflicts and a service-completion evidence requirement only when explicitly required by the service contract. Mixed or unknown packets must not be treated as service-only merely because goods documents are missing. " +
   "Use the entire packet to decide document roles, actual shipment relationships, explicit terms, missing evidence and root business discrepancies. " +
   "Preliminary groups and candidate mismatches are untrusted proposals, not established facts. Do not create a difference from OCR noise, formatting, equivalent units or a downstream numerical symptom. " +
   "Use seller_chain only when the seller-to-buyer sequence is proved: buyer-facing invoices are primary and upstream invoices are context, not additional invoices to reconcile. " +
@@ -1476,6 +1480,7 @@ export async function reviewExtractedDocumentsInStages(
           sourcePageNumbers: document.sourcePageNumbers,
           fields: document.fields,
           lineItems: document.lineItems ?? [],
+          supplyNature: document.supplyNature,
         })),
         sourceAudits: sourceReviews.map((result) => ({
           ...result.audit,
@@ -1807,6 +1812,7 @@ export async function reviewExtractedDocumentsInStages(
           title: document.title,
           fields: document.fields,
           lineItems: document.lineItems ?? [],
+          supplyNature: document.supplyNature,
         })),
         packetReconciliation: packetRaw,
         confirmedCandidates: rootCauseCandidates.map((candidate) => ({

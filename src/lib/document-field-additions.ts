@@ -4,6 +4,7 @@ import type { DocType, FieldKey } from "@/types/pipeline";
 // No source values are populated by these field definitions.
 export const SOURCE_FIELD_ADDITIONS: Partial<Record<DocType, FieldKey[]>> = {
   Invoice: [
+    "servicePeriod",
     "paymentTerms",
     "materialValue",
     "totalTaxableAmount",
@@ -12,6 +13,7 @@ export const SOURCE_FIELD_ADDITIONS: Partial<Record<DocType, FieldKey[]>> = {
     "igstAmount",
   ],
   "Tax Invoice": [
+    "servicePeriod",
     "paymentTerms",
     "materialValue",
     "totalTaxableAmount",

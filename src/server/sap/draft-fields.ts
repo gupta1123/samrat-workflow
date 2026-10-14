@@ -76,16 +76,16 @@ export function buildDraftHeaderFields(input: {
   choices?: DraftFieldChoices;
   service: boolean;
 }) {
-  const fields = new Map(
-    DRAFT_FIELD_NAMES.map((name) => {
+  const fields = new Map<string, Record<string, unknown>>(
+    DRAFT_FIELD_NAMES.flatMap<[string, Record<string, unknown>]>((name) => {
       const matches = input.metadata.filter(
         (field) => field.Name === name && field.TableName === "OPCH",
       );
-      if (matches.length !== 1)
+      if (matches.length !== 1 && !input.service)
         throw new Error(
           `SAP did not expose one ${name} field for the A/P Invoice Draft.`,
         );
-      return [name, matches[0]] as const;
+      return matches.length === 1 ? [[name, matches[0]]] : [];
     }),
   );
   const invoiceDocuments = input.documents.filter((doc) =>
@@ -162,18 +162,36 @@ export function buildDraftHeaderFields(input: {
       source,
     });
   };
-  put(
-    "TATAINV",
-    "Supplier invoice number",
-    input.invoice.invoiceNumber,
-    "Scanned invoice",
-  );
-  put(
-    "TATAINVDT",
-    "Supplier invoice date",
-    input.invoice.invoiceDate,
-    "Scanned invoice",
-  );
+  if (input.service) {
+    preview.push(
+      {
+        key: "NumAtCard",
+        label: "Supplier invoice number",
+        value: input.invoice.invoiceNumber,
+        source: "Scanned invoice",
+      },
+      {
+        key: "TaxDate",
+        label: "Supplier invoice date",
+        value: input.invoice.invoiceDate,
+        source: "Scanned invoice",
+      },
+    );
+  }
+  if (!input.service || fields.get("TATAINV")?.Mandatory === "tYES")
+    put(
+      "TATAINV",
+      "Supplier invoice number",
+      input.invoice.invoiceNumber,
+      "Scanned invoice",
+    );
+  if (!input.service || fields.get("TATAINVDT")?.Mandatory === "tYES")
+    put(
+      "TATAINVDT",
+      "Supplier invoice date",
+      input.invoice.invoiceDate,
+      "Scanned invoice",
+    );
 
   const choose = (
     name: "TRSPRT" | "MTRFORM",
@@ -181,8 +199,10 @@ export function buildDraftHeaderFields(input: {
     selected: string | undefined,
     label: string,
   ) => {
-    const allowed = options(fields.get(name)!);
-    if (!allowed.length)
+    const metadata = fields.get(name);
+    const required = !input.service || metadata?.Mandatory === "tYES";
+    const allowed = metadata ? options(metadata) : [];
+    if (!allowed.length && required)
       throw new Error(`SAP did not provide allowed ${label} choices.`);
     if (selected && !allowed.some((row) => row.value === selected))
       throw new Error(`The selected ${label} is not allowed by SAP.`);
@@ -192,21 +212,22 @@ export function buildDraftHeaderFields(input: {
         `${label} from the PDF ${raw.join(", ")} needs a valid SAP selection.`,
       );
     const value = selected || mapped;
-    put(
-      name,
-      label,
-      value || null,
-      selected
-        ? "Selected for this draft"
-        : value
-          ? "Scanned packet"
-          : "Selection required",
-    );
-    return { selectedValue: value, options: allowed };
+    if (metadata && (required || value))
+      put(
+        name,
+        label,
+        value || null,
+        selected
+          ? "Selected for this draft"
+          : value
+            ? "Scanned packet"
+            : "Selection required",
+      );
+    return { selectedValue: value, options: allowed, required };
   };
   const transporter = choose(
     "TRSPRT",
-    candidates(linked, "transporterName"),
+    input.service ? [] : candidates(linked, "transporterName"),
     input.choices?.transporter,
     "Transporter",
   );
@@ -219,9 +240,27 @@ export function buildDraftHeaderFields(input: {
   const materialForm = choose(
     "MTRFORM",
     materialCandidates,
-    input.choices?.materialForm || (input.service ? "ST" : undefined),
+    input.choices?.materialForm,
     "Material Form",
   );
+  if (input.service) {
+    for (const name of ["SAMKTW", "TATKTW", "TOTQTY"]) {
+      if (fields.get(name)?.Mandatory === "tYES")
+        throw new Error(
+          `SAP requires ${name} for service invoices. Update the SAP field configuration; no weight or goods quantity will be invented.`,
+        );
+    }
+    return {
+      values,
+      preview: {
+        fields: preview,
+        transporter,
+        materialForm,
+        service: true,
+        warnings,
+      } satisfies DraftHeaderPreview,
+    };
+  }
 
   const weight = (
     documents: Document[],

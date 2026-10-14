@@ -4,10 +4,9 @@ export type ReviewCheckpointStage =
 // Field roles and row structures changed: old extraction/review checkpoints
 // cannot be reused as if they satisfy this contract.
 export const EXTRACTION_CHECKPOINT_CONTRACT_VERSION =
-  "source-fields-and-logistics-rows-v13";
+  "service-aware-source-fields-v14";
 
-export const STAGED_REVIEW_CONTRACT_VERSION =
-  "source-fields-and-logistics-rows-v20";
+export const STAGED_REVIEW_CONTRACT_VERSION = "service-aware-source-fields-v21";
 
 export function checkpointContractForStage(stage: ReviewCheckpointStage) {
   return stage === "extraction"

@@ -13,6 +13,7 @@ import { priceReviewDetails } from "@/lib/sap-match/price-review";
 import { quantityBalances } from "@/lib/sap-match/evidence";
 import { ItemMatchingEvidence } from "./MatchingEvidence";
 import { receiptProblems } from "@/lib/sap-match/receipt-problems";
+import { ServicePoCandidates } from "./ServicePoCandidates";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -158,7 +159,10 @@ export function MatchLineCard({
     </th>
   );
   const rowLabel = (text: string) => (
-    <th scope="row" className="px-3 py-1.5 text-left font-normal text-[#6b5d50]">
+    <th
+      scope="row"
+      className="px-3 py-1.5 text-left font-normal text-[#6b5d50]"
+    >
       {text}
     </th>
   );
@@ -188,6 +192,14 @@ export function MatchLineCard({
               {` · ${service ? "service, 2-way check" : "stock item, 3-way check"}`}
             </div>
           ) : null}
+          {service && !line.itemCode ? (
+            <p className="text-[10px] text-[#6b5d50]">
+              Service · Invoice-to-PO check ·{" "}
+              {line.po?.accountCode
+                ? `SAP account ${line.po.accountCode}`
+                : "No stock item required"}
+            </p>
+          ) : null}
         </div>
         {lineCount > 1 ? (
           <span className="text-[10px] text-[#8a7f72]">
@@ -197,6 +209,9 @@ export function MatchLineCard({
       </header>
 
       <div className="space-y-2.5 px-4 py-3">
+        {service && invoice.servicePeriod ? (
+          <p className="text-[11px]">Service period: {invoice.servicePeriod}</p>
+        ) : null}
         {unmapped ? (
           <ItemMatchingEvidence invoice={invoice} line={line} />
         ) : null}
@@ -226,7 +241,10 @@ export function MatchLineCard({
                       : null}
                     {header(
                       "Scanned invoice",
-                      [invoice.source?.fileName, invoice.source?.pageLabel ?? "PDF"]
+                      [
+                        invoice.source?.fileName,
+                        invoice.source?.pageLabel ?? "PDF",
+                      ]
                         .filter(Boolean)
                         .join(" · "),
                     )}
@@ -234,17 +252,51 @@ export function MatchLineCard({
                 </thead>
                 <tbody>
                   {service ? (
-                    <tr className="border-t border-[#f0ece4]">
-                      {rowLabel("Amount")}
-                      <Cell
-                        value={selected[0] ? `${inr(selected[0].open)} left` : "—"}
-                        dim={!selected[0]}
-                      />
-                      <Cell
-                        value={inr(line.invoiceAmount)}
-                        tone={toneOf(checks, [`amt-${line.index}`, `rcpt-${line.index}`])}
-                      />
-                    </tr>
+                    <>
+                      <tr className="border-t border-[#f0ece4]">
+                        {rowLabel("Amount")}
+                        <Cell
+                          value={
+                            selected[0] ? `${inr(selected[0].open)} left` : "—"
+                          }
+                          dim={!selected[0]}
+                        />
+                        <Cell
+                          value={inr(line.invoiceAmount)}
+                          tone={toneOf(checks, [
+                            `amt-${line.index}`,
+                            `rcpt-${line.index}`,
+                          ])}
+                        />
+                      </tr>
+                      {line.itemCode && line.invoiceQty != null ? (
+                        <tr className="border-t border-[#f0ece4]">
+                          {rowLabel("Billing units")}
+                          <Cell
+                            value={
+                              line.po?.qty != null
+                                ? `${qty(line.po.qty)} ${unit}`
+                                : "—"
+                            }
+                            note="Ordered"
+                          />
+                          <Cell
+                            value={`${qty(line.invoiceQty)} ${unit}`}
+                            tone={toneOf(checks, [`qty-${line.index}`])}
+                          />
+                        </tr>
+                      ) : null}
+                      {line.itemCode && line.invoiceRate != null ? (
+                        <tr className="border-t border-[#f0ece4]">
+                          {rowLabel("Unit price")}
+                          <Cell value={inr(line.po?.rate ?? null)} />
+                          <Cell
+                            value={inr(line.invoiceRate)}
+                            tone={toneOf(checks, [`rate-${line.index}`])}
+                          />
+                        </tr>
+                      ) : null}
+                    </>
                   ) : (
                     <>
                       <tr className="border-t border-[#f0ece4]">
@@ -255,14 +307,21 @@ export function MatchLineCard({
                           dim={line.po?.qty == null}
                         />
                         <Cell
-                          value={selected.length ? quantity(balances.available) : "—"}
-                          note={selected.length ? "Received, not billed" : undefined}
+                          value={
+                            selected.length ? quantity(balances.available) : "—"
+                          }
+                          note={
+                            selected.length ? "Received, not billed" : undefined
+                          }
                           dim={!selected.length}
                         />
                         <Cell
                           value={quantity(line.invoiceQty)}
                           note="Billed"
-                          tone={toneOf(checks, [`qty-${line.index}`, `rcpt-${line.index}`])}
+                          tone={toneOf(checks, [
+                            `qty-${line.index}`,
+                            `rcpt-${line.index}`,
+                          ])}
                         />
                       </tr>
                       <tr className="border-t border-[#f0ece4]">
@@ -282,7 +341,10 @@ export function MatchLineCard({
                           }
                           dim={grpoRateFallback || line.po?.rate == null}
                         />
-                        <Cell value={grpoRates.join(" / ") || "—"} dim={!grpoRates.length} />
+                        <Cell
+                          value={grpoRates.join(" / ") || "—"}
+                          dim={!grpoRates.length}
+                        />
                         <Cell
                           value={invoicePrice}
                           tone={toneOf(checks, [`rate-${line.index}`])}
@@ -307,7 +369,9 @@ export function MatchLineCard({
                         />
                         <Cell value="—" dim />
                         <Cell
-                          value={inr(line.invoiceAmount ?? invoiceLine?.amount ?? null)}
+                          value={inr(
+                            line.invoiceAmount ?? invoiceLine?.amount ?? null,
+                          )}
                         />
                       </tr>
                     </>
@@ -353,14 +417,14 @@ export function MatchLineCard({
                 />
               ))}
 
-            {problems.ignoredPo?.length ? (
+            {!service && problems.ignoredPo?.length ? (
               <p className="text-[11px] text-[#6b5d50]">
                 The invoice prints {problems.ignoredPo.join(", ")}, not a SAP PO
                 number, so the PO is not compared.
               </p>
             ) : null}
 
-            {problems.rows.length || problems.missingNote ? (
+            {!service && (problems.rows.length || problems.missingNote) ? (
               <ul className="space-y-1" aria-label="Receipt reference problems">
                 {problems.rows.map((row) => (
                   <li
@@ -386,20 +450,29 @@ export function MatchLineCard({
 
             <div className="flex flex-wrap items-center justify-end gap-2">
               {line.candidates.length ? (
-                <ReceiptCandidatesPanel
-                  caseId={caseId}
-                  invoice={invoice}
-                  line={line}
-                  title={title}
-                  unit={unit}
-                  locked={locked}
-                  busy={busy}
-                  onAllocate={onAllocate}
-                  onResetAllocation={onResetAllocation}
-                  open={receiptsOpen}
-                  onOpenChange={onReceiptsOpenChange}
-                  searchNote={searchNote}
-                />
+                service ? (
+                  <ServicePoCandidates
+                    line={line}
+                    disabled={busy || locked}
+                    onAllocate={onAllocate}
+                    onReset={onResetAllocation}
+                  />
+                ) : (
+                  <ReceiptCandidatesPanel
+                    caseId={caseId}
+                    invoice={invoice}
+                    line={line}
+                    title={title}
+                    unit={unit}
+                    locked={locked}
+                    busy={busy}
+                    onAllocate={onAllocate}
+                    onResetAllocation={onResetAllocation}
+                    open={receiptsOpen}
+                    onOpenChange={onReceiptsOpenChange}
+                    searchNote={searchNote}
+                  />
+                )
               ) : null}
             </div>
           </>

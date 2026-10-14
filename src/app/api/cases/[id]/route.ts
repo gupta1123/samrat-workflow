@@ -9,6 +9,7 @@ import { resolvePacketIntelligence } from "@/lib/packet-intelligence";
 import { readComparisonOptions } from "@/server/comparison";
 import { readStoredLineItems, stripStoredLineItems } from "@/server/line-items";
 import { readStoredLogisticsRows } from "@/lib/extracted-source-rows";
+import { storedSupplyNature } from "@/lib/supply-nature";
 import { groupDocumentsForVerification } from "@/server/services/verification";
 import type { CaseDoc } from "@/types/pipeline";
 import { caseFileContentUrl } from "@/server/case-files";
@@ -82,6 +83,7 @@ export async function GET(request: Request, context: Context) {
       extractedFields: stripStoredLineItems(d.extracted_fields),
       lineItems: readStoredLineItems(d.extracted_fields),
       logisticsRows: readStoredLogisticsRows(d.extracted_fields),
+      supplyNature: storedSupplyNature(d.extracted_fields),
       markdown: d.markdown,
       createdAt: d.created_at,
     }));
@@ -104,6 +106,7 @@ export async function GET(request: Request, context: Context) {
     const caseDocuments: CaseDoc[] = documentResults.map((document) => ({
       id: document.clientDocumentId || document.id,
       type: document.documentType as CaseDoc["type"],
+      supplyNature: document.supplyNature,
       title: document.title,
       pages: Math.max(1, document.pageCount || 1),
       fields: document.extractedFields as CaseDoc["fields"],

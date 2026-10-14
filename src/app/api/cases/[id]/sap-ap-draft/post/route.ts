@@ -400,10 +400,12 @@ async function handle(
                 ),
               )
             : [];
-        const materialFormPolicy = sapMaterialFormPolicy(
-          payload.baseKind,
-          itemInventoryStates,
-        );
+        const serviceInvoice =
+          record(draft).DocType === "dDocument_Service" ||
+          payload.serviceInvoice === true;
+        const materialFormPolicy = serviceInvoice
+          ? { required: false, automaticValue: null }
+          : sapMaterialFormPolicy(payload.baseKind, itemInventoryStates);
         const requiresMaterialForm = materialFormPolicy.required;
         const automaticMaterialForm = materialFormPolicy.automaticValue;
 
@@ -475,7 +477,7 @@ async function handle(
           }
         }
 
-        if (convertToFinalInvoice) {
+        if (convertToFinalInvoice && !serviceInvoice) {
           const transportConfig = await loadTransportConfig(
             client.getUserField,
           );

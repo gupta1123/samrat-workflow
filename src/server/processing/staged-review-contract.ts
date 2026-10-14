@@ -13,6 +13,7 @@ import { STAGED_REVIEW_CONTRACT_VERSION } from "./checkpoint-contract";
 import { LOGISTICS_ROW_FIELDS } from "@/lib/extracted-source-rows";
 import type { LogisticsRow } from "@/types/pipeline";
 import { SOURCE_LINE_ITEM_KEYS } from "@/lib/source-line-items";
+import { readSupplyNature } from "@/lib/supply-nature";
 import {
   sourceQuoteContainsValue,
   sourceFieldQuoteContainsValue,
@@ -158,6 +159,18 @@ export function buildSourceAuditSchema(
     type: "object",
     properties: {
       sourceVerdict: { type: "string", enum: ["verified", "needs_review"] },
+      supplyNature: {
+        type: "object",
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["goods", "services", "mixed", "unknown"],
+          },
+          evidence: { type: "array", items: ownEvidence },
+        },
+        required: ["kind", "evidence"],
+        additionalProperties: false,
+      },
       fieldChecks: supportSchema(checklist.fieldSupport),
       lineItemChecks: supportSchema(checklist.lineItemPropertySupport),
       logisticsRows: {
@@ -297,6 +310,7 @@ export function buildSourceAuditSchema(
     },
     required: [
       "sourceVerdict",
+      "supplyNature",
       "fieldChecks",
       "lineItemChecks",
       "logisticsRows",
@@ -443,6 +457,7 @@ export function isolateUnverifiedSourceReferences(
 }
 
 const SOURCE_AUDIT_REPAIR_KEYS = [
+  "supplyNature",
   "fieldChanges",
   "sourceVerdict",
   "fieldChecks",
@@ -517,7 +532,9 @@ export function parseCompactSourceAudit(
     "reason",
   ];
   if (
-    Object.keys(payload).some((key) => !expected.includes(key)) ||
+    Object.keys(payload).some(
+      (key) => !expected.includes(key) && key !== "supplyNature",
+    ) ||
     expected.some((key) => !Object.hasOwn(payload, key))
   )
     throw new Error(
@@ -571,6 +588,7 @@ export function parseCompactSourceAudit(
     "structureChange",
     "tableCoverage",
     "logisticsRows",
+    "supplyNature",
     "pageQuality",
   ])
     payload[key] = bindPagePointers(payload[key]);
@@ -1121,6 +1139,29 @@ export function parseCompactSourceAudit(
       );
   }
   result.audit.fieldEvidence = pairedChanges;
+  if (payload.supplyNature !== undefined) {
+    const assessment = object(payload.supplyNature);
+    if (
+      Object.keys(assessment).some((key) => !["kind", "evidence"].includes(key))
+    )
+      throw new SourceReviewValidationError(
+        "source-audit",
+        "Unexpected supply classification properties.",
+      );
+    const nature = readSupplyNature({
+      kind: assessment.kind,
+      evidence: array(assessment.evidence).map((proof) => {
+        const bound = bindEvidence(proof, "Supply nature");
+        return { sourcePage: bound.pageNumber, quote: bound.quote };
+      }),
+    });
+    if (!nature)
+      throw new SourceReviewValidationError(
+        "source-audit",
+        "Supply classification needs own-page evidence; do not classify by missing attachments.",
+      );
+    result.document = { ...result.document, supplyNature: nature };
+  }
   try {
     const logisticsRows: LogisticsRow[] = array(payload.logisticsRows).map(
       (rawRow) => {

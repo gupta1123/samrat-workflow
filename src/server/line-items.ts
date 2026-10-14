@@ -11,6 +11,7 @@ import {
 } from "@/lib/extracted-source-rows";
 
 import { decodeSourceLineItems } from "@/lib/source-line-items";
+import { SUPPLY_NATURE_FIELD, readSupplyNature } from "@/lib/supply-nature";
 export const LINE_ITEMS_FIELD_KEY = "__lineItems";
 export const EXTRACTION_QUALITY_FIELD_KEY = "__extractionQuality";
 
@@ -1837,12 +1838,19 @@ export function readStoredLineItems(extractedFields: unknown) {
 export function serializeFieldsWithLineItems(
   document: Pick<
     CaseDoc,
-    "fields" | "lineItems" | "qualityIssues" | "tableCoverage" | "logisticsRows"
+    | "fields"
+    | "lineItems"
+    | "qualityIssues"
+    | "tableCoverage"
+    | "logisticsRows"
+    | "supplyNature"
   >,
 ) {
   const fields: Record<string, unknown> = { ...(document.fields ?? {}) };
   const lineItems = decodeSourceLineItems(document.lineItems);
   const logisticsRows = readLogisticsRows(document.logisticsRows);
+  const nature = readSupplyNature(document.supplyNature);
+  if (nature) fields[SUPPLY_NATURE_FIELD] = nature;
   if (logisticsRows.length) fields[LOGISTICS_ROWS_FIELD_KEY] = logisticsRows;
 
   if (lineItems.length > 0) {
@@ -1864,5 +1872,6 @@ export function stripStoredLineItems(fields: Record<string, unknown>) {
   delete rest[EXTRACTION_QUALITY_FIELD_KEY];
   delete rest.__tableCoverage;
   delete rest[LOGISTICS_ROWS_FIELD_KEY];
+  delete rest[SUPPLY_NATURE_FIELD];
   return rest as Partial<Record<FieldKey, string>>;
 }

@@ -5,6 +5,7 @@
 import type { PlannedPayload } from "@/lib/sap-match/types";
 import { sapTestPostingDateCandidates } from "./dates";
 import type { SapMatchDocument } from "./service-layer";
+import { serviceOpenBalance } from "@/lib/sap-service-balance";
 
 export class MatchDraftError extends Error {}
 
@@ -32,6 +33,7 @@ export function buildMatchedDraftPayload(params: {
   bases: Map<string, BaseDocument>;
   freightExpenseCode: number | null;
   invoiceRates?: Array<number | null>;
+  localCurrency?: string;
 }) {
   const { plan, bases } = params;
   if (!plan.lines.length)
@@ -49,7 +51,9 @@ export function buildMatchedDraftPayload(params: {
   const currency = [...currencies][0];
 
   const serviceLines = plan.lines.filter(
-    (line) => line.baseType === 22 && line.lineTotal !== null,
+    (line) =>
+      bases.get(`${line.baseType}:${line.baseEntry}`)?.DocType ===
+      "dDocument_Service",
   );
   if (serviceLines.length && serviceLines.length !== plan.lines.length) {
     throw new MatchDraftError(
@@ -58,6 +62,7 @@ export function buildMatchedDraftPayload(params: {
   }
   const isService = serviceLines.length > 0;
   const reservedQuantities = new Map<string, number>();
+  const reservedAmounts = new Map<string, number>();
 
   const documentLines = plan.lines.map((line) => {
     const base = bases.get(`${line.baseType}:${line.baseEntry}`);
@@ -69,6 +74,17 @@ export function buildMatchedDraftPayload(params: {
       );
     }
     const baseLine = record(lineOf(base, line.baseLine));
+    if (
+      (line.documentType &&
+        base.DocType &&
+        line.documentType !== base.DocType) ||
+      (!line.documentType &&
+        line.lineTotal !== null &&
+        base.DocType !== "dDocument_Service")
+    )
+      throw new MatchDraftError(
+        `SAP purchase order ${line.baseDocNum} bills services by item. Re-check the invoice against its actual SAP document type.`,
+      );
     if (
       baseLine.LineStatus !== "bost_Open" &&
       baseLine.LineStatus !== undefined
@@ -83,11 +99,36 @@ export function buildMatchedDraftPayload(params: {
           `SAP purchase order ${line.baseDocNum} bills services by item, which this integration does not support yet.`,
         );
       }
+      const available = serviceOpenBalance(
+        baseLine,
+        base.DocCurrency,
+        params.localCurrency,
+      );
+      const total =
+        (reservedAmounts.get(`${line.baseEntry}:${line.baseLine}`) ?? 0) +
+        (line.lineTotal ?? 0);
+      if (
+        available === null ||
+        !Number.isFinite(available) ||
+        !Number.isFinite(line.lineTotal) ||
+        line.lineTotal === null ||
+        line.lineTotal <= 0 ||
+        total > (available ?? 0) + 0.005
+      )
+        throw new MatchDraftError(
+          `Service PO ${line.baseDocNum} does not have enough verified open value for the selected invoice lines. Re-check the PO.`,
+        );
+      if (typeof baseLine.AccountCode !== "string" || !baseLine.AccountCode)
+        throw new MatchDraftError(
+          `Service PO ${line.baseDocNum} has no SAP expense account.`,
+        );
+      reservedAmounts.set(`${line.baseEntry}:${line.baseLine}`, total);
       return {
         BaseType: line.baseType,
         BaseEntry: line.baseEntry,
         BaseLine: line.baseLine,
         LineTotal: line.lineTotal,
+        AccountCode: baseLine.AccountCode,
       };
     }
     const open = Number(baseLine.RemainingOpenQuantity);

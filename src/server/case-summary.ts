@@ -9,6 +9,10 @@ import {
 } from "@/lib/missing-documents";
 import { isInternalCompanyName } from "@/server/workspace-parties";
 import type { CaseDoc, DocType, FieldKey, Mismatch } from "@/types/pipeline";
+import {
+  isServiceOnlyPacket,
+  GOODS_ONLY_DOCUMENT_TYPES,
+} from "@/lib/supply-nature";
 
 export type CaseSummary = {
   slug: string;
@@ -688,6 +692,10 @@ export function getMissingCorePacketDocumentGroups(
   return getEnabledCorePacketGroups(fieldConfiguration)
     .filter(
       (group) =>
+        !(
+          isServiceOnlyPacket(documents) &&
+          group.types.every((type) => GOODS_ONLY_DOCUMENT_TYPES.includes(type))
+        ) &&
         isRequiredMissingDocumentGroup(group.label) &&
         !isCorePacketGroupCovered(group, documents, presentTypes),
     )

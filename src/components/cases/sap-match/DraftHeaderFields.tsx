@@ -8,6 +8,7 @@ import type {
   DraftFieldChoices,
   DraftHeaderPreview,
 } from "@/lib/sap-draft-fields";
+import { draftSelectionsComplete } from "@/lib/sap-draft-fields";
 import { SearchSelect } from "@/components/ui/search-select";
 import { PostingFieldGrid } from "./PostingFieldGrid";
 
@@ -66,12 +67,16 @@ export function DraftHeaderFields({
             {confirming ? (
               <PostingFieldGrid
                 fields={preview.fields.filter((field) =>
-                  ["U_TATAINV", "U_TATAINVDT"].includes(field.key),
+                  ["U_TATAINV", "U_TATAINVDT", "NumAtCard", "TaxDate"].includes(
+                    field.key,
+                  ),
                 )}
               />
             ) : null}
             <h3 className="text-[11px] font-semibold text-[#111827]">
-              Transport & weights
+              {preview.service
+                ? "Service invoice — matched directly to the PO"
+                : "Transport & weights"}
             </h3>
             <PostingFieldGrid
               fields={preview.fields.filter(
@@ -81,6 +86,7 @@ export function DraftHeaderFields({
                     "U_TATAINVDT",
                     "U_TRSPRT",
                     "U_MTRFORM",
+                    ...(confirming ? ["NumAtCard", "TaxDate"] : []),
                   ].includes(field.key),
               )}
             />
@@ -88,27 +94,29 @@ export function DraftHeaderFields({
           {/* Choices are editable only in the explicit creation confirmation. */}
           {confirming ? (
             <div className="grid gap-2 sm:grid-cols-2">
-              {(["transporter", "materialForm"] as const).map((key) => (
-                <div key={key} className="space-y-1">
-                  <span className="block text-[10px] font-medium text-[#6b5d50]">
-                    {key === "transporter" ? "Transporter" : "Material Form"}
-                  </span>
-                  <SearchSelect
-                    ariaLabel={
-                      key === "transporter"
-                        ? "Draft Transporter"
-                        : "Draft Material Form"
-                    }
-                    disabled={busy}
-                    options={preview[key].options}
-                    value={choices[key] ?? ""}
-                    placeholder="Search SAP…"
-                    onChange={(value) =>
-                      setChoices((current) => ({ ...current, [key]: value }))
-                    }
-                  />
-                </div>
-              ))}
+              {(["transporter", "materialForm"] as const)
+                .filter((key) => !preview.service || preview[key].required)
+                .map((key) => (
+                  <div key={key} className="space-y-1">
+                    <span className="block text-[10px] font-medium text-[#6b5d50]">
+                      {key === "transporter" ? "Transporter" : "Material Form"}
+                    </span>
+                    <SearchSelect
+                      ariaLabel={
+                        key === "transporter"
+                          ? "Draft Transporter"
+                          : "Draft Material Form"
+                      }
+                      disabled={busy}
+                      options={preview[key].options}
+                      value={choices[key] ?? ""}
+                      placeholder="Search SAP…"
+                      onChange={(value) =>
+                        setChoices((current) => ({ ...current, [key]: value }))
+                      }
+                    />
+                  </div>
+                ))}
             </div>
           ) : (
             <PostingFieldGrid
@@ -133,8 +141,7 @@ export function DraftHeaderFields({
               busy ||
               !preview ||
               !!error ||
-              !choices.materialForm ||
-              !choices.transporter
+              Boolean(preview && !draftSelectionsComplete(preview, choices))
             }
             onClick={() => onConfirm?.(choices)}
           >

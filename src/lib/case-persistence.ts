@@ -72,6 +72,7 @@ export type SavedCaseDocument = {
   extractedFields: Record<string, unknown>;
   lineItems?: CommercialLineItem[];
   logisticsRows?: LogisticsRow[];
+  supplyNature?: import("@/lib/supply-nature").SupplyNature;
   markdown: string;
   createdAt: string;
 };

@@ -11,6 +11,7 @@ export type FieldDefinition = {
 };
 
 export const FIELD_DEFINITIONS: FieldDefinition[] = [
+  { key: "servicePeriod", label: "Service / Billing Period" },
   {
     key: "poNumber",
     label: "PO Number",

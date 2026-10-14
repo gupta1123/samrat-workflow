@@ -17,6 +17,8 @@ import { readStoredLogisticsRows } from "@/lib/extracted-source-rows";
 import { sapInvoiceDate } from "./dates";
 import type { SapMatchDocument } from "./service-layer";
 import { findVehicles } from "@/lib/sap-vehicles";
+import { storedSupplyNature } from "@/lib/supply-nature";
+import { serviceOpenBalance } from "@/lib/sap-service-balance";
 export { findVehicles } from "@/lib/sap-vehicles";
 
 type StoredDocument = {
@@ -93,12 +95,18 @@ export function buildMatchInvoice(input: {
     const code = text(item.itemCode);
     const lineAmount = amount(item.taxableAmount) ?? amount(item.lineTotal);
     // A freight line is a charge on the invoice, not a stock item to match.
-    if (!code && FREIGHT_LINE.test(description) && lineAmount !== null) {
+    if (
+      storedSupplyNature(fields)?.kind !== "services" &&
+      !code &&
+      FREIGHT_LINE.test(description) &&
+      lineAmount !== null
+    ) {
       freightFromLines += lineAmount;
       continue;
     }
     lines.push({
       index: lines.length,
+      poLineReference: text(item.referencePoLineNumber) || null,
       vendorItemCode: code || null,
       description: description || null,
       hsnSac: text(item.hsnSac) || null,
@@ -191,6 +199,8 @@ export function buildMatchInvoice(input: {
 
   return {
     invoiceNumber,
+    supplyNature: storedSupplyNature(fields)?.kind,
+    servicePeriod: text(fields.servicePeriod) || null,
     ...(extractionIssue ? { extractionIssue } : {}),
     referenceSources,
     source: {
@@ -439,6 +449,7 @@ export function mapReceiptLines(
 export function mapPoLines(
   purchaseOrders: SapMatchDocument[],
   config: SapFieldConfig = {},
+  localCurrency?: string,
 ): SapPoLine[] {
   const lines: SapPoLine[] = [];
   for (const document of purchaseOrders) {
@@ -449,19 +460,24 @@ export function mapPoLines(
       const line = record(raw);
       const lineNum = integer(line.LineNum);
       const itemCode = text(line.ItemCode);
-      if (lineNum === null || !itemCode) continue;
+      const service = document.DocType === "dDocument_Service";
+      const accountCode = text(line.AccountCode);
+      if (lineNum === null || (service ? !accountCode : !itemCode)) continue;
       const quantity = amount(line.Quantity) ?? 0;
       const open = amount(line.RemainingOpenQuantity) ?? 0;
       const price = amount(line.Price) ?? amount(line.UnitPrice);
       const lineTotal = amount(line.LineTotal);
-      const openAmount =
-        line.LineStatus === "bost_Open" && quantity > 0 && lineTotal !== null
+      const openAmount = service
+        ? serviceOpenBalance(line, document.DocCurrency, localCurrency)
+        : line.LineStatus === "bost_Open" && quantity > 0 && lineTotal !== null
           ? Math.round(((lineTotal * open) / quantity) * 100) / 100
           : line.LineStatus === "bost_Open" && lineTotal !== null
             ? lineTotal
             : 0;
       lines.push({
         kind: "PO",
+        documentType: service ? "dDocument_Service" : "dDocument_Items",
+        accountCode: accountCode || null,
         docEntry,
         docNum,
         lineNum,

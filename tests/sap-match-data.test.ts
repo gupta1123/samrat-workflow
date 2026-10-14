@@ -174,6 +174,75 @@ const tables = (): Record<string, Array<Record<string, unknown>>> => ({
   ],
 });
 
+test("source-verified service invoices load service POs without querying goods receipts", async () => {
+  const data = tables();
+  data.packet_documents = [
+    {
+      case_id: "case-1",
+      client_document_id: "service",
+      document_type: "Tax Invoice",
+      extracted_fields: serializeFieldsWithLineItems({
+        fields: {
+          invoiceNumber: "CONS/17",
+          documentDate: "2026-10-10",
+          vendorName: "Aster Consulting",
+          referencePoNumber: "700",
+          totalTaxableAmount: "1000",
+        },
+        supplyNature: {
+          kind: "services",
+          evidence: [{ sourcePage: 1, quote: "Monthly advisory services" }],
+        },
+        lineItems: [{ description: "Monthly advisory", taxableAmount: "1000" }],
+      }),
+    },
+  ];
+  let receiptCalls = 0;
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: { id: "case-1", invoice_number: "CONS/17", po_number: "700" },
+    client: sapClient({
+      searchSuppliers: async () => [
+        { CardCode: "V-CONS", CardName: "Aster Consulting" },
+      ],
+      findOpenReceiptDocumentsForInvoice: async () => {
+        receiptCalls++;
+        throw new Error("Service must not query receipts");
+      },
+      listOpenReceiptDocumentsForVendor: async () => {
+        receiptCalls++;
+        throw new Error("Service must not query receipts");
+      },
+      listItemsByCodes: async () => [],
+      getAdminCurrencies: async () => ({ LocalCurrency: "INR" }),
+      listOpenPurchaseOrdersForVendor: async () => [
+        {
+          DocEntry: 7001,
+          DocNum: 700,
+          DocType: "dDocument_Service",
+          CardCode: "V-CONS",
+          DocCurrency: "INR",
+          DocumentLines: [
+            {
+              LineNum: 0,
+              LineStatus: "bost_Open",
+              AccountCode: "EXP-CONSULT",
+              ItemDescription: "Monthly advisory",
+              OpenAmount: 3000,
+            },
+          ],
+        },
+      ],
+    }) as never,
+  });
+  assert.equal(receiptCalls, 0);
+  assert.ok(match.available);
+  if (!match.available) return;
+  assert.equal(match.result.method, "2-way");
+  assert.equal(match.result.status, "ready");
+  assert.equal(match.result.payload?.lines[0].accountCode, "EXP-CONSULT");
+});
+
 test("authoritative unrelated-document evidence is the only source of SAP exclusions", () => {
   const excluded = authoritativeOutlierDocumentIds([
     {
