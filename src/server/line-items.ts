@@ -5,6 +5,12 @@ import type {
   FieldKey,
 } from "@/types/pipeline";
 
+import {
+  LOGISTICS_ROWS_FIELD_KEY,
+  readLogisticsRows,
+} from "@/lib/extracted-source-rows";
+
+import { decodeSourceLineItems } from "@/lib/source-line-items";
 export const LINE_ITEMS_FIELD_KEY = "__lineItems";
 export const EXTRACTION_QUALITY_FIELD_KEY = "__extractionQuality";
 
@@ -42,6 +48,8 @@ const LINE_ITEM_KEYS: Array<keyof CommercialLineItem> = [
   "taxAmount",
   "lineTotal",
   "referencePoLineNumber",
+  "referencePoNumber",
+  "referenceGrpoNumber",
   "rawText",
   "sourcePage",
 ];
@@ -66,6 +74,8 @@ const LINE_ITEM_SIGNATURE_KEYS: TextLineItemKey[] = [
   "taxableAmount",
   "lineTotal",
   "referencePoLineNumber",
+  "referencePoNumber",
+  "referenceGrpoNumber",
 ];
 const LOOSE_LINE_ITEM_SIGNATURE_KEYS = LINE_ITEM_SIGNATURE_KEYS.filter(
   (key) => key !== "lineNumber" && key !== "referencePoLineNumber",
@@ -183,11 +193,7 @@ function cleanLineItemDescription(item: CommercialLineItem) {
   // column boundary from digits inside it: standards, grades, dimensions and
   // product names legitimately contain values such as "IS 2062 E250".
   if (description) return description;
-  return descriptionFromRawText(
-    item.rawText,
-    item.lineNumber,
-    item.hsnSac,
-  );
+  return descriptionFromRawText(item.rawText, item.lineNumber, item.hsnSac);
 }
 
 function deriveItemCodeFromRawDescription(
@@ -1365,7 +1371,10 @@ function enrichDocumentWithTaxMode(
   // commercial tax signal. Applying it to logistics evidence fabricates
   // counterpart GSTINs and default tax rates that are not printed on the
   // lorry receipt or weighment slip.
-  if (!isCommercialDocType(doc.type) || !hasPacketTaxClassificationSignal(doc)) {
+  if (
+    !isCommercialDocType(doc.type) ||
+    !hasPacketTaxClassificationSignal(doc)
+  ) {
     return doc;
   }
 
@@ -1820,7 +1829,7 @@ export function readStoredLineItems(extractedFields: unknown) {
     return [];
   }
 
-  return sanitizeLineItems(
+  return decodeSourceLineItems(
     (extractedFields as Record<string, unknown>)[LINE_ITEMS_FIELD_KEY],
   );
 }
@@ -1828,11 +1837,13 @@ export function readStoredLineItems(extractedFields: unknown) {
 export function serializeFieldsWithLineItems(
   document: Pick<
     CaseDoc,
-    "fields" | "lineItems" | "qualityIssues" | "tableCoverage"
+    "fields" | "lineItems" | "qualityIssues" | "tableCoverage" | "logisticsRows"
   >,
 ) {
   const fields: Record<string, unknown> = { ...(document.fields ?? {}) };
-  const lineItems = sanitizeLineItems(document.lineItems);
+  const lineItems = decodeSourceLineItems(document.lineItems);
+  const logisticsRows = readLogisticsRows(document.logisticsRows);
+  if (logisticsRows.length) fields[LOGISTICS_ROWS_FIELD_KEY] = logisticsRows;
 
   if (lineItems.length > 0) {
     fields[LINE_ITEMS_FIELD_KEY] = lineItems;
@@ -1852,5 +1863,6 @@ export function stripStoredLineItems(fields: Record<string, unknown>) {
   delete rest[LINE_ITEMS_FIELD_KEY];
   delete rest[EXTRACTION_QUALITY_FIELD_KEY];
   delete rest.__tableCoverage;
+  delete rest[LOGISTICS_ROWS_FIELD_KEY];
   return rest as Partial<Record<FieldKey, string>>;
 }

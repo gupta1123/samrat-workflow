@@ -65,6 +65,28 @@ export async function buildPageOrientationViews(
   return views;
 }
 
+export async function applyDeclaredPageRotation(
+  image: string,
+  rotation: number,
+) {
+  if (
+    !PAGE_ORIENTATION_ROTATIONS.includes(
+      rotation as (typeof PAGE_ORIENTATION_ROTATIONS)[number],
+    )
+  )
+    throw new Error(
+      "The page classifier returned an invalid reading rotation.",
+    );
+  if (rotation === 0) return image;
+  return jpegDataUrl(
+    await rotatedJpeg(
+      decodeImageDataUrl(image),
+      rotation as (typeof PAGE_ORIENTATION_ROTATIONS)[number],
+      { dimension: 3200, quality: 88 },
+    ),
+  );
+}
+
 export async function orientPageImageWithVision(params: {
   image: string;
   label: string;

@@ -1,4 +1,5 @@
 import type { DocType, FieldKey } from "@/types/pipeline";
+import { extendSourceFields } from "@/lib/document-field-additions";
 
 export type FieldDefinition = {
   key: FieldKey;
@@ -73,6 +74,11 @@ export const FIELD_DEFINITIONS: FieldDefinition[] = [
     semanticKind: "reference",
   },
   { key: "certificateDate", label: "Certificate Date" },
+  {
+    key: "bisLicenseNumber",
+    label: "BIS / CML Licence Number",
+    semanticKind: "reference",
+  },
   { key: "permitNumber", label: "Permit Number", semanticKind: "reference" },
   { key: "permitType", label: "Permit Type" },
   {
@@ -129,11 +135,16 @@ export const FIELD_DEFINITIONS: FieldDefinition[] = [
   { key: "currency", label: "Currency" },
   { key: "subtotal", label: "Subtotal" },
   { key: "totalTaxableAmount", label: "Total Taxable Amount" },
+  { key: "materialValue", label: "Material Value" },
+  { key: "goodsValue", label: "Value of Goods" },
   { key: "taxAmount", label: "Tax Amount" },
   { key: "taxRate", label: "GST Rate %" },
   { key: "cgstRate", label: "CGST Rate %" },
   { key: "sgstRate", label: "SGST Rate %" },
   { key: "igstRate", label: "IGST Rate %" },
+  { key: "cgstAmount", label: "CGST Amount" },
+  { key: "sgstAmount", label: "SGST Amount" },
+  { key: "igstAmount", label: "IGST Amount" },
   { key: "tdsAmount", label: "TDS Amount" },
   { key: "tdsRate", label: "TDS Rate %" },
   { key: "tds194qAmount", label: "TDS 194Q Amount" },
@@ -269,9 +280,14 @@ const DOC_TYPE_IGNORED_FIELD_EXCEPTIONS: Partial<
   "Tax Invoice": ["documentDate", "ackDate"],
   "Delivery Note": ["documentDate"],
   "Delivery Challan": ["documentDate"],
-  "E-Way Bill": ["documentDate", "validityDate"],
-  "Lorry Receipt": ["documentDate"],
-  "Weighment Slip": ["documentDate"],
+  "E-Way Bill": ["documentDate", "validityDate", "itemDescription"],
+  "Lorry Receipt": ["documentDate", "itemDescription"],
+  "Weighment Slip": ["documentDate", "itemDescription"],
+  "Material Test Certificate": [
+    "documentDate",
+    "certificateDate",
+    "itemDescription",
+  ],
 };
 
 export type PacketFieldConfiguration = {
@@ -856,6 +872,8 @@ export const DOC_TYPE_EXTRACTION_FIELDS: Record<DocType, FieldKey[]> = {
   Unknown: [],
 };
 
+extendSourceFields(DOC_TYPE_EXTRACTION_FIELDS);
+
 export function getFieldKeysForDocType(
   docType: DocType | string,
   configuration?: PacketFieldConfiguration,
@@ -898,6 +916,7 @@ export function sanitizeFieldsForDocType<T>(
 
 export function getFieldDefinitionsByKeys(
   fieldKeys: readonly string[],
+  docType?: DocType | string,
 ): FieldDefinition[] {
   const seen = new Set<FieldKey>();
 
@@ -908,7 +927,7 @@ export function getFieldDefinitionsByKeys(
     if (
       !fieldDefinition ||
       seen.has(normalizedKey) ||
-      !shouldConsiderFieldKey(normalizedKey)
+      !shouldConsiderFieldKey(normalizedKey, docType)
     ) {
       return [];
     }
@@ -921,5 +940,5 @@ export function getFieldDefinitionsByKeys(
 export function getFieldDefinitionsForDocType(
   docType: DocType | string,
 ): FieldDefinition[] {
-  return getFieldDefinitionsByKeys(getFieldKeysForDocType(docType));
+  return getFieldDefinitionsByKeys(getFieldKeysForDocType(docType), docType);
 }

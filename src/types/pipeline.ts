@@ -18,6 +18,7 @@ export type FieldKey =
   | "weighbridgeName"
   | "lorryReceiptNumber"
   | "certificateNumber"
+  | "bisLicenseNumber"
   | "certificateDate"
   | "permitNumber"
   | "permitType"
@@ -33,11 +34,16 @@ export type FieldKey =
   | "currency"
   | "subtotal"
   | "totalTaxableAmount"
+  | "materialValue"
+  | "goodsValue"
   | "taxAmount"
   | "taxRate"
   | "cgstRate"
   | "sgstRate"
   | "igstRate"
+  | "cgstAmount"
+  | "sgstAmount"
+  | "igstAmount"
   | "tdsAmount"
   | "tdsRate"
   | "tds194qAmount"
@@ -148,6 +154,7 @@ export interface CaseDoc {
   pages: number;
   fields: Partial<Record<FieldKey, string>>;
   lineItems?: CommercialLineItem[];
+  logisticsRows?: LogisticsRow[];
   tableCoverage?: {
     status: "complete" | "not_present" | "unreadable" | "unverified";
     rows: Array<{ sourceFileName: string; pageNumber: number; quote: string }>;
@@ -195,8 +202,37 @@ export interface CommercialLineItem {
   taxAmount?: string;
   lineTotal?: string;
   referencePoLineNumber?: string;
+  referencePoNumber?: string;
+  referenceGrpoNumber?: string;
   rawText?: string;
   sourcePage?: number;
+}
+
+export type LogisticsRowField =
+  | "vehicleNumber"
+  | "transportMode"
+  | "transporterName"
+  | "documentDate"
+  | "lorryReceiptNumber"
+  | "deliveryNoteNumber"
+  | "deliveryOrderNumber"
+  | "referenceInvoiceNumber"
+  | "referencePoNumber"
+  | "itemCode"
+  | "description"
+  | "quantity"
+  | "unit"
+  | "grossWeight"
+  | "tareWeight"
+  | "netWeight"
+  | "weightUnit";
+
+export interface LogisticsRow {
+  kind: "transport" | "weighment";
+  values: Partial<Record<LogisticsRowField, string>>;
+  sourcePage: number;
+  /** Literal own-page quotes paired with every retained value after source review. */
+  evidence?: Partial<Record<LogisticsRowField, string>>;
 }
 
 export type PipelineStageId =

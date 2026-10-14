@@ -7,6 +7,7 @@ import { isConfirmedAnalysisStart } from "@/lib/analysis-start";
 import type {
   CaseAnalysisMode,
   CommercialLineItem,
+  LogisticsRow,
   ComparisonOptions,
   QueuedUpload,
 } from "@/types/pipeline";
@@ -70,6 +71,7 @@ export type SavedCaseDocument = {
   pageCount: number;
   extractedFields: Record<string, unknown>;
   lineItems?: CommercialLineItem[];
+  logisticsRows?: LogisticsRow[];
   markdown: string;
   createdAt: string;
 };

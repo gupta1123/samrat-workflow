@@ -40,7 +40,10 @@ import {
   CaseDetailRedesign,
   type RedesignedDocumentCard,
 } from "@/components/cases/CaseDetailRedesign";
-import { ExtractedFieldsPanel, type ExtractedFieldItem } from "@/components/cases/ExtractedFieldsPanel";
+import {
+  ExtractedFieldsPanel,
+  type ExtractedFieldItem,
+} from "@/components/cases/ExtractedFieldsPanel";
 import { PdfEvidencePreview } from "@/components/cases/PdfEvidencePreview";
 import { loadPdfPreviewRuntime, pdfPreviewPage } from "@/lib/pdf-preview";
 import { PacketIntelligencePanel } from "@/components/cases/PacketIntelligencePanel";
@@ -561,6 +564,12 @@ const LINE_ITEM_COLUMNS: Array<{
 }> = [
   { key: "lineNumber", label: "#", className: "w-12" },
   { key: "itemCode", label: "Item Code", className: "min-w-32" },
+  { key: "referencePoNumber", label: "PO Reference", className: "min-w-24" },
+  {
+    key: "referenceGrpoNumber",
+    label: "GRPO Reference",
+    className: "min-w-24",
+  },
   { key: "description", label: "Description", className: "min-w-60" },
   { key: "hsnSac", label: "HSN/SAC", className: "min-w-24" },
   { key: "quantity", label: "Qty", className: "min-w-20 text-right" },
@@ -571,6 +580,9 @@ const LINE_ITEM_COLUMNS: Array<{
   { key: "cgstRate", label: "CGST %", className: "min-w-20 text-right" },
   { key: "sgstRate", label: "SGST %", className: "min-w-20 text-right" },
   { key: "igstRate", label: "IGST %", className: "min-w-20 text-right" },
+  { key: "cgstAmount", label: "CGST Amount", className: "min-w-24 text-right" },
+  { key: "sgstAmount", label: "SGST Amount", className: "min-w-24 text-right" },
+  { key: "igstAmount", label: "IGST Amount", className: "min-w-24 text-right" },
   { key: "taxAmount", label: "Tax", className: "min-w-24 text-right" },
   { key: "lineTotal", label: "Total", className: "min-w-28 text-right" },
 ];
@@ -598,22 +610,23 @@ function getOrderedDocumentEntries(
     .map(([key]) => key)
     .filter((key) => !relevantKeySet.has(key as (typeof relevantKeys)[number]));
 
-  return getFieldDefinitionsByKeys([...relevantKeys, ...remainingKeys]).flatMap(
-    ({ key }) => {
-      const value = extractedFields[key];
-      if (
-        value === null ||
-        value === undefined ||
-        value === "" ||
-        (documentType === "E-Way Bill" &&
-          key === "subtotal" &&
-          extractedFields.totalTaxableAmount)
-      ) {
-        return [];
-      }
-      return [[key, value] as [string, unknown]];
-    },
-  );
+  return getFieldDefinitionsByKeys(
+    [...relevantKeys, ...remainingKeys],
+    documentType,
+  ).flatMap(({ key }) => {
+    const value = extractedFields[key];
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      (documentType === "E-Way Bill" &&
+        key === "subtotal" &&
+        extractedFields.totalTaxableAmount)
+    ) {
+      return [];
+    }
+    return [[key, value] as [string, unknown]];
+  });
 }
 
 function getCompactDocumentType(documentType: string) {
@@ -2667,25 +2680,37 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           identifiers,
           visibleMismatches,
         );
-        const extractedFieldCount = Object.values(document.extractedFields || {}).filter(
-          (val) => val !== null && val !== undefined && String(val).trim() !== ""
+        const extractedFieldCount = Object.values(
+          document.extractedFields || {},
+        ).filter(
+          (val) =>
+            val !== null && val !== undefined && String(val).trim() !== "",
         ).length;
         const comparisonValue = documentFieldComparison
           ? getComparableFieldValue(
-              { type: document.documentType as DocType, fields: document.extractedFields },
-              documentFieldComparison.key as FieldKey
+              {
+                type: document.documentType as DocType,
+                fields: document.extractedFields,
+              },
+              documentFieldComparison.key as FieldKey,
             )
           : undefined;
-        const normalizedComparisonValue = String(comparisonValue ?? "").trim().toLowerCase();
+        const normalizedComparisonValue = String(comparisonValue ?? "")
+          .trim()
+          .toLowerCase();
         const hasComparisonValue = Boolean(
           normalizedComparisonValue &&
-          !["-", "not detected", "n/a", "na", "null", "undefined"].includes(normalizedComparisonValue)
+          !["-", "not detected", "n/a", "na", "null", "undefined"].includes(
+            normalizedComparisonValue,
+          ),
         );
         const participatesInComparisonMismatch = documentFieldComparison
           ? visibleMismatches.some(
               (mismatch) =>
                 mismatch.fieldName === documentFieldComparison.key &&
-                mismatch.values.some((entry) => Boolean(entry.docId && identifiers.includes(entry.docId)))
+                mismatch.values.some((entry) =>
+                  Boolean(entry.docId && identifiers.includes(entry.docId)),
+                ),
             )
           : false;
         return {
@@ -2699,10 +2724,10 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           fieldCount: extractedFieldCount,
           comparisonState: documentFieldComparison
             ? !hasComparisonValue
-              ? "absent" as const
+              ? ("absent" as const)
               : participatesInComparisonMismatch
-                ? "mismatch" as const
-                : "matched" as const
+                ? ("mismatch" as const)
+                : ("matched" as const)
             : undefined,
           comparisonValue: documentFieldComparison
             ? hasComparisonValue
@@ -2711,8 +2736,8 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
             : undefined,
           chainRole: sellerChainRoleMeta
             ? sellerChainRoleMeta.contextDocumentIds.includes(document.id)
-              ? "supporting" as const
-              : "approval" as const
+              ? ("supporting" as const)
+              : ("approval" as const)
             : undefined,
         };
       },
@@ -2813,19 +2838,23 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
       </div>
     );
 
-    const extractedFieldItems: ExtractedFieldItem[] = (activeDocumentFieldEntries || []).map(
-      ([key, value]) => {
-        const currentValue = typeof value === "string" ? value : displayValue(value);
-        const fieldLabel = getDocumentFieldLabel(activeDocument?.documentType, key);
-        const hasMismatch = visibleMismatches.some((m) => m.fieldName === key);
-        return {
-          key,
-          label: fieldLabel,
-          value: currentValue || "Not detected",
-          hasMismatch,
-        };
-      }
-    );
+    const extractedFieldItems: ExtractedFieldItem[] = (
+      activeDocumentFieldEntries || []
+    ).map(([key, value]) => {
+      const currentValue =
+        typeof value === "string" ? value : displayValue(value);
+      const fieldLabel = getDocumentFieldLabel(
+        activeDocument?.documentType,
+        key,
+      );
+      const hasMismatch = visibleMismatches.some((m) => m.fieldName === key);
+      return {
+        key,
+        label: fieldLabel,
+        value: currentValue || "Not detected",
+        hasMismatch,
+      };
+    });
 
     const stampCheckKeys = [
       "hasAuthorizedSignature",
@@ -2840,20 +2869,32 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
       for (const stampKey of stampCheckKeys) {
         if (!existingKeySet.has(stampKey)) {
           const rawVal = activeDocument.extractedFields[stampKey];
-          if (rawVal !== undefined && rawVal !== null && String(rawVal).trim() !== "") {
-            const isYes = rawVal === true || String(rawVal).toLowerCase() === "yes";
+          if (
+            rawVal !== undefined &&
+            rawVal !== null &&
+            String(rawVal).trim() !== ""
+          ) {
+            const isYes =
+              rawVal === true || String(rawVal).toLowerCase() === "yes";
             extractedFieldItems.push({
               key: stampKey,
-              label: getDocumentFieldLabel(activeDocument.documentType, stampKey),
+              label: getDocumentFieldLabel(
+                activeDocument.documentType,
+                stampKey,
+              ),
               value: isYes ? "Yes" : "No",
-              hasMismatch: visibleMismatches.some((m) => m.fieldName === stampKey),
+              hasMismatch: visibleMismatches.some(
+                (m) => m.fieldName === stampKey,
+              ),
             });
           }
         }
       }
     }
 
-    const lineItemsDocumentTotal = formatMoney(activeDocument ? getInvoiceAmount(activeDocument) : null);
+    const lineItemsDocumentTotal = formatMoney(
+      activeDocument ? getInvoiceAmount(activeDocument) : null,
+    );
     const lineItemsContent = (
       <div className={styles.redesignDataContent}>
         {lineItemsDocumentTotal ? (
@@ -2865,7 +2906,13 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
         {activeDocumentLineItems.length > 0 ? (
           <div className={styles.redesignLineTableWrap}>
             <table className={styles.redesignLineTable}>
-              <thead><tr>{activeDocumentLineItemColumns.map((column) => <th key={column.key}>{column.label}</th>)}</tr></thead>
+              <thead>
+                <tr>
+                  {activeDocumentLineItemColumns.map((column) => (
+                    <th key={column.key}>{column.label}</th>
+                  ))}
+                </tr>
+              </thead>
               <tbody>
                 {activeDocumentLineItems.map((item, itemIndex) => {
                   return (
@@ -2873,10 +2920,16 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
                       key={`${item.lineNumber ?? itemIndex}-${item.description ?? item.rawText ?? ""}`}
                     >
                       {activeDocumentLineItemColumns.map((column) => {
-                        const cellValue = column.key === "lineNumber"
-                          ? getLineItemValue(item, column.key) || String(itemIndex + 1)
-                          : getLineItemValue(item, column.key);
-                        return <td key={column.key}>{cellValue ? String(cellValue) : "—"}</td>;
+                        const cellValue =
+                          column.key === "lineNumber"
+                            ? getLineItemValue(item, column.key) ||
+                              String(itemIndex + 1)
+                            : getLineItemValue(item, column.key);
+                        return (
+                          <td key={column.key}>
+                            {cellValue ? String(cellValue) : "—"}
+                          </td>
+                        );
                       })}
                     </tr>
                   );
@@ -2884,34 +2937,53 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
               </tbody>
             </table>
           </div>
-        ) : <div className={styles.redesignDataEmpty}>No line-item table was extracted for this document.</div>}
+        ) : (
+          <div className={styles.redesignDataEmpty}>
+            No line-item table was extracted for this document.
+          </div>
+        )}
       </div>
     );
 
     const termsContent = (
       <div className={styles.redesignDataContent}>
-        <div className={styles.redesignDataGroupLabel}>Purchase-order terms</div>
+        <div className={styles.redesignDataGroupLabel}>
+          Purchase-order terms
+        </div>
         <div className={styles.redesignTermsList}>
           {activeTermsChecklistRows.map((row) => (
-            <article
-              key={row.key}
-            >
-              <span><strong>{row.label}</strong><small>{row.value}</small></span>
-              <em className={row.issue ? styles.redesignTermIssue : styles.redesignTermClear}>
+            <article key={row.key}>
+              <span>
+                <strong>{row.label}</strong>
+                <small>{row.value}</small>
+              </span>
+              <em
+                className={
+                  row.issue
+                    ? styles.redesignTermIssue
+                    : styles.redesignTermClear
+                }
+              >
                 {row.issue ? "Needs review" : "Fulfilled"}
               </em>
             </article>
           ))}
           {unmatchedTermsIssues.map((issue) => (
-            <article
-              key={issue.id}
-            >
-              <span><strong>Review item</strong><small>{issue.analysis || issue.fixPlan || getTermsIssueText(issue)}</small></span>
+            <article key={issue.id}>
+              <span>
+                <strong>Review item</strong>
+                <small>
+                  {issue.analysis || issue.fixPlan || getTermsIssueText(issue)}
+                </small>
+              </span>
               <em className={styles.redesignTermIssue}>Needs review</em>
             </article>
           ))}
-          {activeTermsChecklistRows.length === 0 && unmatchedTermsIssues.length === 0 ? (
-            <div className={styles.redesignDataEmpty}>No purchase-order terms were extracted for this document.</div>
+          {activeTermsChecklistRows.length === 0 &&
+          unmatchedTermsIssues.length === 0 ? (
+            <div className={styles.redesignDataEmpty}>
+              No purchase-order terms were extracted for this document.
+            </div>
           ) : null}
         </div>
       </div>
@@ -2924,20 +2996,25 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
         activeComparisonFieldKey={documentFieldComparison?.key || null}
         onCompareField={(field) =>
           setDocumentFieldComparison((current) =>
-            current?.key === field.key ? null : field
+            current?.key === field.key ? null : field,
           )
         }
         activeDataView={activeDataView}
         onDataViewChange={setActiveDataView}
-        termsCount={activeTermsChecklistRows.length + unmatchedTermsIssues.length}
+        termsCount={
+          activeTermsChecklistRows.length + unmatchedTermsIssues.length
+        }
         hasFailureState={visibleMismatches.some((m) =>
           m.values.some(
             (entry) =>
               entry.docId &&
-              [activeDocument?.id, activeDocument?.clientDocumentId].includes(entry.docId)
-          )
+              [activeDocument?.id, activeDocument?.clientDocumentId].includes(
+                entry.docId,
+              ),
+          ),
         )}
         lineItemsContent={lineItemsContent}
+        logisticsRows={activeDocument?.logisticsRows}
         termsContent={termsContent}
       />
     );
@@ -3103,7 +3180,9 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           onClearPreviewFocus={() => setPreviewFocus(null)}
           canPreviousPage={canGoToPreviousPreviewPage}
           canNextPage={canGoToNextPreviewPage}
-          showPageControls={activeSourceIsImage ? previewPageCount > 1 : previewPdfPageCount > 1}
+          showPageControls={
+            activeSourceIsImage ? previewPageCount > 1 : previewPdfPageCount > 1
+          }
           pageLabel={
             activeSourceIsImage
               ? `${Math.min(previewPageIndex + 1, previewPageCount)} / ${previewPageCount}`
@@ -3145,9 +3224,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
           onResetZoom={() => setPreviewZoom(DEFAULT_PREVIEW_ZOOM)}
         />
 
-        {["completed", "accepted", "rejected"].includes(
-          detail.case.status,
-        ) ? (
+        {["completed", "accepted", "rejected"].includes(detail.case.status) ? (
           <div className="mx-auto w-full max-w-6xl px-6 pb-6">
             <SapMatchPanel caseId={caseId} />
           </div>

@@ -37,6 +37,7 @@ function response(document = source) {
   const context = sourceAuditContext(document, pages);
   return {
     sourceVerdict: "verified",
+    logisticsRows: [],
     fieldChecks: Object.fromEntries(
       context.fieldChecksInOrder.map((key) => [key, "supported"]),
     ),
@@ -54,9 +55,17 @@ function response(document = source) {
       },
     },
     newReferences: [],
-    fieldChanges: [],
+    fieldChanges: context.fieldChecksInOrder.map((field) => ({
+      field,
+      value: String(document.fields[field as keyof CaseDoc["fields"]]),
+      evidenceKind: "printed",
+      pageNumber: "p1",
+      quote: `${field}: ${document.fields[field as keyof CaseDoc["fields"]]}`,
+    })),
     removalEvidence: null,
-    structureChange: null,
+    structureChange: document.lineItems?.length
+      ? { lineItems: document.lineItems, evidence }
+      : null,
     pageQuality: [
       {
         pageNumber: "p1",

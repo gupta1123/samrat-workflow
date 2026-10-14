@@ -1,5 +1,5 @@
 import type { CaseDoc, FieldKey, Mismatch } from "../../types/pipeline";
-import { FIELD_DEFINITIONS } from "../document-schema";
+import { FIELD_DEFINITIONS, getFieldKeysForDocType } from "../document-schema";
 import {
   buildAuthoritativeReviewResponseSchema,
   buildReviewSourceSupportChecklist,
@@ -10,6 +10,13 @@ import { REFERENCE_FIELD_DEFINITIONS } from "./semantic-grounding";
 import { readReferenceLedger } from "./reference-ledger";
 import { SourceReviewValidationError } from "./review-contract-error";
 import { STAGED_REVIEW_CONTRACT_VERSION } from "./checkpoint-contract";
+import { LOGISTICS_ROW_FIELDS } from "@/lib/extracted-source-rows";
+import type { LogisticsRow } from "@/types/pipeline";
+import { SOURCE_LINE_ITEM_KEYS } from "@/lib/source-line-items";
+import {
+  sourceQuoteContainsValue,
+  sourceFieldQuoteContainsValue,
+} from "./extraction-semantics";
 
 export { STAGED_REVIEW_CONTRACT_VERSION } from "./checkpoint-contract";
 
@@ -70,7 +77,35 @@ export function buildSourceAuditSchema(
   const correctionProperties = object(correction.properties);
   const structureProperties = {
     documentType: correctionProperties.documentType,
-    lineItems: correctionProperties.lineItems,
+    lineItems: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          pageNumber,
+          cells: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                field: {
+                  type: "string",
+                  enum: SOURCE_LINE_ITEM_KEYS.filter(
+                    (key) => key !== "sourcePage",
+                  ),
+                },
+                value: text,
+                quote: text,
+              },
+              required: ["field", "value", "quote"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["pageNumber", "cells"],
+        additionalProperties: false,
+      },
+    },
     evidence: ownEvidence,
   };
   const quality = object(object(base.pageQuality).items);
@@ -125,6 +160,31 @@ export function buildSourceAuditSchema(
       sourceVerdict: { type: "string", enum: ["verified", "needs_review"] },
       fieldChecks: supportSchema(checklist.fieldSupport),
       lineItemChecks: supportSchema(checklist.lineItemPropertySupport),
+      logisticsRows: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["transport", "weighment"] },
+            cells: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  field: { type: "string", enum: [...LOGISTICS_ROW_FIELDS] },
+                  value: text,
+                  quote: text,
+                },
+                required: ["field", "value", "quote"],
+                additionalProperties: false,
+              },
+            },
+            pageNumber,
+          },
+          required: ["kind", "cells", "pageNumber"],
+          additionalProperties: false,
+        },
+      },
       tableCoverage: {
         type: "object",
         properties: {
@@ -184,7 +244,10 @@ export function buildSourceAuditSchema(
           additionalProperties: false,
         },
       },
-      removalEvidence: { anyOf: [{ type: "null" }, ownEvidence] },
+      // Always supply the source assessment. Making this nullable lets the
+      // provider omit proof while marking proposed values unsupported, forcing
+      // a second full source call. The parser still reads legacy null responses.
+      removalEvidence: ownEvidence,
       structureChange: {
         anyOf: [
           { type: "null" },
@@ -236,6 +299,7 @@ export function buildSourceAuditSchema(
       "sourceVerdict",
       "fieldChecks",
       "lineItemChecks",
+      "logisticsRows",
       "tableCoverage",
       "references",
       "newReferences",
@@ -273,8 +337,12 @@ export function buildSourceFieldChangesRepairSchema(
   const full = buildSourceAuditSchema(document, pages);
   return {
     type: "object",
-    properties: { fieldChanges: full.properties.fieldChanges },
-    required: ["fieldChanges"],
+    properties: {
+      fieldChanges: full.properties.fieldChanges,
+      fieldChecks: full.properties.fieldChecks,
+      removalEvidence: full.properties.removalEvidence,
+    },
+    required: ["fieldChanges", "fieldChecks", "removalEvidence"],
     additionalProperties: false,
   };
 }
@@ -375,9 +443,11 @@ export function isolateUnverifiedSourceReferences(
 }
 
 const SOURCE_AUDIT_REPAIR_KEYS = [
+  "fieldChanges",
   "sourceVerdict",
   "fieldChecks",
   "lineItemChecks",
+  "logisticsRows",
   "tableCoverage",
   "removalEvidence",
   "structureChange",
@@ -435,6 +505,7 @@ export function parseCompactSourceAudit(
     "sourceVerdict",
     "fieldChecks",
     "lineItemChecks",
+    "logisticsRows",
     "tableCoverage",
     "references",
     "newReferences",
@@ -499,6 +570,7 @@ export function parseCompactSourceAudit(
     "removalEvidence",
     "structureChange",
     "tableCoverage",
+    "logisticsRows",
     "pageQuality",
   ])
     payload[key] = bindPagePointers(payload[key]);
@@ -661,11 +733,22 @@ export function parseCompactSourceAudit(
         throw new Error(
           `Field ${field} requires ${expectedKind} evidence; visual observations cannot supply printed identifiers, amounts or weights.`,
         );
+      if (
+        evidenceKind === "visual_observation" &&
+        value !== "Yes" &&
+        value !== "No"
+      )
+        throw new Error(
+          `Field ${field} requires a Yes/No visual observation value, with its description in quote.`,
+        );
       const evidence = bindEvidence(
         { pageNumber: change.pageNumber, quote: change.quote },
         `Field ${field}`,
       );
-      if (evidenceKind === "printed" && !evidence.quote.includes(value))
+      if (
+        evidenceKind === "printed" &&
+        !sourceFieldQuoteContainsValue(field, evidence.quote, value)
+      )
         throw new Error(
           `Field ${field}: the proposed value must appear literally in its paired own-page quote; do not normalize or infer it.`,
         );
@@ -690,8 +773,90 @@ export function parseCompactSourceAudit(
       error instanceof Error ? error.message : String(error),
     );
   }
-  const structure =
+  if (payload.sourceVerdict === "verified") {
+    const missingObservations = Object.keys(fieldSupport).filter(
+      (field) =>
+        fieldSupport[field] === "supported" && !Object.hasOwn(changes, field),
+    );
+    if (missingObservations.length)
+      throw new SourceReviewValidationError(
+        "field-changes",
+        `Blind source reading omitted value-and-proof observations for: ${missingObservations.join(", ")}.`,
+      );
+  }
+  let structure =
     payload.structureChange === null ? null : object(payload.structureChange);
+  const observedItemProofs = new Map<number, Record<string, string>>();
+  if (Array.isArray(structure?.lineItems)) {
+    structure.lineItems = structure.lineItems.map((rawRow, index) => {
+      const row = object(rawRow);
+      if (!Object.hasOwn(row, "cells")) return row; // Strict legacy responses.
+      if (
+        Object.keys(row).some((key) => !["pageNumber", "cells"].includes(key))
+      )
+        throw new SourceReviewValidationError(
+          "source-audit",
+          "Observed item rows must use only cells and an own-page pointer.",
+        );
+      const values: Record<string, string | number> = {};
+      const proofs: Record<string, string> = {};
+      for (const rawCell of array(row.cells)) {
+        const cell = object(rawCell);
+        if (
+          typeof cell.field !== "string" ||
+          cell.field === "sourcePage" ||
+          !SOURCE_LINE_ITEM_KEYS.includes(
+            cell.field as (typeof SOURCE_LINE_ITEM_KEYS)[number],
+          ) ||
+          Object.hasOwn(values, cell.field) ||
+          typeof cell.value !== "string" ||
+          !cell.value.trim() ||
+          Object.keys(cell).some(
+            (key) => !["field", "value", "quote"].includes(key),
+          )
+        )
+          throw new SourceReviewValidationError(
+            "source-audit",
+            "Observed item cells require unique, known fields and literal values.",
+          );
+        const proof = bindEvidence(
+          { pageNumber: row.pageNumber, quote: cell.quote },
+          "Item cell",
+        );
+        if (!sourceQuoteContainsValue(proof.quote, cell.value))
+          throw new SourceReviewValidationError(
+            "source-audit",
+            `Item ${index + 1} ${cell.field} is not proved by its paired own-page quote.`,
+          );
+        values[cell.field] = cell.value;
+        proofs[cell.field] = proof.quote;
+        values.sourcePage = proof.pageNumber;
+      }
+      if (!Object.keys(proofs).length)
+        throw new SourceReviewValidationError(
+          "source-audit",
+          "Observed item rows cannot have an empty cell inventory.",
+        );
+      observedItemProofs.set(index, proofs);
+      return values;
+    });
+  }
+  const sourceTable = object(payload.tableCoverage);
+  if (
+    sourceTable.status === "not_present" &&
+    Array.isArray(sourceTable.rows) &&
+    sourceTable.rows.length === 0 &&
+    structure?.lineItems === undefined
+  ) {
+    // An evidenced, explicit source decision that there is no goods table is
+    // already an empty inventory. Do not retain first-pass guesses simply
+    // because the model did not repeat that decision as a structure change.
+    structure = {
+      ...structure,
+      lineItems: [],
+      evidence: sourceTable.evidence,
+    };
+  }
   if (
     structure &&
     (Object.keys(structure).some(
@@ -827,6 +992,66 @@ export function parseCompactSourceAudit(
       bindEvidence(row, "Visible item row"),
     );
     const savedRows = result.document.lineItems ?? [];
+    if (coverage.status === "complete" && !Array.isArray(structure?.lineItems))
+      throw new Error(
+        "Invoice/document extraction incomplete: blind source reading must supply the complete source table in structureChange.lineItems.",
+      );
+    if (
+      coverage.status === "complete" &&
+      savedRows.some((row) => !row.itemCode && !row.description)
+    )
+      throw new Error(
+        "Invoice/document extraction incomplete: a goods/service row requires a source-read item code or description.",
+      );
+    if (coverage.status === "complete") {
+      const rowFields = [
+        "itemCode",
+        "description",
+        "quantity",
+        "unit",
+        "rate",
+        "netRate",
+        "taxableAmount",
+        "lineTotal",
+        "referencePoNumber",
+        "referenceGrpoNumber",
+      ] as const;
+      for (const [index, row] of savedRows.entries()) {
+        for (const field of rowFields) {
+          const value = row[field];
+          if (
+            field === "unit" &&
+            value &&
+            pairedChanges.some(
+              (change) =>
+                change.field === "unit" &&
+                change.value === value &&
+                sourceQuoteContainsValue(change.evidence.quote, value),
+            )
+          )
+            continue;
+          if (
+            field === "unit" &&
+            value &&
+            row.rawText &&
+            sourceQuoteContainsValue(row.rawText, value)
+          )
+            continue;
+          if (
+            value &&
+            !sourceQuoteContainsValue(
+              observedItemProofs.get(index)?.[field] ??
+                rows[index]?.quote ??
+                "",
+              value,
+            )
+          )
+            throw new Error(
+              `Invoice/document extraction incomplete: row ${index + 1} ${field} is not literally proved by that goods row's own-page quote. Re-read the goods row; do not borrow totals or freight from the document summary.`,
+            );
+        }
+      }
+    }
     if (
       coverage.status === "complete" &&
       (!rows.length || rows.length !== savedRows.length)
@@ -896,6 +1121,102 @@ export function parseCompactSourceAudit(
       );
   }
   result.audit.fieldEvidence = pairedChanges;
+  try {
+    const logisticsRows: LogisticsRow[] = array(payload.logisticsRows).map(
+      (rawRow) => {
+        const row = object(rawRow);
+        if (row.kind !== "transport" && row.kind !== "weighment")
+          throw new Error("Unknown logistics row kind.");
+        const values: Record<string, unknown> = Object.hasOwn(row, "cells")
+          ? {}
+          : object(row.values);
+        const proofs: Record<string, unknown> = Object.hasOwn(row, "cells")
+          ? {}
+          : object(row.evidence);
+        // The provider returns paired, enum-keyed observations, rather than
+        // predicting two free-form dictionaries with potentially different
+        // keys. Legacy compact responses remain strictly validated below.
+        if (Object.hasOwn(row, "cells")) {
+          if (!Array.isArray(row.cells) || row.values || row.evidence)
+            throw new Error(
+              "Logistics rows require one unambiguous cell inventory.",
+            );
+          for (const rawCell of row.cells) {
+            const cell = object(rawCell);
+            if (
+              typeof cell.field !== "string" ||
+              !LOGISTICS_ROW_FIELDS.includes(
+                cell.field as (typeof LOGISTICS_ROW_FIELDS)[number],
+              ) ||
+              Object.hasOwn(values, cell.field) ||
+              Object.keys(cell).some(
+                (key) => !["field", "value", "quote"].includes(key),
+              )
+            )
+              throw new Error(
+                "Logistics cells require unique, known source fields.",
+              );
+            values[cell.field] = cell.value;
+            proofs[cell.field] = cell.quote;
+          }
+        }
+        const keys = Object.keys(values);
+        if (
+          !keys.length ||
+          keys.some(
+            (field) =>
+              !LOGISTICS_ROW_FIELDS.includes(
+                field as (typeof LOGISTICS_ROW_FIELDS)[number],
+              ),
+          ) ||
+          Object.keys(proofs).some(
+            (field) =>
+              !LOGISTICS_ROW_FIELDS.includes(
+                field as (typeof LOGISTICS_ROW_FIELDS)[number],
+              ),
+          )
+        )
+          throw new Error(
+            "Logistics evidence must use known source-cell keys.",
+          );
+        let sourcePage = 0;
+        for (const field of keys) {
+          const value = values[field];
+          if (
+            typeof value !== "string" ||
+            !value.trim() ||
+            typeof proofs[field] !== "string"
+          )
+            throw new Error(
+              "Logistics values and evidence must be populated literal strings.",
+            );
+          const bound = bindEvidence(
+            { pageNumber: row.pageNumber, quote: proofs[field] },
+            "Logistics cell",
+          );
+          if (!sourceFieldQuoteContainsValue(field, bound.quote, value))
+            throw new Error(
+              "Logistics cell value is not present in its own-page quote.",
+            );
+          sourcePage = bound.pageNumber;
+        }
+        return {
+          kind: row.kind,
+          values,
+          evidence: Object.fromEntries(
+            keys.map((field) => [field, proofs[field]]),
+          ),
+          sourcePage,
+        } as LogisticsRow;
+      },
+    );
+    result.document = { ...result.document, logisticsRows };
+  } catch (error) {
+    throw new SourceReviewValidationError(
+      "source-audit",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
   if (
     structure?.documentType !== undefined &&
     result.document.type !== structure.documentType
@@ -1011,9 +1332,10 @@ export function sourceAuditContext(
     document: {
       documentType: document.type,
       title: document.title,
-      fields: document.fields,
-      lineItems: document.lineItems ?? [],
-      qualityIssues: document.qualityIssues ?? [],
+      fields: {},
+      lineItems: [],
+      logisticsRows: [],
+      qualityIssues: [],
     },
     sourcePageNumbers: pages.map((page) => page.pageNumber),
     sourcePagePointers: pages.map((page, index) => ({
@@ -1021,11 +1343,16 @@ export function sourceAuditContext(
       originalPageNumber: page.pageNumber,
     })),
     fieldChecksInOrder: checklist.fieldSupport,
+    fieldsToRead: getFieldKeysForDocType(document.type),
     lineItemChecksInOrder: checklist.lineItemPropertySupport,
     referencesToReview: REFERENCE_FIELD_DEFINITIONS.filter(({ key }) =>
       String(document.fields[key] ?? "").trim(),
     ).map(({ key }) => key),
-    fieldMeanings: FIELD_DEFINITIONS.map(({ key, label, evidenceKind }) => ({
+    fieldMeanings: FIELD_DEFINITIONS.filter(
+      ({ key }) =>
+        getFieldKeysForDocType(document.type).includes(key) ||
+        Object.hasOwn(document.fields, key),
+    ).map(({ key, label, evidenceKind }) => ({
       field: key,
       meaning: label,
       evidenceKind: evidenceKind ?? "printed",

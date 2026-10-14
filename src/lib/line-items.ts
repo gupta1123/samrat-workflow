@@ -5,6 +5,12 @@ import type {
   FieldKey,
 } from "@/types/pipeline";
 
+import {
+  LOGISTICS_ROWS_FIELD_KEY,
+  readLogisticsRows,
+} from "@/lib/extracted-source-rows";
+
+import { decodeSourceLineItems } from "@/lib/source-line-items";
 export const LINE_ITEMS_FIELD_KEY = "__lineItems";
 export const EXTRACTION_QUALITY_FIELD_KEY = "__extractionQuality";
 
@@ -42,6 +48,8 @@ const LINE_ITEM_KEYS: Array<keyof CommercialLineItem> = [
   "taxAmount",
   "lineTotal",
   "referencePoLineNumber",
+  "referencePoNumber",
+  "referenceGrpoNumber",
   "rawText",
   "sourcePage",
 ];
@@ -66,6 +74,8 @@ const LINE_ITEM_SIGNATURE_KEYS: TextLineItemKey[] = [
   "taxableAmount",
   "lineTotal",
   "referencePoLineNumber",
+  "referencePoNumber",
+  "referenceGrpoNumber",
 ];
 const LOOSE_LINE_ITEM_SIGNATURE_KEYS = LINE_ITEM_SIGNATURE_KEYS.filter(
   (key) => key !== "lineNumber" && key !== "referencePoLineNumber",
@@ -180,11 +190,7 @@ function descriptionFromRawText(
 function cleanLineItemDescription(item: CommercialLineItem) {
   const description = cleanWhitespace(item.description ?? "");
   if (description) return description;
-  return descriptionFromRawText(
-    item.rawText,
-    item.lineNumber,
-    item.hsnSac,
-  );
+  return descriptionFromRawText(item.rawText, item.lineNumber, item.hsnSac);
 }
 
 function deriveItemCodeFromRawDescription(
@@ -328,16 +334,16 @@ const NON_ITEM_PATTERNS = [
 function isNonItemRow(item: CommercialLineItem) {
   const description = cleanWhitespace(item.description ?? "");
   if (!description) return false;
-  
+
   const quantity = parseLineItemNumber(item.quantity);
   const rate = parseLineItemNumber(item.rate);
-  
+
   if (quantity === 1 && rate !== null && rate > 10000) {
     for (const pattern of NON_ITEM_PATTERNS) {
       if (pattern.test(description)) return true;
     }
   }
-  
+
   return false;
 }
 
@@ -1844,16 +1850,21 @@ export function readStoredLineItems(extractedFields: unknown) {
     return [];
   }
 
-  return sanitizeLineItems(
+  return decodeSourceLineItems(
     (extractedFields as Record<string, unknown>)[LINE_ITEMS_FIELD_KEY],
   );
 }
 
 export function serializeFieldsWithLineItems(
-  document: Pick<CaseDoc, "fields" | "lineItems" | "qualityIssues">,
+  document: Pick<
+    CaseDoc,
+    "fields" | "lineItems" | "qualityIssues" | "logisticsRows"
+  >,
 ) {
   const fields: Record<string, unknown> = { ...(document.fields ?? {}) };
-  const lineItems = sanitizeLineItems(document.lineItems);
+  const lineItems = decodeSourceLineItems(document.lineItems);
+  const logisticsRows = readLogisticsRows(document.logisticsRows);
+  if (logisticsRows.length) fields[LOGISTICS_ROWS_FIELD_KEY] = logisticsRows;
 
   if (lineItems.length > 0) {
     fields[LINE_ITEMS_FIELD_KEY] = lineItems;
@@ -1869,5 +1880,6 @@ export function stripStoredLineItems(fields: Record<string, unknown>) {
   const rest = { ...fields };
   delete rest[LINE_ITEMS_FIELD_KEY];
   delete rest[EXTRACTION_QUALITY_FIELD_KEY];
+  delete rest[LOGISTICS_ROWS_FIELD_KEY];
   return rest as Partial<Record<FieldKey, string>>;
 }

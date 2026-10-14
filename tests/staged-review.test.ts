@@ -49,6 +49,7 @@ async function compact(document: CaseDoc) {
   );
   return {
     sourceVerdict: "verified",
+    logisticsRows: [],
     fieldChecks: Object.fromEntries(
       context.fieldChecksInOrder.map((key) => [key, "supported"]),
     ),
@@ -59,7 +60,10 @@ async function compact(document: CaseDoc) {
       status: document.lineItems?.length ? "complete" : "not_present",
       rows: (document.lineItems ?? []).map((item) => ({
         pageNumber: "p1",
-        quote: item.description ?? item.itemCode ?? "Visible goods row",
+        quote: Object.entries(item)
+          .filter(([key]) => key !== "sourcePage")
+          .map(([, value]) => String(value))
+          .join(" "),
       })),
       evidence: {
         pageNumber: "p1",
@@ -98,7 +102,15 @@ async function compact(document: CaseDoc) {
       pageNumber: string;
       quote: string;
     }[],
-    fieldChanges: [] as {
+    fieldChanges: context.fieldChecksInOrder.map((field) => ({
+      field,
+      value: String(document.fields[field as keyof CaseDoc["fields"]]),
+      evidenceKind:
+        context.fieldMeanings.find((meaning) => meaning.field === field)
+          ?.evidenceKind ?? "printed",
+      pageNumber: "p1",
+      quote: `${field}: ${document.fields[field as keyof CaseDoc["fields"]]}`,
+    })) as {
       field: string;
       value: string;
       evidenceKind?: "printed" | "visual_observation";
@@ -106,7 +118,15 @@ async function compact(document: CaseDoc) {
       quote: string;
     }[],
     removalEvidence: null,
-    structureChange: null,
+    structureChange: document.lineItems?.length
+      ? {
+          lineItems: document.lineItems,
+          evidence: {
+            pageNumber: "p1",
+            quote: document.md || "Source goods table",
+          },
+        }
+      : null,
     reviewIssues: [],
     pageQuality: document.sourcePageNumbers!.map((_, index) => ({
       pageNumber: `p${index + 1}`,
@@ -118,6 +138,228 @@ async function compact(document: CaseDoc) {
     reason: "Own-source values verified.",
   };
 }
+
+test("review retains every transport/weight row only with individual own-page cell evidence", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const doc: CaseDoc = {
+    ...documents[1],
+    fields: {},
+    md: "Part-B transport entries",
+  };
+  const raw = await compact(doc);
+  const logisticsRows = [
+    {
+      kind: "transport",
+      pageNumber: "p1",
+      values: { vehicleNumber: "AP39VA1459" },
+      evidence: { vehicleNumber: "Vehicle AP39VA1459" },
+    },
+    {
+      kind: "transport",
+      pageNumber: "p1",
+      values: { vehicleNumber: "KA51AC5439" },
+      evidence: { vehicleNumber: "Vehicle KA51AC5439" },
+    },
+    {
+      kind: "weighment",
+      pageNumber: "p1",
+      values: { netWeight: "3.75", weightUnit: "kg" },
+      evidence: {
+        netWeight: "Net Weight 3.75 kg",
+        weightUnit: "Net Weight 3.75 kg",
+      },
+    },
+  ];
+  const result = parseCompactSourceAudit(
+    JSON.stringify({ ...raw, logisticsRows }),
+    doc,
+    [pages[1]],
+  );
+  assert.equal(result.document.logisticsRows?.length, 3);
+  assert.equal(result.document.logisticsRows?.[0].sourcePage, 2);
+  assert.equal(result.document.lineItems?.length ?? 0, 0);
+  const cells = logisticsRows.map(({ values, evidence, ...row }) => ({
+    ...row,
+    cells: Object.entries(values).map(([field, value]) => ({
+      field,
+      value,
+      quote: evidence[field as keyof typeof evidence],
+    })),
+  }));
+  assert.deepEqual(
+    parseCompactSourceAudit(
+      JSON.stringify({ ...raw, logisticsRows: cells }),
+      doc,
+      [pages[1]],
+    ).document.logisticsRows,
+    result.document.logisticsRows,
+  );
+  for (const field of ["unknown", "vehicleNumber"]) {
+    assert.throws(
+      () =>
+        parseCompactSourceAudit(
+          JSON.stringify({
+            ...raw,
+            logisticsRows: [
+              {
+                ...cells[0],
+                cells: [
+                  ...cells[0].cells,
+                  { field, value: "AP39VA1459", quote: "Vehicle AP39VA1459" },
+                ],
+              },
+            ],
+          }),
+          doc,
+          [pages[1]],
+        ),
+      /unique, known source fields/,
+    );
+  }
+  assert.throws(
+    () =>
+      parseCompactSourceAudit(
+        JSON.stringify({
+          ...raw,
+          logisticsRows: [
+            {
+              ...logisticsRows[0],
+              evidence: { vehicleNumber: "Vehicle AP39VA9999" },
+            },
+          ],
+        }),
+        doc,
+        [pages[1]],
+      ),
+    /not present in its own-page quote/,
+  );
+  assert.throws(
+    () =>
+      parseCompactSourceAudit(
+        JSON.stringify({
+          ...raw,
+          logisticsRows: [{ ...logisticsRows[0], pageNumber: "p2" }],
+        }),
+        doc,
+        [pages[1]],
+      ),
+    /pointer|page/i,
+  );
+});
+
+test("paired commercial cells preserve digits and use their own row/header evidence", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const doc: CaseDoc = {
+    ...documents[0],
+    fields: {},
+    lineItems: [{ description: "Steel bars", quantity: "41", sourcePage: 1 }],
+  };
+  const raw = await compact(doc);
+  const cells = [
+    { field: "description", value: "Steel bars", quote: "Item: Steel bars" },
+    { field: "quantity", value: "41.800", quote: "Quantity 41.800" },
+    { field: "unit", value: "TO", quote: "Quantity (TO)" },
+    { field: "rate", value: "58,308.00", quote: "Rate 58308.00" },
+  ];
+  const run = (entries: unknown[], pageNumber = "p1") =>
+    parseCompactSourceAudit(
+      JSON.stringify({
+        ...raw,
+        structureChange: {
+          lineItems: [{ pageNumber, cells: entries }],
+          evidence: { pageNumber: "p1", quote: "Steel bars goods table" },
+        },
+      }),
+      doc,
+      [pages[0]],
+    );
+  assert.deepEqual(run(cells).document.lineItems, [
+    {
+      description: "Steel bars",
+      quantity: "41.800",
+      unit: "TO",
+      rate: "58,308.00",
+      sourcePage: 1,
+    },
+  ]);
+  assert.throws(() => run([...cells, cells[0]]), /unique, known fields/);
+  assert.throws(() => run(cells, "p2"), /own-page pointer/);
+  assert.throws(
+    () =>
+      run(
+        cells.map((cell) =>
+          cell.field === "quantity" ? { ...cell, value: "41" } : cell,
+        ),
+      ),
+    /not proved/,
+  );
+});
+
+test("explicit source absence replaces a guessed first-pass commercial table", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const doc: CaseDoc = {
+    ...documents[1],
+    lineItems: [
+      { description: "Guessed goods", quantity: "15", sourcePage: 2 },
+    ],
+  };
+  const raw = await compact(doc);
+  raw.tableCoverage = {
+    status: "not_present",
+    rows: [],
+    evidence: {
+      pageNumber: "p1",
+      quote: "Transport entries only; no goods table appears on this page",
+    },
+  };
+  raw.structureChange = null;
+  const result = parseCompactSourceAudit(JSON.stringify(raw), doc, [pages[1]]);
+  assert.deepEqual(result.document.lineItems, []);
+  assert.equal(result.document.tableCoverage?.status, "not_present");
+});
+
+test("source reviewer is blind to proposed values and cannot verify fields without rereading them", async () => {
+  const { sourceAuditContext, parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const context = sourceAuditContext(documents[0], [pages[0]]);
+  assert.deepEqual(context.document.fields, {});
+  assert.deepEqual(context.document.lineItems, []);
+  const raw = await compact(documents[0]);
+  raw.fieldChanges = [];
+  assert.throws(
+    () =>
+      parseCompactSourceAudit(JSON.stringify(raw), documents[0], [pages[0]]),
+    /omitted value-and-proof observations/,
+  );
+});
+
+test("a document total cannot masquerade as a goods-row amount without that row's source proof", async () => {
+  const { parseCompactSourceAudit } =
+    await import("../src/server/processing/staged-review-contract");
+  const doc: CaseDoc = {
+    ...documents[0],
+    lineItems: [
+      {
+        description: "Rod",
+        quantity: "2",
+        unit: "MT",
+        rate: "50",
+        taxableAmount: "118",
+      },
+    ],
+  };
+  const raw = await compact(doc);
+  raw.tableCoverage.rows = [
+    { pageNumber: "p1", quote: "Rod 2 MT Rate 50 Amount 100" },
+  ];
+  assert.throws(
+    () => parseCompactSourceAudit(JSON.stringify(raw), doc, [pages[0]]),
+    /taxableAmount.*not literally proved/,
+  );
+});
 function packet() {
   return {
     packetGroups: [
@@ -280,7 +522,7 @@ for (const restoreReference of [false, true]) {
         const context = JSON.parse(body.messages[1].content[0].text);
         if (name === "source_document_review") {
           if (context.sourcePageNumbers[0] === 2) return response(other);
-          if (!context.document.fields.irnNumber) {
+          if (!context.referencesToReview.includes("irnNumber")) {
             independentCalls++;
             return response(scoped);
           }
@@ -400,6 +642,9 @@ for (const repairSucceeds of [true, false]) {
     };
     const sourceDocs = [invoice, documents[1]];
     const valid = await Promise.all(sourceDocs.map(compact));
+    valid[0].fieldChanges = valid[0].fieldChanges.filter(
+      (entry) => entry.field !== "supplierGstin",
+    );
     valid[0].fieldChanges.push({
       field: "supplierGstin",
       value: "27ABCDE1234F1Z5",
@@ -878,7 +1123,8 @@ test("one paired observation adds a missed buyer name and derives its correction
     { field: "buyerName", value: "Foundry Purchaser" },
   ]);
   assert.equal(
-    result.audit.fieldEvidence?.[0].evidence.quote,
+    result.audit.fieldEvidence?.find((entry) => entry.field === "buyerName")
+      ?.evidence.quote,
     "Buyer Foundry Purchaser",
   );
   const schema = buildSourceAuditSchema(document, [pages[0]]);
@@ -919,7 +1165,14 @@ test("paired changes reject blank, normalized, duplicate, foreign-page and confl
   };
   const run = (changes: unknown[], extra = {}) =>
     parseCompactSourceAudit(
-      JSON.stringify({ ...raw, fieldChanges: changes, ...extra }),
+      JSON.stringify({
+        ...raw,
+        fieldChanges: [
+          ...raw.fieldChanges.filter((entry) => entry.field !== "buyerName"),
+          ...changes,
+        ],
+        ...extra,
+      }),
       documents[0],
       [pages[0]],
     );
@@ -960,6 +1213,13 @@ test("support votes audit the original table while a proved replacement is autho
     ...raw,
     fieldChecks: { vendorName: "supported", buyerName: "unsupported" },
     lineItemChecks: { description: "supported", itemCode: "unsupported" },
+    fieldChanges: raw.fieldChanges.filter(
+      (entry) => entry.field !== "buyerName",
+    ),
+    structureChange: {
+      lineItems: [{ description: "Steel" }],
+      evidence: { pageNumber: "p1", quote: "Steel" },
+    },
     removalEvidence: { pageNumber: "p1", quote: "Supplier Aster Metals" },
   };
   const result = parseCompactSourceAudit(JSON.stringify(payload), document, [
@@ -1005,6 +1265,9 @@ test("a proved no-op is verified, not an unsupported missing-field finding", asy
   const { parseCompactSourceAudit } =
     await import("../src/server/processing/staged-review-contract");
   const raw = await compact(documents[0]);
+  raw.fieldChanges = raw.fieldChanges.filter(
+    (entry) => entry.field !== "buyerName",
+  );
   raw.fieldChanges.push({
     field: "buyerName",
     value: "Foundry Purchaser",
@@ -1085,13 +1348,23 @@ test("visual evidence may correct declared visual observations but never printed
     quote: "Blue handwritten signature visible in the authorized-signature box",
   };
   const result = parseCompactSourceAudit(
-    JSON.stringify({ ...raw, fieldChanges: [visual] }),
+    JSON.stringify({
+      ...raw,
+      fieldChanges: [
+        ...raw.fieldChanges.filter(
+          (entry) => entry.field !== "hasAuthorizedSignature",
+        ),
+        visual,
+      ],
+    }),
     document,
     [pages[0]],
   );
   assert.equal(result.document.fields.hasAuthorizedSignature, "Yes");
   assert.equal(
-    result.audit.fieldEvidence?.[0].evidenceKind,
+    result.audit.fieldEvidence?.find(
+      (entry) => entry.field === "hasAuthorizedSignature",
+    )?.evidenceKind,
     "visual_observation",
   );
   assert.deepEqual(result.audit.visibleOmittedFields, []);
@@ -1130,6 +1403,7 @@ test("every visual presence field accepts source-image evidence", async () => {
       JSON.stringify({
         ...raw,
         fieldChanges: [
+          ...raw.fieldChanges.filter((entry) => entry.field !== field),
           {
             field,
             value: "Yes",
@@ -1144,7 +1418,8 @@ test("every visual presence field accepts source-image evidence", async () => {
     );
     assert.equal(result.document.fields[field], "Yes");
     assert.equal(
-      result.audit.fieldEvidence?.[0].evidenceKind,
+      result.audit.fieldEvidence?.find((entry) => entry.field === field)
+        ?.evidenceKind,
       "visual_observation",
     );
   }
@@ -1864,10 +2139,7 @@ test("an invalid reference proof is repaired from the original source page witho
       if (name === "source_reference_repair") {
         repairCalls++;
         assert.deepEqual(context.referencesToReview, ["referencePoNumber"]);
-        assert.equal(
-          context.originalReferenceValues.referencePoNumber,
-          "ORDER-27",
-        );
+        assert.equal(Object.hasOwn(context, "originalReferenceValues"), false);
         return response({
           references: sourcePayloads[0].references,
           newReferences: sourcePayloads[0].newReferences,
@@ -1911,6 +2183,7 @@ test("a non-reference correction with normalized evidence is repaired without en
   const payloads = await Promise.all(documents.map(compact));
   const invalid = structuredClone(payloads[0]);
   invalid.fieldChanges = [
+    ...invalid.fieldChanges,
     {
       field: "igstRate",
       value: "18.00 %",
@@ -1937,9 +2210,12 @@ test("a non-reference correction with normalized evidence is repaired without en
       }
       if (name === "source_field_changes_repair") {
         fieldRepairCalls++;
-        assert.equal(context.proposedFieldChanges[0].field, "igstRate");
+        assert.ok(context.observationFieldsToRetain.includes("igstRate"));
+        assert.ok(context.fieldsToRead.includes("materialValue"));
+        assert.equal(context.proposedFieldChanges, undefined);
         return response({
           fieldChanges: [
+            ...payloads[0].fieldChanges,
             {
               field: "igstRate",
               value: "18%",
@@ -1991,6 +2267,9 @@ test("an inconsistent source audit is repaired from its own page without fabrica
   const unsupportedField = Object.keys(invalid.fieldChecks)[0];
   assert.ok(unsupportedField);
   invalid.fieldChecks[unsupportedField] = "unsupported";
+  invalid.fieldChanges = invalid.fieldChanges.filter(
+    (entry) => entry.field !== unsupportedField,
+  );
   invalid.removalEvidence = null;
   const sourceCalls = [0, 0];
   let auditRepairCalls = 0;
@@ -2016,9 +2295,11 @@ test("an inconsistent source audit is repaired from its own page without fabrica
         return response(
           Object.fromEntries(
             [
+              "fieldChanges",
               "sourceVerdict",
               "fieldChecks",
               "lineItemChecks",
+              "logisticsRows",
               "tableCoverage",
               "removalEvidence",
               "structureChange",
@@ -2071,12 +2352,17 @@ test("an unrepairable source contract preserves extraction and completes with re
   const unsupportedField = Object.keys(invalid.fieldChecks)[0];
   assert.ok(unsupportedField);
   invalid.fieldChecks[unsupportedField] = "unsupported";
+  invalid.fieldChanges = invalid.fieldChanges.filter(
+    (entry) => entry.field !== unsupportedField,
+  );
   invalid.removalEvidence = null;
   const invalidAudit = Object.fromEntries(
     [
+      "fieldChanges",
       "sourceVerdict",
       "fieldChecks",
       "lineItemChecks",
+      "logisticsRows",
       "tableCoverage",
       "removalEvidence",
       "structureChange",

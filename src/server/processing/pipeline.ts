@@ -5,6 +5,7 @@ import { ReviewContractError } from "./review-contract-error";
 import { readReferenceLedger, REFERENCE_FIELD_KEYS } from "./reference-ledger";
 import {
   orientPageImageWithVision,
+  applyDeclaredPageRotation,
   type PageOrientationView,
 } from "./page-orientation";
 import {
@@ -156,7 +157,7 @@ const IMAGE_HANDWRITTEN_EXTRACTION_INSTRUCTION =
 const TEXT_HANDWRITTEN_EXTRACTION_INSTRUCTION =
   "This text may come from PDF embedded text/OCR and can omit handwritten entries. Use only the provided text; do not guess handwritten values that are not present. If the text shows manual or handwritten content, preserve it in visibleText and extract it when clearly labelled. ";
 const AMOUNT_EXTRACTION_INSTRUCTION =
-  "Copy financial amounts exactly as printed, preserving digit count and decimal placement after removing separators. Do not add or drop zeros. Cross-check quantity x rate, taxable amount + tax amount, and subtotal + tax amount before returning totals; if arithmetic conflicts with a visually uncertain amount, prefer the arithmetically consistent value visible in the row/summary. Extract visible GST/tax percentage fields as taxRate, cgstRate, sgstRate, and igstRate; do not put tax percentages into taxAmount. For invoices, extract printed total GST as taxAmount and separately extract freightAmount and freightGstRate; normal income-tax TDS under section 194Q as tds194qAmount and tds194qRate; goods-transport TDS as transportTdsAmount and transportTdsRate; GST withholding as cgstTdsAmount, sgstTdsAmount, igstTdsAmount, and gstTdsRate; and TCS and round-off as tcsAmount and roundOffAmount. Keep deductions separate and never infer an amount that is absent. Use tdsAmount and tdsRate only when the document does not identify the TDS type. Use GSTIN state codes for GST type: compare both supplier and buyer state codes. Do not infer tax type from a single GSTIN or assume a home state. ";
+  "Copy financial amounts and quantities exactly as printed, preserving every digit and decimal place. Arithmetic is a separate review check: never choose, round or fill a source value because it makes a calculation balance. An unreadable value stays unresolved. Extract printed GST percentages as taxRate, cgstRate, sgstRate and igstRate, and printed monetary components as cgstAmount, sgstAmount and igstAmount. Never derive absent tax rates or amounts. For invoices, extract explicitly printed total GST as taxAmount and separately extract freightAmount and freightGstRate; income-tax TDS under section 194Q as tds194qAmount and tds194qRate; goods-transport TDS as transportTdsAmount and transportTdsRate; GST withholding as cgstTdsAmount, sgstTdsAmount, igstTdsAmount and gstTdsRate; TCS and round-off as tcsAmount and roundOffAmount. Keep deductions separate. Use tdsAmount and tdsRate only when the document does not identify the TDS type. ";
 const CONSIGNEE_EXTRACTION_INSTRUCTION =
   "If a party is labelled Consignee, Ship To, or Recipient, map it to buyerName/buyerGstin only when the document also identifies it as the billed buyer. Keep a separate consignee in shipTo or visibleText. Do not infer a buyer from the app brand. ";
 const DELIVERY_REFERENCE_EXTRACTION_INSTRUCTION =
@@ -652,6 +653,14 @@ function getAllowedFieldKeysForDocType(docType: DocType) {
     : ALL_ALLOWED_FIELD_KEYS;
 }
 
+import {
+  SOURCE_VALUE_INSTRUCTION,
+  LOGISTICS_ROWS_INSTRUCTION,
+  sourceFieldQuoteContainsValue,
+} from "./extraction-semantics";
+import { readLogisticsRows } from "@/lib/extracted-source-rows";
+import { decodeSourceLineItems } from "@/lib/source-line-items";
+
 function getLineItemExtractionInstruction(docType: DocType) {
   if (!isCommercialDocType(docType)) {
     return "";
@@ -659,13 +668,13 @@ function getLineItemExtractionInstruction(docType: DocType) {
 
   return (
     "Also extract every commercial table row into a top-level lineItems array. " +
-    "Each line item may contain lineNumber, itemCode, description, hsnSac, quantity, unit, rate, discountPercent, netRate, taxableAmount, cgstRate, cgstAmount, sgstRate, sgstAmount, igstRate, igstAmount, taxRate, taxAmount, lineTotal, referencePoLineNumber, rawText, and sourcePage. " +
+    "Each line item may contain lineNumber, itemCode, description, hsnSac, quantity, unit, rate, discountPercent, netRate, taxableAmount, cgstRate, cgstAmount, sgstRate, sgstAmount, igstRate, igstAmount, taxRate, taxAmount, lineTotal, referencePoLineNumber, referencePoNumber, referenceGrpoNumber, rawText, and sourcePage. Retain explicitly printed PO and GRPO references on their own goods row; do not copy document-level references to every row. " +
     "When the prompt text or rendered images contain multiple pages, set sourcePage to the visible page number where the row appears. " +
     'Preserve the full item description, including dimensions, material grade and specifications. Extract itemCode only from an explicit code column, label, or clearly separated code prefix: "CH150 - MS Channel 150 x 75 mm, Grade E250" means itemCode "CH150" and description "MS Channel 150 x 75 mm, Grade E250". Do not move dimensions or specifications into itemCode. If a separate code is unclear, keep the full description and omit itemCode. ' +
     "Preserve one entry per visible PO, invoice, delivery challan/note, or e-way bill goods row; do not merge different rows or sum unlike units. Use rawText for the original row text when OCR is uncertain. " +
     "Do not extract HSN/SAC-wise tax summary rows as lineItems. Rows that only contain HSN/SAC, taxable value, and tax amount are summary rows, not product/service lines. " +
     "When invoice GST rates appear only in an HSN/SAC tax summary, map the visible CGST, SGST, IGST, or GST rates from that summary onto the matching product/service lineItems by HSN/SAC and taxable amount. " +
-    "For invoice rows, taxableAmount is the row amount before GST; when the row shows only quantity, rate, and amount, use that amount as taxableAmount and lineTotal. Do not treat packing, freight, P&F, or other charge percentages as GST rates unless the row or tax summary explicitly labels CGST, SGST, IGST, GST, or tax. " +
+    "For invoice rows, taxableAmount is the row amount before GST; use the row's explicitly labelled amount, never a document subtotal. Populate lineTotal only from an explicitly printed row total. Do not treat packing, freight, P&F, or other charge percentages as GST rates unless the row or tax summary explicitly labels CGST, SGST, IGST, GST, or tax. " +
     "Distinguish package counts such as pieces, bags, bundles, or coils from the billed quantity. When the rate is printed per KG, MT, TO, tonne, or another weight unit, quantity and unit must be the weight used in quantity × rate = taxableAmount; do not use the package count as the billed quantity. " +
     "Only set taxableAmount or lineTotal when a monetary amount/value column is visible. Do not use quantity totals such as TOTAL 1.000 as monetary amounts, and omit amount fields instead of writing 0 when the document does not show an amount. " +
     "For product/service rows, keep the full product specification in description, an explicitly identified item code in itemCode, and HSN/SAC only in hsnSac. Never copy HSN/SAC codes, GST labels, quantity-column values, units, rates, tax rates, taxable amounts, tax amounts, or totals into description or itemCode. " +
@@ -710,7 +719,7 @@ function getDocumentSpecificExtractionInstruction(docType: DocType) {
       return (
         "For E-Way Bill documents, vendorName is the From party name in Address Details after the first GSTIN, and buyerName is the To party name after the second GSTIN. " +
         "Do not use Dispatch From or Ship To address text as party names; those belong in dispatchFrom and shipTo. " +
-        "Extract Generated Date as documentDate, Valid Upto/Valid Until as validityDate, Tot. Tax'ble Amt or Taxable Amount as totalTaxableAmount and subtotal, Total Inv. Amt as totalAmount, CGST+SGST+IGST+Cess amounts or total minus taxable amount as taxAmount, and derive taxRate from taxAmount/subtotal when the percentage is not printed. " +
+        "Extract Generated Date as documentDate, Valid Upto/Valid Until as validityDate, explicitly labelled Tot. Tax'ble Amt or Taxable Amount as totalTaxableAmount and subtotal, and explicitly labelled Total Inv. Amt as totalAmount. Save printed tax components separately; save taxAmount or taxRate only when explicitly printed. Do not calculate tax values or interpret an unqualified Value of Goods as taxable. " +
         "Extract Transporter ID & Name into transporterName, Transporter Doc. No into lorryReceiptNumber, and the Part-B Vehicle/Trans number into vehicleNumber. When the Transporter Doc. No cell also prints its date, keep only the document identifier in lorryReceiptNumber; do not append the adjacent date to the identifier. " +
         "If Part-A shows Doc No, Document No, Invoice No, Tax Invoice No, or Delivery Challan No, extract that value as referenceInvoiceNumber unless it is the E-Way Bill No itself. "
       );
@@ -743,7 +752,7 @@ function getDocumentSpecificExtractionInstruction(docType: DocType) {
         "The company printed in the page header is the weighbridgeName, not vendorName. If a separate CUSTOMER or PARTY field is visible, use that labelled value for vendorName. " +
         "Preserve KG or MT in every weight field. Re-read every digit and confirm grossWeight minus tareWeight equals netWeight. If the net weight is also printed in words, use that line to confirm the digit count and trailing zeroes. If the three visibly printed weights still conflict, preserve all three exactly as printed; do not hide the source calculation problem by omitting or rewriting one value. " +
         "Lorry No or Vehicle No on a weighment slip is the vehicleNumber, not lorryReceiptNumber. Do not use RST No, receipt number, ticket number, tare/gross/net weight, date, or charges as vehicleNumber. " +
-        "Do not return weighment rows or weight tables as lineItems; keep gross, tare, and net weights in fields only. " +
+        "Save every weighment row in logisticsRows, including piece quantity and packaging/tare weight where printed; keep commercial lineItems empty. Use top-level gross, tare, and net fields only for a single entry or explicitly labelled totals. " +
         "Read Indian vehicle numbers carefully from the image; distinguish letters from similar-looking digits, especially G/9, L/1, O/0, S/5, T/7, D/G, and C/G. "
       );
     case "Photo Evidence":
@@ -1851,6 +1860,8 @@ const REVIEW_LINE_ITEM_PROPERTY_KEYS = [
   "taxAmount",
   "lineTotal",
   "referencePoLineNumber",
+  "referencePoNumber",
+  "referenceGrpoNumber",
   "rawText",
 ] as const;
 
@@ -3301,7 +3312,7 @@ function parseAuthoritativeDocumentAudits(
             typeof pageNumber !== "number" ||
             !Number.isInteger(pageNumber) ||
             pageNumber < 1 ||
-            !quote.includes(value) ||
+            !sourceFieldQuoteContainsValue(field, quote, value) ||
             (document.sourcePageNumbers &&
               !document.sourcePageNumbers.includes(pageNumber)) ||
             (sourcePages.length > 0 &&
@@ -4945,7 +4956,7 @@ function applyExtractionReviewCorrections(
     if (Array.isArray(correction.lineItems)) {
       const visibleText = getVisibleTextFromMarkdown(nextDoc.md);
       const reviewedLineItems = options.authoritative
-        ? sanitizeLineItems(correction.lineItems)
+        ? decodeSourceLineItems(correction.lineItems)
         : normalizeExtractedCommercialLineItems({
             docType: nextDoc.type,
             lineItems: sanitizeLineItems(correction.lineItems),
@@ -5086,7 +5097,8 @@ function assertAuthoritativeDocumentAuditApplied(
         !document.sourcePageNumbers?.includes(evidence.pageNumber) ||
         evidenceKind !== expectedKind ||
         !evidence.quote.trim() ||
-        (evidenceKind === "printed" && !evidence.quote.includes(value))
+        (evidenceKind === "printed" &&
+          !sourceFieldQuoteContainsValue(field, evidence.quote, value))
       )
         residualValues.push(`${audit.docId}:paired-field:${field}`);
     }
@@ -5626,7 +5638,7 @@ function mapFields(
     : ALL_ALLOWED_FIELD_KEYS;
 
   allowedFieldKeys.forEach((fieldKey) => {
-    const aliases = FIELD_MAPPINGS[fieldKey] ?? [];
+    const aliases = FIELD_MAPPINGS[fieldKey] ?? [fieldKey];
     for (const alias of aliases) {
       const value = fields[alias];
       const normalizedValue = normalizeFieldValue(value);
@@ -5717,6 +5729,8 @@ const INVOICE_LINE_ITEM_KEYS: Array<keyof CommercialLineItem> = [
   "taxAmount",
   "lineTotal",
   "referencePoLineNumber",
+  "referencePoNumber",
+  "referenceGrpoNumber",
   "rawText",
   "sourcePage",
 ];
@@ -10819,6 +10833,7 @@ type PdfPageSequenceEntry = {
   boundaryEvidence?: string;
   extractionSource: "image" | "text";
   documents: PdfPageDocument[];
+  readingRotation?: number;
 };
 
 function readOptionalModelText(value: unknown) {
@@ -10871,12 +10886,21 @@ function parsePdfPageSequenceEntry(
   if (typeof record.startsNewDocument !== "boolean") {
     throw new Error("A PDF page omitted its document-boundary decision.");
   }
+  if (
+    record.readingRotation !== undefined &&
+    record.readingRotation !== null &&
+    ![0, 90, 180, 270].includes(record.readingRotation as number)
+  )
+    throw new Error("A PDF page supplied an invalid reading rotation.");
   return {
     pageNumber: expectedPageNumber,
     startsNewDocument: record.startsNewDocument,
     boundaryEvidence: readOptionalModelText(record.boundaryEvidence),
     extractionSource,
     documents: parsePdfPageDocuments(record.documents),
+    ...(typeof record.readingRotation === "number"
+      ? { readingRotation: record.readingRotation }
+      : {}),
   };
 }
 
@@ -10885,6 +10909,9 @@ function pdfPageSequenceEntrySchema() {
     type: "object",
     properties: {
       startsNewDocument: { type: "boolean" },
+      readingRotation: {
+        anyOf: [{ type: "integer", enum: [0, 90, 180, 270] }, { type: "null" }],
+      },
       boundaryEvidence: { type: "string", minLength: 1 },
       documents: {
         type: "array",
@@ -10904,7 +10931,12 @@ function pdfPageSequenceEntrySchema() {
         },
       },
     },
-    required: ["startsNewDocument", "boundaryEvidence", "documents"],
+    required: [
+      "startsNewDocument",
+      "boundaryEvidence",
+      "documents",
+      "readingRotation",
+    ],
     additionalProperties: false,
   };
 }
@@ -11007,6 +11039,7 @@ async function classifyPdfPageSequence(params: {
     `Inspect the current procurement packet page and, when supplied, the immediately previous page. Return the required JSON for the current page only. ` +
     `Use only these documentType values: ${SUPPORTED_DOC_TYPES.join(", ")}. ` +
     `The rendered page is the source of truth and OCR is supporting context only. ` +
+    `Set readingRotation to the clockwise rotation (0, 90, 180 or 270 degrees) that makes this current page's main printed text upright. Use null if orientation cannot be decided from the image. This decision is about image orientation only; never infer document values. ` +
     `Set startsNewDocument to false only when visible page numbering, an explicitly continued table, or an unmistakably continued layout proves that the current page continues the previous page. ` +
     `Shared parties, transaction references, vehicles, filenames, or document types do not prove continuation. ` +
     `If the current physical page contains multiple independent documents, return each in documents and set startsNewDocument to true. ` +
@@ -11086,7 +11119,18 @@ async function classifyPdfPageSequence(params: {
       );
     },
   );
-  return pageSequenceToDocumentGroups(pages);
+  const groups = pageSequenceToDocumentGroups(pages);
+  // Reuse the existing classifier's explicit visual decision. The same
+  // original page remains the evidence source, now upright for both readers.
+  await Promise.all(
+    pages.map(async (page) => {
+      const image = params.pageImages[page.pageNumber - 1];
+      if (image && page.readingRotation !== undefined)
+        params.pageImages[page.pageNumber - 1] =
+          await applyDeclaredPageRotation(image, page.readingRotation);
+    }),
+  );
+  return groups;
 }
 
 async function splitPdfPagesIndividually(params: {
@@ -11385,7 +11429,7 @@ async function extractDataFromImagePages(params: {
           {
             role: "system",
             content:
-              `Extract structured fields and visible text from procurement, logistics, transport, vehicle KYC, FASTag, quality certificate, and photo-evidence documents and return only JSON with keys "fields", "lineItems", and "visibleText". ` +
+              `Extract structured fields and visible text from procurement, logistics, transport, vehicle KYC, FASTag, quality certificate, and photo-evidence documents and return only JSON with keys "fields", "lineItems", "logisticsRows", and "visibleText". ` +
               `This document is a ${params.documentType}. Use only these field keys for this document type: ${allowedFieldKeysText}. ` +
               "visibleText must be a raw OCR-style transcription of the important visible text on the page. " +
               "Read the whole commercial goods/service table independently of header fields. Every visible goods/service row must also be saved in lineItems, even if the page calls it Invoice goods rather than a table. Transcribing a row only in visibleText does not extract it. Delivery allocation subrows, totals and tax summaries are not extra invoice products. Never fill missing rows from another document. " +
@@ -11395,6 +11439,8 @@ async function extractDataFromImagePages(params: {
               DELIVERY_REFERENCE_EXTRACTION_INSTRUCTION +
               DOCUMENT_SOURCE_BOUNDARY_INSTRUCTION +
               qualityInstruction +
+              SOURCE_VALUE_INSTRUCTION +
+              LOGISTICS_ROWS_INSTRUCTION +
               documentSpecificInstruction +
               lineItemInstruction +
               STAMP_SIGNATURE_EXTRACTION_INSTRUCTION +
@@ -11428,12 +11474,21 @@ async function extractDataFromImagePages(params: {
       const parsed = safeJsonParse<{
         fields?: Record<string, unknown>;
         lineItems?: unknown;
+        logisticsRows?: unknown;
         visibleText?: unknown;
         text?: unknown;
         ocrText?: unknown;
       }>(raw, {});
       return {
         fields: parsed.fields ?? {},
+        logisticsRows: readLogisticsRows(
+          Array.isArray(parsed.logisticsRows)
+            ? parsed.logisticsRows.map((row) => ({
+                ...row,
+                sourcePage: index + 1,
+              }))
+            : [],
+        ),
         lineItems: sanitizeLineItems(parsed.lineItems).map((item) => ({
           ...item,
           sourcePage: item.sourcePage ?? index + 1,
@@ -11508,6 +11563,7 @@ async function extractDataFromImagePages(params: {
     pages: params.pageImages.length,
     fields,
     lineItems,
+    logisticsRows: extracted.flatMap((page) => page.logisticsRows),
     md: "",
     sourceHint: params.fileName,
     sourceFileName: params.fileName,
@@ -11551,7 +11607,7 @@ async function extractDataFromTextPages(params: {
       {
         role: "system",
         content:
-          `Extract structured fields from procurement packet text and return only JSON with keys "fields", "lineItems", and "visibleText". ` +
+          `Extract structured fields from procurement packet text and return only JSON with keys "fields", "lineItems", "logisticsRows", and "visibleText". ` +
           `This document is a ${params.documentType}. Use only these field keys for this document type: ${allowedFieldKeysText}. ` +
           TEXT_HANDWRITTEN_EXTRACTION_INSTRUCTION +
           "Every visible commercial goods/service row must be saved in lineItems, not only visibleText. Read the entire table, independently of header extraction. Delivery allocations, totals and tax summaries are not additional invoice products. Never borrow another document's rows. " +
@@ -11560,6 +11616,8 @@ async function extractDataFromTextPages(params: {
           DELIVERY_REFERENCE_EXTRACTION_INSTRUCTION +
           DOCUMENT_SOURCE_BOUNDARY_INSTRUCTION +
           qualityInstruction +
+          SOURCE_VALUE_INSTRUCTION +
+          LOGISTICS_ROWS_INSTRUCTION +
           documentSpecificInstruction +
           lineItemInstruction +
           STAMP_SIGNATURE_EXTRACTION_INSTRUCTION +
@@ -11584,6 +11642,7 @@ async function extractDataFromTextPages(params: {
   const parsed = safeJsonParse<{
     fields?: Record<string, unknown>;
     lineItems?: unknown;
+    logisticsRows?: unknown;
     visibleText?: unknown;
   }>(raw, {});
   const mappedFields = mapFields(parsed.fields ?? {}, params.documentType);
@@ -11641,6 +11700,7 @@ async function extractDataFromTextPages(params: {
     pages: Math.max(1, params.textPages.length),
     fields,
     lineItems,
+    logisticsRows: readLogisticsRows(parsed.logisticsRows),
     md: "",
     sourceHint: params.fileName,
     sourceFileName: params.fileName,

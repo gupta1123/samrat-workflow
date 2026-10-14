@@ -4,6 +4,7 @@ import sharp from "sharp";
 import {
   buildPageOrientationViews,
   orientPageImageWithVision,
+  applyDeclaredPageRotation,
 } from "../src/server/processing/page-orientation";
 
 async function sampleImage(width = 1200, height = 800) {
@@ -71,5 +72,17 @@ test("rejects an orientation response outside the supplied visual views", async 
       select: async () => ({ selectedView: "view_5" }),
     }),
     /invalid view/,
+  );
+});
+
+test("page classification rotation is applied without making another model call", async () => {
+  const image = await sampleImage(1200, 800);
+  assert.equal(await applyDeclaredPageRotation(image, 0), image);
+  const rotated = await applyDeclaredPageRotation(image, 270);
+  const metadata = await sharp(bytesFromDataUrl(rotated)).metadata();
+  assert.deepEqual([metadata.width, metadata.height], [800, 1200]);
+  await assert.rejects(
+    applyDeclaredPageRotation(image, 45),
+    /invalid reading rotation/,
   );
 });

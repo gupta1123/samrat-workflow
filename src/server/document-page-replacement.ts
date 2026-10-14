@@ -1,5 +1,6 @@
 import { PDFDocument, type PDFImage } from "pdf-lib";
 import sharp from "sharp";
+import { readStoredLogisticsRows } from "@/lib/extracted-source-rows";
 
 import { DOCUMENT_READABILITY_FIELD } from "@/lib/document-readability";
 import type { CaseDoc, ExtractionQualityIssue } from "@/types/pipeline";
@@ -404,6 +405,7 @@ export function toCurrentCaseDocument(row: Record<string, unknown>): CaseDoc {
     : undefined;
   const fields = { ...extractedFields };
   delete fields.__lineItems;
+  delete fields.__logisticsRows;
   return {
     id: String(row.client_document_id || row.id),
     type: row.document_type as CaseDoc["type"],
@@ -411,6 +413,7 @@ export function toCurrentCaseDocument(row: Record<string, unknown>): CaseDoc {
     pages: Math.max(1, Number(row.page_count) || 1),
     fields: fields as CaseDoc["fields"],
     lineItems: storedLineItems,
+    logisticsRows: readStoredLogisticsRows(extractedFields),
     qualityIssues: Array.isArray(row.quality_issues)
       ? (row.quality_issues as ExtractionQualityIssue[])
       : undefined,

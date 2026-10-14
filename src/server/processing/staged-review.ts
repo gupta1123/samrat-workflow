@@ -12,6 +12,7 @@ import { FIELD_DEFINITIONS } from "../document-schema";
 import { buildDocumentReadabilityMismatches } from "../document-readability";
 import { EXTRACTION_VERIFICATION_FIELD } from "../../lib/extraction-verification";
 import { readComparisonOptions } from "../comparison";
+import { compactReviewProviderSchema } from "./review-response-schema";
 import {
   buildAuthoritativeReviewResponseSchema,
   parseValidatedPacketReconciliation,
@@ -188,7 +189,7 @@ async function completeReviewRequest<T>(options: {
         responseSchema: {
           name: options.operation.replaceAll("-", "_"),
           strict: true,
-          schema: options.schema,
+          schema: compactReviewProviderSchema(options.schema, []),
         },
       });
     } catch (error) {
@@ -270,29 +271,43 @@ async function completeReviewRequest<T>(options: {
   );
 }
 
+import {
+  SOURCE_VALUE_INSTRUCTION,
+  LOGISTICS_SOURCE_ROLES_INSTRUCTION,
+} from "./extraction-semantics";
+
 const SOURCE_REVIEW_INSTRUCTION =
   "You are the Pro source-reviewer for ONE document. Return ONLY the required compact JSON. " +
-  "Read its original pages; first-pass fields are untrusted proposals. The original page images are the source of truth. " +
+  "Independently read the original pages. Previously extracted values are deliberately withheld to prevent copying a wrong proposal. The original page images are the source of truth. " +
+  SOURCE_VALUE_INSTRUCTION +
+  LOGISTICS_SOURCE_ROLES_INSTRUCTION +
+  "Independently return the COMPLETE logisticsRows inventory from this document, even when initial extraction missed every row. Each review row has kind, cells and pageNumber (a supplied p pointer, not sourcePage). Each cell is {field:one allowed logistics field, value:literal printed value, quote:own-page label/column-and-value quote proving that cell's role}. Use each field once per row; omit absent cells. No transport/weighment entries means []. Logistics rows never count as commercial tableCoverage rows. " +
   "Every pageNumber is a supplied sourcePagePointers pointer such as p1, NOT an integer. The app binds it to the exact original page. Do not use local numbers or an extracted table's sourcePage. " +
-  'The response structure is {"sourceVerdict":"verified|needs_review","fieldChecks":{"requestedField":"supported|unsupported"},"lineItemChecks":{"requestedProperty":"supported|unsupported"},"references":{"canonicalReferenceField":{"value":"literal printed value or null","sourceLabel":"literal label","valueKind":"reference|document_type|date|party|other|absent|unreadable","pageNumber":"supplied pointer","quote":"literal own-page label and value"}},"newReferences":[],"fieldChanges":[{"field":"canonical non-reference field","value":"source-based value","evidenceKind":"printed|visual_observation","pageNumber":"supplied pointer","quote":"literal own-page words"}],"removalEvidence":null,"structureChange":null,"pageQuality":[{"pageNumber":"supplied pointer","issues":[],"approvalSafe":true,"confidence":"high|medium|low","reason":"visual assessment"}],"reviewIssues":[],"reason":"source-based explanation"}. This is a shape guide, not findings: inspect the pixels to fill every nested evidence and quality property; never return empty evidence objects. references can be {} when no references exist. Empty arrays mean no entries, not one empty object. ' +
-  "Check EVERY populated field and every populated line-item property, and inspect for omitted, explicitly labelled values. " +
+  'The response structure is {"sourceVerdict":"verified|needs_review","fieldChecks":{"requestedField":"supported|unsupported"},"lineItemChecks":{"requestedProperty":"supported|unsupported"},"references":{"canonicalReferenceField":{"value":"literal printed value or null","sourceLabel":"literal label","valueKind":"reference|document_type|date|party|other|absent|unreadable","pageNumber":"supplied pointer","quote":"literal own-page label and value"}},"newReferences":[],"fieldChanges":[{"field":"canonical non-reference field","value":"source-based value","evidenceKind":"printed|visual_observation","pageNumber":"supplied pointer","quote":"literal own-page words"}],"logisticsRows":[],"removalEvidence":{"pageNumber":"supplied pointer","quote":"source assessment of absent fields or roles"},"structureChange":null,"pageQuality":[{"pageNumber":"supplied pointer","issues":[],"approvalSafe":true,"confidence":"high|medium|low","reason":"visual assessment"}],"reviewIssues":[],"reason":"source-based explanation"}. This is a shape guide, not findings: inspect the pixels to fill every nested evidence and quality property; never return empty evidence objects. references can be {} when no references exist. Empty arrays mean no entries, not one empty object. ' +
+  "Independently read every requested field in fieldChecksInOrder and referencesToReview, and inspect for omitted labelled values. For EVERY supported non-reference field, return its literal own-page value and proof in fieldChanges, including values that may already be correct. The app compares them to the first pass after this blind source read. A supported vote without a fieldChanges observation cannot verify a field. " +
+  "fieldsToRead lists this document type's complete extraction schema, including fields missed in the first pass. Independently inspect every listed field; return each actually visible non-reference value in fieldChanges and each visible reference in references/newReferences. Never invent absent fields or add them merely to fill the schema. " +
   "Independently inventory commercial goods/service rows from ALL original pages in tableCoverage, even when first-pass lineItems is empty. status complete requires one own-page quote per goods/service row in rows, in the same order as the final lineItems. Include a brief own-page evidence quote explaining the table assessment. Totals, taxes, delivery allocations, repeated copies and supporting references are not additional invoice products. not_present means the source truly has no commercial rows, not that extraction returned none. unreadable requires sourceVerdict needs_review. " +
   "Read the source column headings and billing basis to distinguish billable quantity from package/piece counts and shipment weights. A piece count and a weight describing the SAME commercial row are not separate products. Preserve genuine separate rows even when their codes repeat. If the source is ambiguous, declare unreadable/needs_review rather than choosing by numeric size, code similarity or an assumed unit. Correct erroneous first-pass row structure using complete source-backed structureChange.lineItems. " +
   "If any source row is missing, including an entirely omitted table, recover the COMPLETE source table in structureChange.lineItems with own-page evidence in this response. Never borrow products or quantities from another document. Confirm codes/descriptions, quantity, unit, unit price and amounts directly from the source; preserve absent fields as absent. " +
   "fieldChecks and lineItemChecks are OBJECTS keyed by the supplied fieldChecksInOrder and lineItemChecksInOrder names. Return every listed key exactly once with supported or unsupported; do not use positional arrays or review the corrected field set. " +
-  "Supported means the field/property belongs to this source, including a misread value that you correct. Unsupported means the source never supplies that field/property. The app removes unsupported values directly from your votes; provide removalEvidence for those votes, not a second removal list. " +
-  "A correct normalized representation is still supported: keep it when the printed content has the same meaning. Do not return changes merely to add commas/decimal zeroes, rearrange date formatting, or rewrap text; source review corrects actual wrong/missing values, not harmless presentation. Never remove a supported field just because its formatting differs. " +
+  "Supported means the source supplies this field/property in its stated role. If its proposed value is misread or attached to the wrong row, you MUST correct it using fieldChanges or a complete source-backed structureChange.lineItems. A supported vote alone must never retain a known wrong value. Unsupported means the source does not supply this field/property in that role; provide removalEvidence. If unreadable source prevents a decision, set sourceVerdict needs_review and report the page issue. " +
+  "removalEvidence is ALWAYS an own-page {pageNumber,quote} object. Its quote names the absent fields or wrong source roles behind unsupported votes, or cites the source inventory when nothing is removed. Never return null or an empty object. " +
+  "Preserve the literal value you independently read, including decimal places and units. Do not normalize, calculate or repair digits to match an expected value. " +
   "references is the authority for ORIGINAL reference proposals: it is an OBJECT keyed by every referencesToReview field, NOT an array. Each key has one value-and-proof entry; do not put field inside that entry. " +
   "newReferences is an array only for clearly printed newly discovered references not in referencesToReview. Each entry supplies field, value, sourceLabel, valueKind, pageNumber and quote. Never repeat an original or new field; the app joins these distinct entries into the same final reference ledger. Use [] when none were missed. " +
+  "When different logistics rows carry different references of the same kind, preserve each reference in that row's cells instead of returning duplicate top-level references. Only a single explicitly identified document-wide reference belongs at top level. " +
   "Each retained value requires valueKind reference and a brief own-page quote containing its EXACT printed label and value together. " +
   "Judge labels by meaning and layout, not by matching their words to field names. Categories, titles, dates, parties and different references are not interchangeable IDs. " +
   "Remove a mis-mapped reference with value null and its true source meaning. A physically blank invoice number stays absent; never substitute a PO, e-way bill, challan or LR number. " +
   "The mandatory invoice-number policy is enforced by the application; do not duplicate that missing-field warning in reviewIssues. " +
   "Source context from other documents or filenames must NEVER fill a missing field. " +
-  "fieldChanges is the ONLY authority for NON-reference additions or corrections. Each record pairs field, EXACT printed value, pageNumber and the minimum own-page quote containing that value. Do not repeat the finding anywhere else. " +
+  "fieldChanges is the ONLY authority for NON-reference source observations. Each record pairs field, EXACT printed value, pageNumber and the minimum own-page quote containing that value. Return all requested supported fields and any additional visible allowed fields, exactly once each. " +
   "Each fieldChange includes evidenceKind matching that field's fieldMeanings metadata. printed evidence requires value copied VERBATIM from quote, including internal spacing and punctuation. visual_observation is permitted ONLY for fields explicitly declared visual_observation: describe the observed mark/presence in quote on its own page, not a fabricated printed Yes/No. Do not keep a known wrong visual flag merely because its correct answer is not printed text. " +
-  "Do not add blank, absent, unreadable, calculated or inferred values. Retain valid existing formatting rather than normalizing dates, amounts, or units. Use an empty fieldChanges array when no printed-value change is needed. " +
-  "structureChange is null unless documentType or table rows truly need correction; supply its own evidence and only actual structural changes. Do not repeat an unchanged table to remove unsupported properties: the app does that from your lineItemChecks votes. " +
+  "For visual_observation fields, value is exactly Yes or No; the quote describes the observed presence/absence. Do not use descriptive sentences or true/false strings as the value. " +
+  "Do not add blank, absent, unreadable, calculated or inferred values. fieldChanges may be empty only when no non-reference values can be source-supported. " +
+  "When a commercial table exists, ALWAYS independently return its complete rows in structureChange.lineItems with evidence, because earlier row values are withheld. Use null only when no table or document-type change is source-proved. " +
+  "Each structureChange.lineItems row is {pageNumber:own-page p pointer,cells:[{field:allowed line-item property,value:literal source value,quote:its own-page column/label and value}]}. Never return a flat line-item object. Pair EACH retained property with proof in the same cell; include the unit header in that unit cell's quote when it is printed in a heading. Preserve the literal source unit; do not substitute a customary equivalent. Each field appears once per row. " +
+  "Each tableCoverage.rows quote identifies the corresponding goods row; the row's cells separately prove every retained value. Quote the goods row itself, not a tax summary or freight total. If a monetary amount is not printed for the goods alone, omit its row amount cell and retain explicitly labelled document amounts in fields. Do not round numeric tokens or shorten a decimal to match a quote. " +
   "Return sourceVerdict verified when the source is decidable, even if changes are required; needs_review when it is not. " +
   "Assess EVERY supplied page. The supplied view may already have been rotated into its natural reading orientation by a separate visual model; that corrected orientation is not a quality defect. Faint, blurred, cropped or unreadable content still needs the corresponding quality warning and approvalSafe false. " +
   "Use reviewIssues only for unresolved source findings with printed evidence; no invented business conflicts. " +
@@ -308,17 +323,22 @@ const SOURCE_REFERENCE_REPAIR_INSTRUCTION =
 
 const SOURCE_FIELD_CHANGES_REPAIR_INSTRUCTION =
   "You are repairing ONLY the non-reference fieldChanges for one source document after its full audit failed validation. " +
-  "Return exactly one fieldChanges array and no other audit properties. Re-read the supplied original page images. " +
-  "Keep only actual additions or corrections that are visibly supported on this source. " +
+  "Return fieldChanges, fieldChecks and removalEvidence only. Re-read the supplied original page images. " +
+  "Independently read every requested supported non-reference field and return its source observation in fieldChanges, even if it may match the first extraction. Earlier values are withheld. " +
+  SOURCE_VALUE_INSTRUCTION +
+  "Inspect the complete fieldsToRead schema, including newly discovered fields in observationFieldsToRetain. A repair replaces the full observations array: do not drop valid newly captured fields when repairing another field. Return their independently reread values and paired proof, never copied earlier values. " +
   "For printed evidence, copy the value verbatim from a brief own-page quote that contains that exact value; do not normalize units, punctuation, percentages, dates or numbers. " +
   "For visual_observation evidence, use it only for fields whose supplied field meaning declares that evidence kind. " +
-  "If a proposed change is unnecessary, inferred, absent, unreadable or cannot be paired with exact own-page evidence, omit it. An empty fieldChanges array is valid. " +
-  "Do not return references, support votes, quality findings, structure changes or any other audit fields.";
+  "Visual observation values must be exactly Yes or No, with the observation described in quote. " +
+  "Omit inferred, absent or unreadable values. Empty fieldChanges is valid only when no requested field has readable source support. " +
+  "Return exactly the requested fieldChecksInOrder keys. If the source does not supply a requested field, mark it unsupported and explain that absence/role in removalEvidence; never fabricate a value to satisfy an earlier supported vote. Return removalEvidence as an own-page {pageNumber,quote} object. Do not return references, row support votes, quality findings, structure changes or any other audit fields.";
 
 const SOURCE_AUDIT_REPAIR_KEYS = [
+  "fieldChanges",
   "sourceVerdict",
   "fieldChecks",
   "lineItemChecks",
+  "logisticsRows",
   "tableCoverage",
   "removalEvidence",
   "structureChange",
@@ -329,12 +349,16 @@ const SOURCE_AUDIT_REPAIR_KEYS = [
 
 const SOURCE_AUDIT_REPAIR_INSTRUCTION =
   "You are repairing ONLY the source-audit consistency for one document after its full audit failed validation. " +
-  "Return exactly sourceVerdict, fieldChecks, lineItemChecks, tableCoverage, removalEvidence, structureChange, pageQuality, reviewIssues and reason. Re-read the supplied original page images. " +
+  "Return exactly sourceVerdict, fieldChecks, lineItemChecks, fieldChanges, logisticsRows, tableCoverage, removalEvidence, structureChange, pageQuality, reviewIssues and reason. Re-read the supplied original page images. " +
+  "Always supply removalEvidence as an own-page {pageNumber,quote} object describing the unsupported fields/roles, or the inspected source inventory if no removals are needed. Never return null. " +
+  SOURCE_VALUE_INSTRUCTION +
+  "Return every transport or weighment row in logisticsRows with kind, cells:[{field,value,quote}], and an own-page p pointer in pageNumber. Cell field must be an allowed logistics field, not a printed column heading; value and own-page proof are paired in that cell. Return [] when none exist. " +
   "Independently inventory every commercial goods/service row in tableCoverage.rows with its own-page quote. Complete coverage must correspond one-to-one, in order, to the final saved rows; recover any missing rows in structureChange.lineItems from this source only. Do not count tax totals or delivery allocation subrows as additional invoice goods. not_present requires genuinely no commercial rows; unreadable requires sourceVerdict needs_review. Supply tableCoverage.evidence explaining the assessment. Never lower the inventory merely to fit an incomplete extraction. " +
-  "Return one support vote for every supplied field and line-item property. A supported vote means the current value is visibly supported by this source. " +
-  "An unsupported vote removes the current value and therefore requires a brief own-page removalEvidence quote showing why that value is not supported; if the source does not prove removal, mark it supported instead. " +
-  "Keep structureChange null unless the document type or table truly needs a source-proved correction. Do not repeat a table merely to remove properties selected by unsupported votes. " +
-  "Keep all quality findings and review issues tied to literal evidence on this source. Do not return references, newReferences or fieldChanges.";
+  "Every structureChange.lineItems row uses {pageNumber,cells:[{field,value,quote}]}, pairing every retained property with its literal own-page proof. Unit cells quote the printed unit header when needed; never normalize the source unit. Do not return flat line-item objects. " +
+  "Every row quote must literally contain all retained item codes/descriptions, quantities/units, prices, row amounts and row references. Quote that goods row only; omit row amounts that appear only as document totals or freight/tax summaries. Preserve every decimal digit. " +
+  "Return one support vote for every supplied field and line-item property. Return an independent literal value-and-proof observation in fieldChanges for EVERY supported non-reference field. Supported means this field/property is supplied in its stated role; return the complete source-read table in structureChange.lineItems when a commercial table exists. Unsupported means this source does not supply the field/property in that role and requires removalEvidence. For an undecidable field/value set sourceVerdict needs_review and report the page issue; uncertainty never proves correctness. " +
+  "Use structureChange null only when no commercial table or document-type change is present. " +
+  "Keep all quality findings and review issues tied to literal evidence on this source. Do not return references or newReferences.";
 
 function parseObjectOrNull(raw: string) {
   try {
@@ -457,7 +481,7 @@ function deferredWorkflowReviewIssue(
   };
 }
 
-async function reviewOneSource(options: {
+export async function reviewOneSource(options: {
   document: CaseDoc;
   pages: ReviewSourcePage[];
   store?: ReviewCheckpointStore;
@@ -631,9 +655,15 @@ async function reviewOneSource(options: {
           if (error.validationSection === "field-changes") {
             const repairContext = {
               validationDefect: error.defect,
-              currentFields: options.document.fields,
-              proposedFieldChanges: rejected.fieldChanges,
+              fieldsToRead: context.fieldsToRead,
+              completeFieldSchema: context.fieldsToRead,
+              observationFieldsToRetain: Array.isArray(rejected.fieldChanges)
+                ? rejected.fieldChanges.map(
+                    (change: { field?: string }) => change.field,
+                  )
+                : [],
               fieldMeanings: context.fieldMeanings,
+              fieldChecksInOrder: context.fieldChecksInOrder,
               sourcePagePointers: context.sourcePagePointers,
             };
             const repaired = await completeReviewRequest({
@@ -678,7 +708,14 @@ async function reviewOneSource(options: {
               validate: (raw) => {
                 const patch = object(JSON.parse(raw));
                 if (
-                  Object.keys(patch).some((key) => key !== "fieldChanges") ||
+                  Object.keys(patch).some(
+                    (key) =>
+                      ![
+                        "fieldChanges",
+                        "fieldChecks",
+                        "removalEvidence",
+                      ].includes(key),
+                  ) ||
                   !Object.hasOwn(patch, "fieldChanges")
                 )
                   throw new Error(
@@ -687,6 +724,12 @@ async function reviewOneSource(options: {
                 const merged = JSON.stringify({
                   ...rejected,
                   fieldChanges: patch.fieldChanges,
+                  ...(Object.hasOwn(patch, "fieldChecks")
+                    ? { fieldChecks: patch.fieldChecks }
+                    : {}),
+                  ...(Object.hasOwn(patch, "removalEvidence")
+                    ? { removalEvidence: patch.removalEvidence }
+                    : {}),
                 });
                 return { raw: merged, result: validateMerged(merged) };
               },
@@ -776,12 +819,6 @@ async function reviewOneSource(options: {
           const repairContext = {
             validationDefect: error.defect,
             referencesToReview: context.referencesToReview,
-            originalReferenceValues: Object.fromEntries(
-              context.referencesToReview.map((field) => [
-                field,
-                options.document.fields[field],
-              ]),
-            ),
             sourcePagePointers: context.sourcePagePointers,
           };
           const repaired = await completeReviewRequest({

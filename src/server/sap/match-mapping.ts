@@ -13,6 +13,7 @@ import {
 } from "@/lib/sap-match/types";
 import { parseSapAmount } from "@/lib/sap-decision";
 import { readStoredLineItems } from "@/server/line-items";
+import { readStoredLogisticsRows } from "@/lib/extracted-source-rows";
 import { sapInvoiceDate } from "./dates";
 import type { SapMatchDocument } from "./service-layer";
 import { findVehicles } from "@/lib/sap-vehicles";
@@ -131,6 +132,18 @@ export function buildMatchInvoice(input: {
     for (const vehicle of findVehicles(documentFields.vehicleNumber)) {
       vehicles.add(vehicle);
       referenceSources.vehicles.push({ value: vehicle, source });
+    }
+    // Reviewed transport cells retain their own row/page provenance. Vehicles
+    // remain supporting evidence; the engine still requires receipt identity.
+    for (const row of readStoredLogisticsRows(documentFields)) {
+      const vehicle = row.values.vehicleNumber;
+      if (vehicle && row.evidence?.vehicleNumber) {
+        vehicles.add(vehicle);
+        referenceSources.vehicles.push({
+          value: vehicle,
+          source: `${source} · page ${row.sourcePage}`,
+        });
+      }
     }
     for (const key of ["poNumber", "referencePoNumber"]) {
       const value = text(documentFields[key]);

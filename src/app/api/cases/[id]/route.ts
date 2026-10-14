@@ -8,6 +8,7 @@ import {
 import { resolvePacketIntelligence } from "@/lib/packet-intelligence";
 import { readComparisonOptions } from "@/server/comparison";
 import { readStoredLineItems, stripStoredLineItems } from "@/server/line-items";
+import { readStoredLogisticsRows } from "@/lib/extracted-source-rows";
 import { groupDocumentsForVerification } from "@/server/services/verification";
 import type { CaseDoc } from "@/types/pipeline";
 import { caseFileContentUrl } from "@/server/case-files";
@@ -80,6 +81,7 @@ export async function GET(request: Request, context: Context) {
       pageCount: d.page_count,
       extractedFields: stripStoredLineItems(d.extracted_fields),
       lineItems: readStoredLineItems(d.extracted_fields),
+      logisticsRows: readStoredLogisticsRows(d.extracted_fields),
       markdown: d.markdown,
       createdAt: d.created_at,
     }));
@@ -106,6 +108,7 @@ export async function GET(request: Request, context: Context) {
       pages: Math.max(1, document.pageCount || 1),
       fields: document.extractedFields as CaseDoc["fields"],
       lineItems: document.lineItems,
+      logisticsRows: document.logisticsRows,
       md: document.markdown,
       sourceFileName: document.sourceFileName || undefined,
       sourceHint: document.sourceHint || undefined,

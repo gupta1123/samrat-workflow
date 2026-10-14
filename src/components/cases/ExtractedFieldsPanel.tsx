@@ -1,7 +1,13 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { FIELD_SECTION_ORDER, getFieldSection, type FieldSectionKey } from "@/lib/field-sections";
+import type { LogisticsRow } from "@/types/pipeline";
+import { LogisticsRowsTable } from "./LogisticsRowsTable";
+import {
+  FIELD_SECTION_ORDER,
+  getFieldSection,
+  type FieldSectionKey,
+} from "@/lib/field-sections";
 import styles from "@/components/cases/CaseDetailPage.module.css";
 
 export type ExtractedFieldItem = {
@@ -22,6 +28,7 @@ export type ExtractedFieldsPanelProps = {
   lineItemsContent?: React.ReactNode;
   termsContent?: React.ReactNode;
   hasFailureState?: boolean;
+  logisticsRows?: LogisticsRow[];
 };
 
 export function ExtractedFieldsPanel({
@@ -35,6 +42,7 @@ export function ExtractedFieldsPanel({
   lineItemsContent,
   termsContent,
   hasFailureState = false,
+  logisticsRows = [],
 }: ExtractedFieldsPanelProps) {
   const groupedSections = useMemo(() => {
     const map = new Map<FieldSectionKey, ExtractedFieldItem[]>();
@@ -53,7 +61,11 @@ export function ExtractedFieldsPanel({
   }, [fields]);
 
   const hasAnyCheckMismatch = useMemo(() => {
-    return fields.some((f) => getFieldSection(f.key) === "CHECKS" && f.hasMismatch) || hasFailureState;
+    return (
+      fields.some(
+        (f) => getFieldSection(f.key) === "CHECKS" && f.hasMismatch,
+      ) || hasFailureState
+    );
   }, [fields, hasFailureState]);
 
   return (
@@ -65,7 +77,11 @@ export function ExtractedFieldsPanel({
           <div className={styles.splitDataTabs}>
             <button
               type="button"
-              className={activeDataView === "fields" ? styles.splitDataTabActive : styles.splitDataTab}
+              className={
+                activeDataView === "fields"
+                  ? styles.splitDataTabActive
+                  : styles.splitDataTab
+              }
               onClick={() => onDataViewChange("fields")}
             >
               Fields ({fields.length})
@@ -73,7 +89,11 @@ export function ExtractedFieldsPanel({
             {lineItemCount > 0 && (
               <button
                 type="button"
-                className={activeDataView === "lineItems" ? styles.splitDataTabActive : styles.splitDataTab}
+                className={
+                  activeDataView === "lineItems"
+                    ? styles.splitDataTabActive
+                    : styles.splitDataTab
+                }
                 onClick={() => onDataViewChange("lineItems")}
               >
                 Line items ({lineItemCount})
@@ -82,7 +102,11 @@ export function ExtractedFieldsPanel({
             {termsCount > 0 && (
               <button
                 type="button"
-                className={activeDataView === "terms" ? styles.splitDataTabActive : styles.splitDataTab}
+                className={
+                  activeDataView === "terms"
+                    ? styles.splitDataTabActive
+                    : styles.splitDataTab
+                }
                 onClick={() => onDataViewChange("terms")}
               >
                 PO terms ({termsCount})
@@ -93,6 +117,9 @@ export function ExtractedFieldsPanel({
       </div>
 
       <div className={styles.splitDataScroll}>
+        {activeDataView === "fields" && logisticsRows.length > 0 && (
+          <LogisticsRowsTable rows={logisticsRows} />
+        )}
         {activeDataView === "fields" ? (
           groupedSections.length > 0 ? (
             groupedSections.map(({ section, fields: sectionFields }) => {
@@ -102,25 +129,36 @@ export function ExtractedFieldsPanel({
                   <div className={styles.splitSectionHeader}>
                     <span className={styles.splitSectionTitle}>{section}</span>
                     {isChecks && hasAnyCheckMismatch ? (
-                      <span className={styles.splitFailureState}>Failure state</span>
+                      <span className={styles.splitFailureState}>
+                        Failure state
+                      </span>
                     ) : null}
                   </div>
 
                   <div className={styles.splitFieldList}>
                     {sectionFields.map((field) => {
-                      const isComparisonActive = activeComparisonFieldKey === field.key;
+                      const isComparisonActive =
+                        activeComparisonFieldKey === field.key;
                       const isFalseCheck =
                         isChecks &&
-                        (field.value.toLowerCase() === "no" || field.value.toLowerCase() === "false");
+                        (field.value.toLowerCase() === "no" ||
+                          field.value.toLowerCase() === "false");
 
                       return (
                         <div
                           key={field.key}
                           className={`${styles.splitFieldItem} ${
-                            isComparisonActive ? styles.splitFieldItemComparisonActive : ""
+                            isComparisonActive
+                              ? styles.splitFieldItemComparisonActive
+                              : ""
                           }`}
                           data-document-comparison-trigger={field.key}
-                          onClick={() => onCompareField({ key: field.key, label: field.label })}
+                          onClick={() =>
+                            onCompareField({
+                              key: field.key,
+                              label: field.label,
+                            })
+                          }
                           tabIndex={0}
                           role="button"
                           aria-pressed={isComparisonActive}
@@ -128,16 +166,25 @@ export function ExtractedFieldsPanel({
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
-                              onCompareField({ key: field.key, label: field.label });
+                              onCompareField({
+                                key: field.key,
+                                label: field.label,
+                              });
                             }
                           }}
                         >
                           <div className={styles.splitFieldTopRow}>
-                            <span className={styles.splitFieldLabel}>{field.label}</span>
+                            <span className={styles.splitFieldLabel}>
+                              {field.label}
+                            </span>
                             {field.hasMismatch ? (
-                              <span className={styles.badgeMismatch}>mismatch</span>
+                              <span className={styles.badgeMismatch}>
+                                mismatch
+                              </span>
                             ) : isFalseCheck ? (
-                              <span className={styles.badgeNeutral}>not detected</span>
+                              <span className={styles.badgeNeutral}>
+                                not detected
+                              </span>
                             ) : (
                               <span
                                 className={styles.badgeCrossChecked}

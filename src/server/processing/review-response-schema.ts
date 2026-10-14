@@ -13,7 +13,12 @@ export function compactReviewProviderSchema(
         // provider's grammar complexity limit on ordinary multi-page packets.
         // Keep its typed verdict dictionary small; the generated checklist in
         // the prompt and the application enforce exact document/field coverage.
-        if (key === "fieldSupport" || key === "lineItemPropertySupport") {
+        if (
+          key === "fieldSupport" ||
+          key === "lineItemPropertySupport" ||
+          key === "fieldChecks" ||
+          key === "lineItemChecks"
+        ) {
           return [
             [
               key,
