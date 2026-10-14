@@ -194,11 +194,13 @@ export function itemIdentificationLabel(line: LineResult) {
     ? "Identification method not recorded"
     : identification.method === "exact-code"
       ? "Exact invoice item code found in SAP Item Master"
-      : identification.scope === "shared"
-        ? "Saved shared item mapping"
-        : identification.scope === "supplier"
-          ? "Saved supplier item mapping"
-          : "Saved item mapping";
+      : identification.method === "confirmed-po-line"
+        ? "SAP item confirmed by selecting the service PO line"
+        : identification.scope === "shared"
+          ? "Saved shared item mapping"
+          : identification.scope === "supplier"
+            ? "Saved supplier item mapping"
+            : "Saved item mapping";
 }
 
 export function matchTimestamp(value: string | null | undefined) {

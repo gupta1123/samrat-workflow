@@ -53,6 +53,14 @@ function buildTiles(
   const unmapped = lines.filter((line) => line.kind === "unmapped");
   const material = lines.filter((line) => line.kind === "material");
   const services = lines.filter((line) => line.kind === "service");
+  const pendingServiceItems = services.filter(
+    (line) =>
+      !line.itemCode &&
+      line.candidates.some(
+        (candidate) =>
+          candidate.documentType === "dDocument_Items" && !candidate.rejected,
+      ),
+  );
   const plan = result.payload;
 
   const supplier: Tile = {
@@ -84,22 +92,30 @@ function buildTiles(
     label: lines.length > 1 ? "Items" : "Item",
     value:
       lines.length === 1
-        ? unmapped.length
-          ? "Not linked"
-          : mono(lines[0].itemCode)
+        ? pendingServiceItems.length
+          ? "Confirm PO item"
+          : services.length && !lines[0].itemCode
+            ? "No stock item needed"
+            : unmapped.length
+              ? "Not linked"
+              : mono(lines[0].itemCode)
         : `${lines.length} items`,
     sub:
       lines.length === 1
-        ? unmapped.length
-          ? (invoice.lines[0]?.description ?? "")
-          : (lines[0].itemName ?? "")
+        ? pendingServiceItems.length
+          ? "Select the service's SAP item with its PO line"
+          : unmapped.length
+            ? (invoice.lines[0]?.description ?? "")
+            : (lines[0].itemName ?? "")
         : unmapped.length
           ? `${unmapped.length} not linked`
           : [...new Set(lines.map((line) => line.itemCode))].join(", "),
-    mode: unmapped.length ? "warn" : "ok",
+    mode: unmapped.length || pendingServiceItems.length ? "warn" : "ok",
     detail: {
       invoice: {
-        main: itemNames((i) => invoice.lines[lines[i].index]?.description ?? "—"),
+        main: itemNames(
+          (i) => invoice.lines[lines[i].index]?.description ?? "—",
+        ),
         sub: itemNames((i) => (
           <>Code {mono(invoice.lines[lines[i].index]?.vendorItemCode)}</>
         )),
@@ -137,15 +153,28 @@ function buildTiles(
   let receipts: Tile;
   if (!material.length && services.length) {
     const po = services[0].po;
+    const linkedCount = services.filter(
+      (line) => line.po?.docNum != null,
+    ).length;
+    const hasCandidates = services.some((line) =>
+      line.candidates.some((candidate) => !candidate.rejected),
+    );
     receipts = {
       key: "receipts",
       label: "Purchase Order",
-      value: po?.docNum != null ? `PO ${po.docNum}` : "No PO",
+      value:
+        services.length > 1
+          ? `${linkedCount} of ${services.length} linked`
+          : po?.docNum != null
+            ? `PO ${po.docNum}`
+            : hasCandidates
+              ? "Choose PO"
+              : "No eligible PO",
       sub:
         services.length > 1
           ? `${services.length} service lines`
           : "Service · no GRPO needed",
-      mode: po?.docNum != null ? "ok" : "warn",
+      mode: linkedCount === services.length ? "ok" : "warn",
     };
   } else if (!material.length) {
     receipts = {
@@ -226,9 +255,7 @@ function TileButton({
         </span>
         {tile.label}
       </span>
-      <span
-        className={`block truncate text-[13px] font-semibold ${valueTone}`}
-      >
+      <span className={`block truncate text-[13px] font-semibold ${valueTone}`}>
         {tile.value}
       </span>
       <span className="block truncate text-[11px] text-[#6b5d50]">
@@ -242,7 +269,9 @@ function TileButton({
   return (
     <button
       type="button"
-      {...(tile.detail ? { "aria-expanded": open } : { "aria-haspopup": "dialog" })}
+      {...(tile.detail
+        ? { "aria-expanded": open }
+        : { "aria-haspopup": "dialog" })}
       onClick={onToggle}
       className={`${className} transition-colors hover:border-[#c9bfae] ${open ? "border-[#3f8a63] shadow-[0_0_0_3px_rgba(63,138,99,0.1)]" : ""}`}
     >

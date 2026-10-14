@@ -1449,12 +1449,17 @@ function evaluateServiceLine(args: {
         po.cardCode === vendor.cardCode &&
         (itemCode
           ? po.itemCode === itemCode
-          : po.documentType === "dDocument_Service"),
+          : po.documentType === "dDocument_Service" ||
+            (po.documentType === "dDocument_Items" &&
+              context.items[po.itemCode]?.inventory === false)),
     )
     .map((po) => {
       const available = remainingServiceAmount.get(receiptKey(po));
       const open = available == null ? 0 : r2(available);
       const view = candidateView(receiptKey(po), "PO", po, open);
+      view.itemName = context.items[po.itemCode]?.name ?? null;
+      view.documentType = po.documentType;
+      view.accountCode = po.accountCode ?? null;
       if (
         context.branch?.bplId != null &&
         po.branchId != null &&
@@ -1472,6 +1477,10 @@ function evaluateServiceLine(args: {
       }
       const score = 0; // Presentation only; never use a ranking score to choose a service PO.
       if (itemCode) view.good.push("same SAP service item");
+      else if (po.documentType === "dDocument_Items")
+        view.good.push(
+          "SAP confirms this is a non-stock item; confirm the service link",
+        );
       if (po.poRefs.some((ref) => invoicePos.includes(normalizeRef(ref)))) {
         view.good.unshift("PO number is on the bill");
       } else {
@@ -1505,8 +1514,13 @@ function evaluateServiceLine(args: {
       );
     }
   } else {
-    const exactPos = eligible.filter(({ po }) =>
-      po.poRefs.some((ref) => invoicePos.includes(normalizeRef(ref))),
+    // A non-stock PO item is only a candidate when the invoice did not identify
+    // that item. Even an exact PO reference must not silently establish its
+    // product identity; the reviewer confirms the PO line and item together.
+    const exactPos = eligible.filter(
+      ({ po }) =>
+        (itemCode || po.documentType === "dDocument_Service") &&
+        po.poRefs.some((ref) => invoicePos.includes(normalizeRef(ref))),
     );
     const identified = exactPos.filter(({ po }) =>
       ln.poLineReference != null
@@ -1542,10 +1556,10 @@ function evaluateServiceLine(args: {
       sev: "block",
       title: eligible.length
         ? "Confirm the correct service PO line"
-        : "No open PO for this service",
+        : "No eligible open PO line for this service",
       help: eligible.length
-        ? "Choose a supplier PO line below. No PO is selected by amount or description similarity."
-        : "A service bill needs an approved PO with value left. Ask purchasing to raise one.",
+        ? "Compare the invoice service with the SAP item or account and explicitly select the correct PO line. No PO or item is selected by amount or description similarity."
+        : "No usable service-type or SAP-confirmed non-stock item PO line was found for this supplier. Check the PO type, item status and remaining balance in SAP.",
       options: [RETURN_OPTION],
     });
     return;
@@ -1558,6 +1572,17 @@ function evaluateServiceLine(args: {
     rateSource: "po",
     accountCode: pick.po.accountCode,
   };
+  if (!itemCode && pick.po.documentType === "dDocument_Items") {
+    result.itemCode = pick.po.itemCode;
+    result.itemName = context.items[pick.po.itemCode]?.name ?? null;
+    result.itemIdentification = { method: "confirmed-po-line" };
+    checks.push({
+      id: `map-${i}`,
+      lineIndex: i,
+      sev: "pass",
+      title: `Non-stock SAP item confirmed through PO ${pick.po.docNum}: ${pick.po.itemCode}`,
+    });
+  }
   checks.push({
     id: `rcpt-${i}`,
     lineIndex: i,
@@ -1665,7 +1690,7 @@ function evaluateServiceLine(args: {
   );
   planned.push({
     invoiceLineIndex: i,
-    itemCode: itemCode ?? "",
+    itemCode: result.itemCode ?? "",
     documentType: pick.po.documentType ?? "dDocument_Service",
     accountCode: pick.po.accountCode,
     quantity: itemDocument ? ln.quantity! : 1,

@@ -8,6 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { matchFixture } from "./sap-posted-fixture";
 import { receiptProblems } from "../src/lib/sap-match/receipt-problems";
+import { evaluateMatch } from "../src/lib/sap-match/engine";
 
 const outputDir = resolve("tmp/compact-ui-test");
 mkdirSync(outputDir, { recursive: true });
@@ -16,6 +17,7 @@ buildSync({
     "src/components/cases/sap-match/WhatGoesToSap.tsx",
     "src/components/cases/sap-match/CheckBlock.tsx",
     "src/components/cases/sap-match/MatchLineCard.tsx",
+    "src/components/cases/sap-match/ReviewHeader.tsx",
   ],
   outdir: outputDir,
   bundle: true,
@@ -32,6 +34,129 @@ const { CheckBlock } = requireComponent(resolve(outputDir, "CheckBlock.js"));
 const { MatchLineCard } = requireComponent(
   resolve(outputDir, "MatchLineCard.js"),
 );
+const { ReviewHeader } = requireComponent(
+  resolve(outputDir, "ReviewHeader.js"),
+);
+
+test("service review compares the invoice with non-stock SAP PO items without claiming an automatic match", () => {
+  const invoice = {
+    ...matchFixture.invoice,
+    supplyNature: "services" as const,
+    poReferences: [],
+    freightAmount: 0,
+    taxableTotal: 1000,
+    total: 1000,
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: null,
+        description: "Quarterly advisory",
+        hsnSac: null,
+        quantity: 2,
+        unit: "Hours",
+        rate: 500,
+        amount: 1000,
+      },
+    ],
+  };
+  const context = {
+    vendor: { cardCode: "V-1", cardName: "Advisory Ltd" },
+    ambiguousVendors: [],
+    branch: null,
+    itemMap: {},
+    items: { "ADV-HOUR": { name: "Advisory provision", inventory: false } },
+    receipts: [],
+    poLines: [
+      {
+        kind: "PO" as const,
+        documentType: "dDocument_Items" as const,
+        docEntry: 7,
+        docNum: 70,
+        lineNum: 0,
+        date: null,
+        cardCode: "V-1",
+        itemCode: "ADV-HOUR",
+        branchId: null,
+        warehouse: null,
+        poRefs: ["70"],
+        quantity: 10,
+        openQty: 10,
+        price: 500,
+        lineTotal: 5000,
+        openAmount: 5000,
+      },
+    ],
+    existingInvoice: null,
+    today: "2026-10-14",
+    closedBefore: null,
+  };
+  const pending = evaluateMatch({ invoice, context });
+  const props = {
+    caseId: "service-ui",
+    invoice,
+    locked: false,
+    busy: false,
+    vendorFound: true,
+    onChoose: () => {},
+    onUndo: () => {},
+    onAllocate: () => {},
+    onResetAllocation: () => {},
+    onLink: () => {},
+  };
+  const html = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      ...props,
+      line: pending.lines[0],
+      checks: pending.open,
+    }),
+  );
+  assert.ok(html.includes("From the invoice"));
+  assert.ok(html.includes("Quarterly advisory"));
+  assert.ok(html.includes("From SAP"));
+  assert.ok(html.includes("ADV-HOUR"));
+  assert.ok(html.includes("Advisory provision"));
+  assert.ok(html.includes("Non-stock item"));
+  assert.ok(html.includes("Confirm the correct service PO line"));
+  assert.ok(!html.includes("No open PO for this service"));
+  assert.ok(!html.includes("SAP GRPO"));
+  const header = renderToStaticMarkup(
+    createElement(ReviewHeader, {
+      invoice,
+      vendor: context.vendor,
+      result: pending,
+      unchecked: [],
+      title: "Can't send yet",
+      tone: "bad",
+      env: "test",
+      onRefresh: () => {},
+      busy: false,
+    }),
+  );
+  assert.ok(header.includes("Confirm PO item"));
+  assert.ok(header.includes("Choose PO"));
+  const candidate = pending.lines[0].candidates[0];
+  const confirmed = evaluateMatch({
+    invoice,
+    context,
+    state: { decisions: {}, allocations: { "0": { [candidate.key]: 1000 } } },
+  });
+  const confirmedHtml = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      ...props,
+      line: confirmed.lines[0],
+      checks: [],
+    }),
+  );
+  assert.ok(
+    confirmedHtml.includes(
+      "SAP item confirmed by selecting the service PO line",
+    ),
+  );
+  assert.ok(confirmedHtml.includes("Invoice and SAP item comparison"));
+  assert.ok(confirmedHtml.includes("no reusable item mapping was saved"));
+  assert.ok(confirmedHtml.includes("Billing units"));
+  assert.ok(confirmedHtml.includes("Unit price"));
+});
 
 test("the line card uses one comparison table for every screen size", () => {
   const html = renderToStaticMarkup(
@@ -106,7 +231,10 @@ test("receipt reference problems are one short line per receipt in use", () => {
   };
   const { rows, missingNote } = receiptProblems(invoice, line);
   assert.equal(missingNote, null);
-  assert.ok(rows.some((row) => /GRPO 718: .*lorry receipt.*Blank in SAP/.test(row)), rows.join("|"));
+  assert.ok(
+    rows.some((row) => /GRPO 718: .*lorry receipt.*Blank in SAP/.test(row)),
+    rows.join("|"),
+  );
 });
 
 test("missing historical reference evidence is summarized once and a known truck conflict stays", () => {
@@ -120,8 +248,14 @@ test("missing historical reference evidence is summarized once and a known truck
     })),
   };
   const { rows, missingNote } = receiptProblems(matchFixture.invoice, line);
-  assert.match(missingNote ?? "", /GRPO 718: reference values were not recorded/);
-  assert.ok(rows.some((row) => /different truck \(OTHER\)/.test(row)), rows.join("|"));
+  assert.match(
+    missingNote ?? "",
+    /GRPO 718: reference values were not recorded/,
+  );
+  assert.ok(
+    rows.some((row) => /different truck \(OTHER\)/.test(row)),
+    rows.join("|"),
+  );
 });
 
 test("draft sheet opens with the invoice layout and ends with the match line and action", () => {

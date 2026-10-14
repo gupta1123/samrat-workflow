@@ -439,6 +439,180 @@ test("non-stock item-based service POs retain the printed hours and price, not a
   ]);
 });
 
+function unlinkedServiceItemCase() {
+  const c = context([
+    po({
+      documentType: "dDocument_Items",
+      itemCode: "CONS-HOUR",
+      accountCode: null,
+      quantity: 10,
+      openQty: 10,
+      price: 500,
+      openAmount: 5000,
+      description: "Consultancy provision",
+    }),
+  ]);
+  c.items = { "CONS-HOUR": { name: "Advisory hours", inventory: false } };
+  const inv = invoice({
+    poReferences: [],
+    lines: [{ ...invoice().lines[0], quantity: 2, unit: "Hours", rate: 500 }],
+  });
+  return { c, inv };
+}
+
+test("an unlinked service discovers non-stock PO items but requires explicit item and PO confirmation", () => {
+  const { c, inv } = unlinkedServiceItemCase();
+  for (const poReferences of [[], ["SO-700"]]) {
+    const result = evaluateMatch({
+      invoice: { ...inv, poReferences },
+      context: c,
+    });
+    assert.equal(result.status, "blocked");
+    assert.equal(result.lines[0].itemCode, null);
+    assert.equal(result.lines[0].po, null);
+    assert.equal(result.lines[0].candidates.length, 1);
+    const candidate = result.lines[0].candidates[0];
+    assert.equal(candidate.itemCode, "CONS-HOUR");
+    assert.equal(candidate.itemName, "Advisory hours");
+    assert.equal(candidate.documentType, "dDocument_Items");
+    assert.equal(candidate.allocated, 0);
+    assert.equal(result.payload, null);
+    assert.match(
+      result.open.find((check) => check.id === "rcpt-0")!.title,
+      /Confirm/,
+    );
+  }
+});
+
+test("confirmed non-stock service PO supplies the actual SAP item and a PO-based item draft", () => {
+  const { c, inv } = unlinkedServiceItemCase();
+  const candidate = evaluateMatch({ invoice: inv, context: c }).lines[0]
+    .candidates[0];
+  const result = evaluateMatch({
+    invoice: inv,
+    context: c,
+    state: { decisions: {}, allocations: { "0": { [candidate.key]: 1000 } } },
+  });
+  assert.equal(result.status, "ready");
+  assert.equal(result.method, "2-way");
+  assert.equal(result.lines[0].itemCode, "CONS-HOUR");
+  assert.equal(result.lines[0].itemName, "Advisory hours");
+  assert.equal(result.lines[0].itemIdentification?.method, "confirmed-po-line");
+  assert.equal(result.payload?.lines[0].itemCode, "CONS-HOUR");
+  assert.equal(result.payload?.lines[0].quantity, 2);
+  assert.equal(result.payload?.lines[0].unitPrice, 500);
+  assert.equal(result.payload?.lines[0].baseType, 22);
+  assert.equal(result.payload?.lines[0].baseEntry, 7001);
+  assert.equal(result.payload?.lines[0].baseLine, 0);
+  assert.deepEqual(c.itemMap, {});
+  const draft = buildMatchedDraftPayload({
+    caseId: "case",
+    plan: result.payload!,
+    freightExpenseCode: null,
+    bases: new Map([
+      [
+        "22:7001",
+        {
+          DocEntry: 7001,
+          DocNum: 700,
+          CardCode: "V-CONSULT",
+          DocCurrency: "INR",
+          DocType: "dDocument_Items",
+          DocumentLines: [
+            {
+              LineNum: 0,
+              ItemCode: "CONS-HOUR",
+              LineStatus: "bost_Open",
+              RemainingOpenQuantity: 10,
+              Price: 500,
+            },
+          ],
+        },
+      ],
+    ]),
+  });
+  assert.equal(draft.payload.DocType, "dDocument_Items");
+  assert.deepEqual(draft.payload.DocumentLines, [
+    { BaseType: 22, BaseEntry: 7001, BaseLine: 0, Quantity: 2, UnitPrice: 500 },
+  ]);
+});
+
+test("stock, unknown-inventory and other-vendor PO lines cannot be selected through the service flow", () => {
+  const { c, inv } = unlinkedServiceItemCase();
+  for (const inventory of [true, null] as const) {
+    c.items["CONS-HOUR"].inventory = inventory;
+    const result = evaluateMatch({ invoice: inv, context: c });
+    assert.equal(result.lines[0].candidates.length, 0);
+    assert.equal(result.status, "blocked");
+  }
+  c.items["CONS-HOUR"].inventory = false;
+  c.poLines[0].cardCode = "OTHER-VENDOR";
+  assert.equal(
+    evaluateMatch({ invoice: inv, context: c }).lines[0].candidates.length,
+    0,
+  );
+});
+
+test("confirming a service PO item cannot override duplicate, balance, quantity or missing-unit blocks", () => {
+  const { c, inv } = unlinkedServiceItemCase();
+  const candidate = evaluateMatch({ invoice: inv, context: c }).lines[0]
+    .candidates[0];
+  const state = {
+    decisions: {},
+    allocations: { "0": { [candidate.key]: 1000 } },
+  };
+  const evaluate = () => evaluateMatch({ invoice: inv, context: c, state });
+  c.existingInvoice = { docNum: 88 };
+  assert.equal(evaluate().status, "blocked");
+  assert.ok(evaluate().open.some((check) => check.id === "dup"));
+  c.existingInvoice = null;
+  c.poLines[0].openAmount = 500;
+  assert.ok(evaluate().open.some((check) => check.id === "amt-0"));
+  c.poLines[0].openAmount = 5000;
+  c.poLines[0].openQty = 1;
+  assert.ok(evaluate().open.some((check) => check.id === "qty-0"));
+  c.poLines[0].openQty = 10;
+  inv.lines[0].quantity = null;
+  assert.ok(evaluate().open.some((check) => check.id === "basis-0"));
+  assert.equal(evaluate().payload, null);
+});
+
+test("service PO item selection does not guess between equal-value POs and shares unit balances", () => {
+  const { c, inv } = unlinkedServiceItemCase();
+  c.poLines.push({
+    ...c.poLines[0],
+    docEntry: 7002,
+    docNum: 701,
+    poRefs: ["SO-701"],
+  });
+  const candidates = evaluateMatch({ invoice: inv, context: c }).lines[0]
+    .candidates;
+  assert.equal(candidates.length, 2);
+  assert.ok(candidates.every((candidate) => candidate.allocated === 0));
+  const state = {
+    decisions: {},
+    allocations: { "0": { [candidates[1].key]: 1000 } },
+  };
+  const selected = evaluateMatch({ invoice: inv, context: c, state });
+  assert.equal(selected.payload?.lines[0].baseEntry, 7002);
+  c.poLines[1].openQty = 3;
+  inv.lines.push({ ...inv.lines[0], index: 1 });
+  inv.taxableTotal = inv.total = 2000;
+  const shared = evaluateMatch({
+    invoice: inv,
+    context: c,
+    state: {
+      decisions: {},
+      allocations: {
+        "0": { [candidates[1].key]: 1000 },
+        "1": { [candidates[1].key]: 1000 },
+      },
+    },
+  });
+  assert.equal(shared.status, "blocked");
+  assert.ok(shared.open.some((check) => check.id === "qty-1"));
+});
+
 test("service headers work with alphanumeric invoice references and no logistics UDFs", () => {
   const result = buildDraftHeaderFields({
     invoice: invoice(),

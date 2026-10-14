@@ -212,7 +212,7 @@ export function MatchLineCard({
         {service && invoice.servicePeriod ? (
           <p className="text-[11px]">Service period: {invoice.servicePeriod}</p>
         ) : null}
-        {unmapped ? (
+        {unmapped || (service && line.itemCode) ? (
           <ItemMatchingEvidence invoice={invoice} line={line} />
         ) : null}
         {unmapped && mapCheck ? (
@@ -456,6 +456,7 @@ export function MatchLineCard({
                 service ? (
                   <ServicePoCandidates
                     line={line}
+                    invoiceLine={invoiceLine}
                     disabled={busy || locked}
                     onAllocate={onAllocate}
                     onReset={onResetAllocation}

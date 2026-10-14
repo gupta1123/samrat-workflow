@@ -304,6 +304,10 @@ export type CandidateView = {
     lorryReceipt: string | null;
   };
   itemCode?: string;
+  /** SAP Item Master name, not an inferred match to the invoice description. */
+  itemName?: string | null;
+  documentType?: "dDocument_Service" | "dDocument_Items";
+  accountCode?: string | null;
   supplierCode?: string;
   purchaseOrder?: {
     docEntry: number;
@@ -324,7 +328,7 @@ export type LineResult = {
   allocatedQty: number;
   manual: boolean;
   itemIdentification?: {
-    method: "saved-mapping" | "exact-code";
+    method: "saved-mapping" | "exact-code" | "confirmed-po-line";
     scope?: "supplier" | "shared";
   };
   /** Ordered quantity/rate/value of the PO the allocation points at. */

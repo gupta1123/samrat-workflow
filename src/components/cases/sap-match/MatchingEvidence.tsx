@@ -265,7 +265,9 @@ export function ItemMatchingEvidence({
           : identification.scope === "shared"
             ? "A saved shared item link connects the invoice item to this SAP item. The SAP name comes from Item Master."
             : "A saved item link connects the invoice item to this SAP item. Its scope was not recorded in this check. The SAP name comes from Item Master."
-        : "This saved check contains the SAP item, but does not record how it was identified. Re-check to record the matching method.";
+        : identification?.method === "confirmed-po-line"
+          ? "You confirmed this non-stock SAP item by selecting its PO line for this service. This selection applies to this invoice; no reusable item mapping was saved."
+          : "This saved check contains the SAP item, but does not record how it was identified. Re-check to record the matching method.";
   const sameName =
     Boolean(line.itemName) &&
     normalizedText(source?.description) === normalizedText(line.itemName);

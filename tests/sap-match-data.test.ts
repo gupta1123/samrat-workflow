@@ -243,6 +243,103 @@ test("source-verified service invoices load service POs without querying goods r
   assert.equal(match.result.payload?.lines[0].accountCode, "EXP-CONSULT");
 });
 
+test("unlinked source-verified services discover SAP non-stock item POs without receipt searches", async () => {
+  const data = tables();
+  data.packet_documents = [
+    {
+      case_id: "case-1",
+      client_document_id: "service-page",
+      document_type: "Invoice",
+      extracted_fields: serializeFieldsWithLineItems({
+        fields: {
+          invoiceNumber: "SERV/28",
+          documentDate: "2026-10-10",
+          vendorName: "Aster Consulting",
+          totalAmount: "1000",
+        },
+        supplyNature: {
+          kind: "services",
+          evidence: [{ sourcePage: 1, quote: "Consulting services" }],
+        },
+        lineItems: [
+          {
+            description: "Consulting services",
+            quantity: "2",
+            unit: "Hours",
+            rate: "500",
+            lineTotal: "1000",
+          },
+        ],
+      }),
+    },
+  ];
+  let receiptCalls = 0;
+  let itemCalls = 0;
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: { id: "case-1", invoice_number: "SERV/28", po_number: null },
+    client: sapClient({
+      searchSuppliers: async () => [
+        { CardCode: "V-CONS", CardName: "Aster Consulting" },
+      ],
+      findOpenReceiptDocumentsForInvoice: async () => {
+        receiptCalls++;
+        throw new Error("No service GRPO lookup expected");
+      },
+      listOpenReceiptDocumentsForVendor: async () => {
+        receiptCalls++;
+        throw new Error("No service GRPO lookup expected");
+      },
+      listOpenPurchaseOrdersForVendor: async () => [
+        {
+          DocEntry: 7001,
+          DocNum: 700,
+          DocType: "dDocument_Items",
+          CardCode: "V-CONS",
+          DocCurrency: "INR",
+          DocumentLines: [
+            {
+              LineNum: 0,
+              LineStatus: "bost_Open",
+              ItemCode: "CONS-HOUR",
+              ItemDescription: "Consultancy provision",
+              Quantity: 10,
+              RemainingOpenQuantity: 10,
+              UnitPrice: 500,
+              LineTotal: 5000,
+            },
+          ],
+        },
+      ],
+      listItemsByCodes: async (codes: string[]) => {
+        itemCalls++;
+        assert.deepEqual(codes, ["CONS-HOUR"]);
+        return [
+          {
+            ItemCode: "CONS-HOUR",
+            ItemName: "Advisory hours",
+            InventoryItem: "tNO",
+          },
+        ];
+      },
+    }) as never,
+  });
+  assert.ok(match.available);
+  if (!match.available) return;
+  assert.equal(receiptCalls, 0);
+  assert.equal(itemCalls, 1);
+  assert.equal(match.result.method, "2-way");
+  assert.equal(match.result.status, "blocked");
+  assert.equal(match.result.lines[0].itemCode, null);
+  assert.equal(match.result.lines[0].candidates[0].itemCode, "CONS-HOUR");
+  assert.equal(match.result.lines[0].candidates[0].itemName, "Advisory hours");
+  assert.equal(match.result.lines[0].candidates[0].open, 5000);
+  assert.match(
+    match.result.open.find((check) => check.id === "rcpt-0")!.title,
+    /Confirm/,
+  );
+});
+
 test("authoritative unrelated-document evidence is the only source of SAP exclusions", () => {
   const excluded = authoritativeOutlierDocumentIds([
     {
