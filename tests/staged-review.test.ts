@@ -913,6 +913,110 @@ function response(payload: unknown, finish_reason = "stop") {
   });
 }
 
+test("whole-packet review returns a validated invoice assembly without rewriting page observations", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const header: CaseDoc = {
+    ...documents[0],
+    fields: {
+      invoiceNumber: "INV-42",
+      vendorName: "Aster",
+      supplierGstin: "29ABCDE1234F1Z5",
+      currency: "INR",
+    },
+    md: "Invoice INV-42. Aster. Supplier GSTIN 29ABCDE1234F1Z5. Currency INR. Line Details are in Annexure.",
+  };
+  const annex: CaseDoc = {
+    ...documents[1],
+    type: "Invoice",
+    fields: { invoiceNumber: "INV-42", currency: "INR" },
+    lineItems: [
+      {
+        description: "Advisory",
+        quantity: "1",
+        unit: "EA",
+        rate: "100",
+        lineTotal: "100",
+      },
+    ],
+    md: "Invoice INV-42. Advisory 1 EA 100 100. Currency INR.",
+  };
+  const docs = [header, annex];
+  const payloads = await Promise.all(docs.map(compact));
+  const packetResult = {
+    ...packet(),
+    packetGroups: [
+      {
+        ...packet().packetGroups[0],
+        caseSummary: {
+          counterpartySource: { docId: "d1", field: "vendorName" },
+          invoiceNumber: "INV-42",
+          poNumber: "",
+          primaryReference: "INV-42",
+          packetCategory: "services",
+        },
+      },
+    ],
+    invoiceAssemblies: [
+      {
+        invoiceNumber: "INV-42",
+        fieldSources: Object.keys(header.fields).map((field) => ({
+          field,
+          docId: "d1",
+        })),
+        documents: [
+          { docId: "d1", role: "header", duplicateOfDocId: null },
+          { docId: "d2", role: "billing", duplicateOfDocId: null },
+        ],
+        reason: "The source cover and its annexure identify invoice INV-42.",
+      },
+    ],
+  };
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (body.response_format.json_schema.name === "source_document_review")
+        return response(payloads[context.sourcePageNumbers[0] - 1]);
+      if (body.response_format.json_schema.name === "packet_reconciliation") {
+        assert.ok(
+          body.response_format.json_schema.schema.required.includes(
+            "invoiceAssemblies",
+          ),
+        );
+        return response(packetResult);
+      }
+      return response({
+        mismatchDecisions: (context.requestedCandidates ?? []).map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source discrepancy.",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages(docs, {
+    sourcePages: pages,
+  });
+  assert.equal(result.authoritativeReview.invoiceAssemblies?.length, 1);
+  assert.deepEqual(
+    result.authoritativeReview.invoiceAssemblies?.[0].documents.map(
+      (member) => member.docId,
+    ),
+    docs.map((doc) => doc.id),
+  );
+  assert.equal(result.documents[0].lineItems?.length ?? 0, 0);
+  assert.equal(result.documents[1].lineItems?.length, 1);
+  assert.equal(result.documents[0].fields.supplierGstin, "29ABCDE1234F1Z5");
+  assert.equal(result.documents[1].fields.supplierGstin, undefined);
+});
+
 test("an omitted invoice table routes to scoped audit recovery, not a blank successful result", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");

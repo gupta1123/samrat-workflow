@@ -248,6 +248,12 @@ export function ItemMatchingEvidence({
   bare?: boolean;
 }) {
   const source = invoice.lines.find((entry) => entry.index === line.index);
+  const sourcePage = source?.source
+    ? {
+        ...source.source,
+        pageLabel: source.source.pageLabel ?? invoice.source?.pageLabel ?? null,
+      }
+    : invoice.source;
   const identification = line.itemIdentification;
   const explanation = !line.itemCode
     ? "No SAP item has been linked yet. Any suggested item needs your confirmation before it can be used."
@@ -271,8 +277,8 @@ export function ItemMatchingEvidence({
       >
         <span aria-hidden>✓</span>
         <span>
-          Item code <span className="font-mono">{line.itemCode}</span> found
-          in SAP Item Master with the same name
+          Item code <span className="font-mono">{line.itemCode}</span> found in
+          SAP Item Master with the same name
         </span>
       </p>
     );
@@ -280,7 +286,10 @@ export function ItemMatchingEvidence({
 
   if (bare)
     return (
-      <p aria-label="Item matching" className="text-[11px] leading-4 text-[#3d3530]">
+      <p
+        aria-label="Item matching"
+        className="text-[11px] leading-4 text-[#3d3530]"
+      >
         <span className="font-medium text-[#6b4a33]">
           {line.itemCode ? itemIdentificationLabel(line) : "Item not linked"}
         </span>
@@ -343,10 +352,10 @@ export function ItemMatchingEvidence({
       {explanation ? (
         <p className="mt-2 text-[#6b5d50]">{explanation}</p>
       ) : null}
-      {invoice.source ? (
+      {sourcePage ? (
         <p className="mt-1 text-[10px] text-[#6b5d50]">
           Invoice source:{" "}
-          {[invoice.source.fileName, invoice.source.pageLabel]
+          {[sourcePage.fileName, sourcePage.pageLabel]
             .filter(Boolean)
             .join(" · ")}
         </p>

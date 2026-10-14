@@ -23,9 +23,40 @@ function present(value: unknown) {
 export function getPrimaryInvoiceDocuments(
   documents: InvoiceApprovalDocument[],
   verificationGroups: unknown,
+  invoiceAssemblies?: unknown,
+  includeDuplicateCopies = false,
 ) {
   const contextIds = new Set<string>();
   const primaryIds = new Set<string>();
+  const continuationIds = new Set<string>();
+  for (const raw of Array.isArray(invoiceAssemblies) ? invoiceAssemblies : []) {
+    const assembly = record(raw);
+    const sources = Array.isArray(assembly.fieldSources)
+      ? assembly.fieldSources.map(record)
+      : [];
+    const identity = sources.find((source) => source.field === "invoiceNumber");
+    const identityDoc = documents.find((doc) => doc.id === identity?.docId);
+    if (
+      !identityDoc ||
+      !present(identityDoc.invoiceNumber) ||
+      String(identityDoc.invoiceNumber).trim() !== assembly.invoiceNumber
+    )
+      continue;
+    for (const rawMember of Array.isArray(assembly.documents)
+      ? assembly.documents
+      : []) {
+      const member = record(rawMember);
+      if (
+        member.docId !== identityDoc.id &&
+        typeof member.docId === "string" &&
+        (includeDuplicateCopies
+          ? ["header", "billing"]
+          : ["header", "billing", "duplicate"]
+        ).includes(String(member.role))
+      )
+        continuationIds.add(member.docId);
+    }
+  }
   if (Array.isArray(verificationGroups)) {
     for (const group of verificationGroups) {
       const roles = record(record(group).roleSelection);
@@ -46,7 +77,8 @@ export function getPrimaryInvoiceDocuments(
     (document) =>
       (document.documentType === "Invoice" ||
         document.documentType === "Tax Invoice") &&
-      (primaryIds.has(document.id) || !contextIds.has(document.id)),
+      (primaryIds.has(document.id) || !contextIds.has(document.id)) &&
+      !continuationIds.has(document.id),
   );
 }
 
@@ -54,10 +86,12 @@ export function getInvoiceNumberApprovalBlockReason(params: {
   invoiceNumber: unknown;
   documents: InvoiceApprovalDocument[];
   verificationGroups?: unknown;
+  invoiceAssemblies?: unknown;
 }): string | null {
   const invoices = getPrimaryInvoiceDocuments(
     params.documents,
     params.verificationGroups,
+    params.invoiceAssemblies,
   );
   if (!invoices.length) {
     return "Approval is blocked because a buyer-facing invoice is required. Upload the invoice and analyze again.";
@@ -82,6 +116,7 @@ export function getSavedCaseInvoiceApprovalBlockReason(
       invoiceNumber: document.extractedFields.invoiceNumber,
     })),
     verificationGroups: detail.case.processingMeta?.verificationGroups,
+    invoiceAssemblies: detail.case.processingMeta?.invoiceAssemblies,
   });
 }
 
@@ -89,12 +124,14 @@ export function buildInvoiceNumberRequiredIssues(params: {
   invoiceNumber: unknown;
   documents: InvoiceApprovalDocument[];
   verificationGroups?: unknown;
+  invoiceAssemblies?: unknown;
 }): Mismatch[] {
   const reason = getInvoiceNumberApprovalBlockReason(params);
   if (!reason) return [];
   const missingInvoices = getPrimaryInvoiceDocuments(
     params.documents,
     params.verificationGroups,
+    params.invoiceAssemblies,
   ).filter((invoice) => !present(invoice.invoiceNumber));
   return (missingInvoices.length ? missingInvoices : [{ id: "packet" }]).map(
     (invoice) => ({

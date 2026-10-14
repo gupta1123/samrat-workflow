@@ -2560,6 +2560,7 @@ export type ReviewSourcePage = {
 };
 
 export type AuthoritativeReviewResult = {
+  invoiceAssemblies?: import("@/lib/invoice-assembly").InvoiceAssembly[];
   mismatches: Mismatch[];
   termsChecklist: TermsComplianceChecklistItem[];
   verificationGroups: AuthoritativePacketReviewGroup[];
@@ -5202,6 +5203,9 @@ export function parseValidatedPacketReconciliation(params: {
   );
   return {
     authoritativeReview: {
+      invoiceAssemblies: undefined as
+        | import("@/lib/invoice-assembly").InvoiceAssembly[]
+        | undefined,
       mismatches: mismatchReview.mismatches,
       termsChecklist: parseAuthoritativeTermsChecklist(
         payload.termsChecklist,

@@ -242,8 +242,11 @@ export function MatchLineCard({
                     {header(
                       "Scanned invoice",
                       [
-                        invoice.source?.fileName,
-                        invoice.source?.pageLabel ?? "PDF",
+                        invoiceLine?.source?.fileName ??
+                          invoice.source?.fileName,
+                        invoiceLine?.source?.pageLabel ??
+                          invoice.source?.pageLabel ??
+                          "PDF",
                       ]
                         .filter(Boolean)
                         .join(" · "),

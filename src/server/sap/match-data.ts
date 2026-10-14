@@ -259,7 +259,12 @@ export async function saveItemMapping(
 export async function computeCaseMatch(params: {
   db: Db;
   client: Client;
-  caseRow: { id: string; invoice_number: unknown; po_number: unknown };
+  caseRow: {
+    id: string;
+    invoice_number: unknown;
+    po_number: unknown;
+    processing_meta?: unknown;
+  };
 }): Promise<CaseMatch> {
   const { db, client, caseRow } = params;
   const [documents, mismatchAttributions] = await Promise.all([
@@ -281,9 +286,16 @@ export async function computeCaseMatch(params: {
   const outlierIds = authoritativeOutlierDocumentIds(
     (mismatchAttributions.data ?? []) as StoredMismatchAttribution[],
   );
+  const caseMeta =
+    caseRow.processing_meta &&
+    typeof caseRow.processing_meta === "object" &&
+    !Array.isArray(caseRow.processing_meta)
+      ? (caseRow.processing_meta as Record<string, unknown>)
+      : {};
   const invoice = buildMatchInvoice({
     caseInvoiceNumber: caseRow.invoice_number,
     casePoNumber: caseRow.po_number,
+    invoiceAssemblies: caseMeta.invoiceAssemblies,
     documents: (documents.data ?? []).filter(
       (document) =>
         typeof document.client_document_id !== "string" ||

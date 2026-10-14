@@ -14,7 +14,11 @@ export const DRAFT_FIELD_NAMES = [
   "TOTQTY",
   "MTRFORM",
 ];
-type Document = { document_type?: unknown; extracted_fields?: unknown };
+type Document = {
+  client_document_id?: unknown;
+  document_type?: unknown;
+  extracted_fields?: unknown;
+};
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -117,8 +121,16 @@ export function buildDraftHeaderFields(input: {
   });
   const candidates = (documents: Document[], key: string) =>
     unique(documents.map((doc) => text(record(doc.extracted_fields)[key])));
+  const dateSource = input.invoice.fieldSources?.find(
+    (source) => source.field === "documentDate",
+  );
+  const dateDocuments = dateSource
+    ? invoiceDocuments.filter(
+        (doc) => doc.client_document_id === dateSource.documentId,
+      )
+    : primary;
   const dates = unique(
-    primary.map(
+    dateDocuments.map(
       (doc) => sapInvoiceDate(record(doc.extracted_fields).documentDate) ?? "",
     ),
   );

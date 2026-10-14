@@ -19,9 +19,17 @@ import type { SapMatchDocument } from "./service-layer";
 import { findVehicles } from "@/lib/sap-vehicles";
 import { storedSupplyNature } from "@/lib/supply-nature";
 import { serviceOpenBalance } from "@/lib/sap-service-balance";
+import {
+  assembledInvoice,
+  parseInvoiceAssemblies,
+  type AssemblyDocument,
+} from "@/lib/invoice-assembly";
+import { FIELD_DEFINITIONS } from "@/server/document-schema";
+import type { CaseDoc } from "@/types/pipeline";
 export { findVehicles } from "@/lib/sap-vehicles";
 
 type StoredDocument = {
+  client_document_id?: unknown;
   document_type: unknown;
   extracted_fields: unknown;
   source_file_name?: unknown;
@@ -61,6 +69,7 @@ export function buildMatchInvoice(input: {
   caseInvoiceNumber: unknown;
   casePoNumber: unknown;
   documents: StoredDocument[];
+  invoiceAssemblies?: unknown;
 }): MatchInvoice | null {
   const invoices = input.documents.filter((document) =>
     INVOICE_TYPES.has(String(document.document_type)),
@@ -75,28 +84,121 @@ export function buildMatchInvoice(input: {
       text(record(document.extracted_fields).invoiceNumber),
     );
   if (!primary) return null;
-  const fields = record(primary.extracted_fields);
+  let fields = record(primary.extracted_fields);
   const invoiceNumber = text(fields.invoiceNumber);
   if (!invoiceNumber) return null;
 
-  const rawLines = readStoredLineItems(primary.extracted_fields);
+  let rawLines = readStoredLineItems(primary.extracted_fields);
+  let rowSources: Array<{
+    docId: string | null;
+    fileName: string | null;
+    pageNumber: number | null;
+  }> = rawLines.map((row) => ({
+    docId: text(primary.client_document_id) || null,
+    fileName: text(primary.source_file_name) || null,
+    pageNumber: row.sourcePage ?? null,
+  }));
   const coverage = record(fields.__tableCoverage);
-  const extractionIssue =
+  let extractionIssue =
     Object.keys(coverage).length > 0 &&
     (coverage.status !== "complete" ||
       !Array.isArray(coverage.rows) ||
       coverage.rows.length !== rawLines.length)
       ? "Invoice item extraction is incomplete or unverified. Review the invoice's original pages and analyze again before SAP matching."
       : undefined;
+  const sameInvoiceDocuments = invoices.filter(
+    (document) =>
+      text(record(document.extracted_fields).invoiceNumber) === invoiceNumber,
+  );
+  let logicalNature = storedSupplyNature(fields);
+  let headerSource = primary;
+  let fieldSources: MatchInvoice["fieldSources"];
+  if (
+    input.invoiceAssemblies !== undefined &&
+    Array.isArray(input.invoiceAssemblies) &&
+    input.invoiceAssemblies.length
+  ) {
+    try {
+      const sourceDocuments: AssemblyDocument[] = input.documents.map(
+        (document) => {
+          const stored = record(document.extracted_fields);
+          return {
+            id: text(document.client_document_id),
+            type: text(document.document_type) as CaseDoc["type"],
+            fields: stored as CaseDoc["fields"],
+            lineItems: readStoredLineItems(stored),
+            tableCoverage: stored.__tableCoverage as CaseDoc["tableCoverage"],
+            supplyNature: storedSupplyNature(stored),
+            sourceFileName: text(document.source_file_name),
+          };
+        },
+      );
+      const assemblies = parseInvoiceAssemblies(
+        input.invoiceAssemblies,
+        sourceDocuments,
+        FIELD_DEFINITIONS.map((field) => field.key),
+      );
+      const matches = assemblies.filter(
+        (assembly) => assembly.invoiceNumber === invoiceNumber,
+      );
+      if (matches.length !== 1)
+        throw new Error(
+          "Invoice needs one unambiguous source-reviewed page assembly.",
+        );
+      const members = new Set(
+        matches[0].documents.map((member) => member.docId),
+      );
+      if (
+        sameInvoiceDocuments.some(
+          (document) => !members.has(text(document.client_document_id)),
+        )
+      )
+        throw new Error(
+          "A verified invoice page is missing from the reviewed invoice assembly.",
+        );
+      const logical = assembledInvoice(matches[0], sourceDocuments);
+      fields = logical.fields;
+      rawLines = logical.rows.map((source) => source.row);
+      rowSources = logical.rows.map(({ row, doc }) => ({
+        docId: doc.id,
+        fileName: doc.sourceFileName ?? null,
+        pageNumber: row.sourcePage ?? null,
+      }));
+      logicalNature = logical.nature;
+      headerSource = input.documents.find(
+        (document) => document.client_document_id === logical.source.id,
+      )!;
+      fieldSources = matches[0].fieldSources.map((source) => ({
+        field: source.field,
+        documentId: source.docId,
+        fileName:
+          sourceDocuments.find((doc) => doc.id === source.docId)
+            ?.sourceFileName ?? null,
+      }));
+      extractionIssue = undefined;
+    } catch (error) {
+      extractionIssue =
+        error instanceof Error
+          ? error.message
+          : "Invoice page assembly needs source review.";
+      rawLines = [];
+      rowSources = [];
+    }
+  } else if (sameInvoiceDocuments.length > 1) {
+    extractionIssue =
+      "The invoice cover and billing pages need a source-reviewed invoice assembly. Analyze the case again; no page will be selected by position.";
+    rawLines = [];
+    rowSources = [];
+  }
   let freightFromLines = 0;
   const lines: MatchInvoiceLine[] = [];
-  for (const item of rawLines) {
+  for (const [rowIndex, item] of rawLines.entries()) {
     const description = text(item.description);
     const code = text(item.itemCode);
     const lineAmount = amount(item.taxableAmount) ?? amount(item.lineTotal);
     // A freight line is a charge on the invoice, not a stock item to match.
     if (
-      storedSupplyNature(fields)?.kind !== "services" &&
+      logicalNature?.kind !== "services" &&
       !code &&
       FREIGHT_LINE.test(description) &&
       lineAmount !== null
@@ -114,6 +216,14 @@ export function buildMatchInvoice(input: {
       unit: text(item.unit) || null,
       rate: amount(item.rate),
       amount: lineAmount,
+      source: {
+        documentId: rowSources[rowIndex]?.docId ?? null,
+        fileName: rowSources[rowIndex]?.fileName ?? null,
+        pageNumber: rowSources[rowIndex]?.pageNumber ?? null,
+        pageLabel: rowSources[rowIndex]?.pageNumber
+          ? `page ${rowSources[rowIndex].pageNumber}`
+          : null,
+      },
     });
   }
 
@@ -199,14 +309,15 @@ export function buildMatchInvoice(input: {
 
   return {
     invoiceNumber,
-    supplyNature: storedSupplyNature(fields)?.kind,
+    supplyNature: logicalNature?.kind,
+    ...(fieldSources ? { fieldSources } : {}),
     servicePeriod: text(fields.servicePeriod) || null,
     ...(extractionIssue ? { extractionIssue } : {}),
     referenceSources,
     source: {
-      fileName: text(primary.source_file_name) || null,
+      fileName: text(headerSource.source_file_name) || null,
       pageLabel:
-        text(primary.source_hint).match(
+        text(headerSource.source_hint).match(
           /\bpages?\s+\d+(?:\s*[-–]\s*\d+)?/i,
         )?.[0] ?? null,
     },

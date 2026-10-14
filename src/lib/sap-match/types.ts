@@ -36,6 +36,12 @@ export const DEFAULT_MATCH_RULES: MatchRules = {
 // ---- Invoice (from the extracted packet) ----
 
 export type MatchInvoiceLine = {
+  source?: {
+    documentId: string | null;
+    fileName: string | null;
+    pageNumber: number | null;
+    pageLabel: string | null;
+  };
   poLineReference?: string | null;
   index: number;
   /** The vendor's own material code (e.g. Tata's 3434405). */
@@ -50,6 +56,11 @@ export type MatchInvoiceLine = {
 };
 
 export type MatchInvoice = {
+  fieldSources?: Array<{
+    field: string;
+    documentId: string;
+    fileName: string | null;
+  }>;
   supplyNature?: import("@/lib/supply-nature").SupplyNature["kind"];
   servicePeriod?: string | null;
   invoiceNumber: string;

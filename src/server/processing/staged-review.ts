@@ -9,6 +9,10 @@ import {
   type PageEvidence,
 } from "./packet-evidence";
 import { FIELD_DEFINITIONS } from "../document-schema";
+import {
+  invoiceAssemblySchema,
+  parseInvoiceAssemblies,
+} from "@/lib/invoice-assembly";
 import { buildDocumentReadabilityMismatches } from "../document-readability";
 import { EXTRACTION_VERIFICATION_FIELD } from "../../lib/extraction-verification";
 import { readComparisonOptions } from "../comparison";
@@ -1086,7 +1090,12 @@ export function packetPointerAliases(documents: CaseDoc[]) {
   const aliasToFile = new Map(
     [...fileToAlias].map(([key, value]) => [value, key]),
   );
-  const docPointers = new Set(["docId", "documentId", "sourceDocId"]);
+  const docPointers = new Set([
+    "docId",
+    "documentId",
+    "sourceDocId",
+    "duplicateOfDocId",
+  ]);
   const docLists = new Set([
     "documentIds",
     "primaryDocumentIds",
@@ -1138,10 +1147,11 @@ export function packetPointerAliases(documents: CaseDoc[]) {
   };
 }
 
-const PACKET_INSTRUCTION =
+export const PACKET_INSTRUCTION =
   "You are the SAME Pro review role performing whole-packet reconciliation AFTER mandatory own-source audits. Return compact JSON for ONLY this task. " +
   "All supplied document fields are source-audited. Their sourceAudits/pageQuality describe verified corrections and reading limits. " +
   "Respect each invoice's source-audited supplyNature. For a pure services packet, goods logistics (GRPO, LR, weighment, e-way bill, goods certificate and truck details) are not applicable: never report their absence as a mismatch. Retain actual invoice/supplier/tax/amount conflicts and a service-completion evidence requirement only when explicitly required by the service contract. Mixed or unknown packets must not be treated as service-only merely because goods documents are missing. " +
+  "Return invoiceAssemblies for logical invoices, including standalone invoices. Read the original pages together to associate invoice cover pages, annexures and continuations; do not group by filename, position, amount or name similarity. Each assembly has its printed invoiceNumber, reason, documents [{docId,role:header|billing|duplicate,duplicateOfDocId:null or included billing docId}], and fieldSources [{field,docId}]. Choose every applicable retained invoice header field from its actual role-bearing page; prefer the legal supplier identity over a logo, retain GSTINs, date, currency, totals and printed tax values without inventing missing ones. Do not copy an annexure's brand into the legal supplier field. A header page has a verified not_present table; billing pages have complete rows. Include EVERY billed continuation table once. Duplicate copies can be excluded only when their complete retained tables equal the named included billing source. Every source-verified invoice page with a printed number must belong to exactly one assembly, within one packet group; different printed numbers or conflicting identities must never be merged. Non-invoice support documents are not invoice members. Preserve original documents and row evidence; this is a logical association, not a rewrite of source observations. " +
   "Use the entire packet to decide document roles, actual shipment relationships, explicit terms, missing evidence and root business discrepancies. " +
   "Preliminary groups and candidate mismatches are untrusted proposals, not established facts. Do not create a difference from OCR noise, formatting, equivalent units or a downstream numerical symptom. " +
   "Use seller_chain only when the seller-to-buyer sequence is proved: buyer-facing invoices are primary and upstream invoices are context, not additional invoices to reconcile. " +
@@ -1157,7 +1167,10 @@ const PACKET_INSTRUCTION =
   "Candidate decisions are handled in bounded subsequent tasks using this same full context: do not copy mismatchDecisions here. " +
   "Keep reasons and quotes brief; use empty arrays for no findings.";
 
-function packetTaskSchema(documents: CaseDoc[], pages: ReviewSourcePage[]) {
+export function packetTaskSchema(
+  documents: CaseDoc[],
+  pages: ReviewSourcePage[],
+) {
   const properties = object(
     buildAuthoritativeReviewResponseSchema({
       documentCount: documents.length,
@@ -1171,6 +1184,9 @@ function packetTaskSchema(documents: CaseDoc[], pages: ReviewSourcePage[]) {
     type: "object",
     properties: {
       packetGroups: properties.packetGroups,
+      invoiceAssemblies: invoiceAssemblySchema(
+        FIELD_DEFINITIONS.map((field) => field.key),
+      ),
       termsChecklist: properties.termsChecklist,
       sourceRecheckRequests: {
         type: "array",
@@ -1218,6 +1234,7 @@ function packetTaskSchema(documents: CaseDoc[], pages: ReviewSourcePage[]) {
     },
     required: [
       "packetGroups",
+      "invoiceAssemblies",
       "termsChecklist",
       "sourceRecheckRequests",
       "packetIssues",
@@ -1398,6 +1415,7 @@ export async function reviewExtractedDocumentsInStages(
     const payload = object(aliases.decode(JSON.parse(raw)));
     const allowed = new Set([
       "packetGroups",
+      "invoiceAssemblies",
       "termsChecklist",
       "sourceRecheckRequests",
       "packetIssues",
@@ -1439,6 +1457,50 @@ export async function reviewExtractedDocumentsInStages(
         "Packet task returned duplicate source recheck requests.",
       );
     const audits = sourceReviews.map((result) => result.audit);
+    const invoiceAssemblies = parseInvoiceAssemblies(
+      payload.invoiceAssemblies,
+      currentDocuments,
+      FIELD_DEFINITIONS.map((field) => field.key),
+      new Set(
+        audits
+          .filter((audit) => audit.status === "needs_review")
+          .map((audit) => audit.docId),
+      ),
+    );
+    for (const assembly of invoiceAssemblies) {
+      const group = (
+        payload.packetGroups as Array<{ documentIds: string[] }>
+      ).find((group) =>
+        group.documentIds.includes(assembly.documents[0].docId),
+      );
+      if (
+        !group ||
+        assembly.documents.some(
+          (member) => !group.documentIds.includes(member.docId),
+        )
+      )
+        throw new Error("An invoice assembly cannot cross packet groups.");
+    }
+    if (payload.invoiceAssemblies !== undefined) {
+      const assigned = new Set(
+        invoiceAssemblies.flatMap((assembly) =>
+          assembly.documents.map((member) => member.docId),
+        ),
+      );
+      for (const doc of currentDocuments)
+        if (
+          ["Invoice", "Tax Invoice"].includes(doc.type) &&
+          doc.fields.invoiceNumber &&
+          !audits.some(
+            (audit) =>
+              audit.docId === doc.id && audit.status === "needs_review",
+          ) &&
+          !assigned.has(doc.id)
+        )
+          throw new Error(
+            "A source-verified invoice page is missing its logical invoice assembly.",
+          );
+    }
     parseValidatedPacketReconciliation({
       raw: JSON.stringify({ ...payload, mismatchDecisions: [] }),
       documents: currentDocuments,
@@ -1452,7 +1514,11 @@ export async function reviewExtractedDocumentsInStages(
       options.sourcePages,
     );
     return {
-      payload: { ...payload, packetIssues: packetIssues.retained },
+      payload: {
+        ...payload,
+        invoiceAssemblies,
+        packetIssues: packetIssues.retained,
+      },
       requests,
       discardedPacketIssueCount: packetIssues.discarded,
     };
@@ -1578,6 +1644,7 @@ export async function reviewExtractedDocumentsInStages(
           },
         ],
         termsChecklist: [],
+        invoiceAssemblies: [],
         sourceRecheckRequests: [],
         packetIssues: [],
         notes: [],
@@ -1787,6 +1854,11 @@ export async function reviewExtractedDocumentsInStages(
     documentAudits: sourceReviews.map((result) => result.audit),
     sourcePages: options.sourcePages,
   });
+  result.authoritativeReview.invoiceAssemblies = parseInvoiceAssemblies(
+    packetRaw.invoiceAssemblies,
+    currentDocuments,
+    FIELD_DEFINITIONS.map((field) => field.key),
+  );
   // Packet reconciliation can discover source-proved conflicts that were not
   // present in the deterministic candidate set. They must enter the same final
   // root-cause review as confirmed candidates; otherwise symptoms discovered

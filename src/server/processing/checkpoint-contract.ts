@@ -6,7 +6,8 @@ export type ReviewCheckpointStage =
 export const EXTRACTION_CHECKPOINT_CONTRACT_VERSION =
   "service-aware-source-fields-v14";
 
-export const STAGED_REVIEW_CONTRACT_VERSION = "service-aware-source-fields-v21";
+export const STAGED_REVIEW_CONTRACT_VERSION =
+  "source-grounded-invoice-assembly-v22";
 
 export function checkpointContractForStage(stage: ReviewCheckpointStage) {
   return stage === "extraction"

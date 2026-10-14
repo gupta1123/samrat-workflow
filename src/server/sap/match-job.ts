@@ -5,7 +5,8 @@ import { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { computeCaseMatch, type CaseMatch } from "./match-data";
 import { withTestServiceLayer } from "./service-layer";
 
-export type SapMatchJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type SapMatchJobStatus =
+  "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type SapMatchJobRow = {
   case_id: string;
@@ -52,7 +53,9 @@ export async function readSapMatchJob(db: Db, userId: string, caseId: string) {
 }
 
 function message(error: unknown) {
-  return error instanceof Error ? error.message : String(error ?? "SAP matching failed.");
+  return error instanceof Error
+    ? error.message
+    : String(error ?? "SAP matching failed.");
 }
 
 /** Claims and executes one durable SAP match job. Called only by the Heroku worker. */
@@ -70,7 +73,9 @@ export async function processSapMatchJob(caseId: string) {
   try {
     const row = await db
       .from("packet_cases")
-      .select("id,owner_user_id,invoice_number,po_number,status")
+      .select(
+        "id,owner_user_id,invoice_number,po_number,status,processing_meta",
+      )
       .eq("id", caseId)
       .eq("owner_user_id", job.owner_user_id)
       .is("deleted_at", null)
@@ -91,7 +96,10 @@ export async function processSapMatchJob(caseId: string) {
     return { skipped: false as const, result };
   } catch (error) {
     const detail = message(error);
-    const terminal = /not configured|no numbered vendor invoice|no invoice line items/i.test(detail);
+    const terminal =
+      /not configured|no numbered vendor invoice|no invoice line items/i.test(
+        detail,
+      );
     const failed = await db.rpc("fail_sap_match_job", {
       p_case: caseId,
       p_version: job.version,

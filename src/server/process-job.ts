@@ -548,6 +548,7 @@ async function processJob(jobId: string) {
           ? x.verificationGroups[0].caseSummary
           : null;
       const requiredInvoiceIssues = buildInvoiceNumberRequiredIssues({
+        invoiceAssemblies: authoritative.invoiceAssemblies,
         invoiceNumber:
           authoritativeSummary?.invoiceNumber ??
           summaryDocuments.find(
@@ -571,6 +572,7 @@ async function processJob(jobId: string) {
           })),
         }),
         ...buildDuplicateInvoiceIssues({
+          invoiceAssemblies: authoritative.invoiceAssemblies,
           documents: x.docs.map((document) => ({
             id: document.id,
             documentType: document.type,
@@ -664,6 +666,11 @@ async function processJob(jobId: string) {
           termsComplianceChecklist: terms.checklist,
           termsComplianceMismatchMode: TERMS_COMPLIANCE_MISMATCH_MODE,
           extractionReview: reviewed.review,
+          invoiceAssemblies: (authoritative.invoiceAssemblies ?? []).filter(
+            (assembly) => assembly.documents.every(
+              (member) => groupDocumentIds.has(member.docId),
+            ),
+          ),
           documentPageQuality: groupPageQuality,
           analysisIntegrity: buildAnalysisIntegrityRecord({
             documentIds: x.docs.map((document) => document.id),

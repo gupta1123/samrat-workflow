@@ -29,14 +29,16 @@ export function buildCollapsedDuplicateInvoiceIssues(params: {
   const documents = Array.isArray(params.documents) ? params.documents : [];
   const issues: Mismatch[] = [];
   for (const document of documents) {
-    const sources = [...new Set(
-      (Array.isArray(document.collapsedDuplicateSources)
-        ? document.collapsedDuplicateSources
-        : []
-      )
-        .map((name) => String(name ?? "").trim())
-        .filter(Boolean),
-    )];
+    const sources = [
+      ...new Set(
+        (Array.isArray(document.collapsedDuplicateSources)
+          ? document.collapsedDuplicateSources
+          : []
+        )
+          .map((name) => String(name ?? "").trim())
+          .filter(Boolean),
+      ),
+    ];
     if (sources.length < 2) continue;
     if (
       document.documentType !== "Invoice" &&
@@ -111,9 +113,15 @@ function docLabel(document: DuplicateInvoiceDocument): string {
 export function buildDuplicateInvoiceIssues(params: {
   documents: DuplicateInvoiceDocument[];
   verificationGroups?: unknown;
+  invoiceAssemblies?: unknown;
 }): Mismatch[] {
   const documents = Array.isArray(params.documents) ? params.documents : [];
-  const primaries = getPrimaryInvoiceDocuments(documents, params.verificationGroups);
+  const primaries = getPrimaryInvoiceDocuments(
+    documents,
+    params.verificationGroups,
+    params.invoiceAssemblies,
+    true,
+  );
   const byNumber = new Map<string, DuplicateInvoiceDocument[]>();
   for (const document of primaries) {
     if (!present(document.invoiceNumber)) continue;
@@ -168,7 +176,9 @@ export function buildCrossCaseDuplicateInvoiceIssues(params: {
   const wanted = normalizeInvoiceNumber(params.invoiceNumber);
   if (!wanted) return [];
   const printed = String(params.invoiceNumber).trim();
-  const matches = (Array.isArray(params.siblings) ? params.siblings : []).filter(
+  const matches = (
+    Array.isArray(params.siblings) ? params.siblings : []
+  ).filter(
     (sibling) =>
       sibling &&
       sibling.id !== params.currentCaseId &&
@@ -177,8 +187,7 @@ export function buildCrossCaseDuplicateInvoiceIssues(params: {
   if (!matches.length) return [];
   const where = matches
     .map(
-      (sibling) =>
-        `"${sibling.displayName || sibling.id}" (${sibling.status})`,
+      (sibling) => `"${sibling.displayName || sibling.id}" (${sibling.status})`,
     )
     .join("; ");
   return [
