@@ -84,6 +84,25 @@ function tokens(value: string) {
   );
 }
 
+/** Formatting-only comparison: preserve every word, date and punctuation mark.
+ * String.trim identifies standard whitespace without parsing or guessing text.
+ * Collapse whitespace to a boundary, never remove it between words.
+ */
+function serviceDescriptionKey(value: string) {
+  let result = "";
+  let space = false;
+  for (const character of value.trim()) {
+    if (character.trim() === "") {
+      space = result.length > 0;
+    } else {
+      if (space) result += " ";
+      result += character;
+      space = false;
+    }
+  }
+  return result.toLocaleLowerCase("en-IN");
+}
+
 type CheckDraft = Omit<MatchCheck, "open" | "decision">;
 
 class Checks {
@@ -1685,8 +1704,9 @@ function evaluateServiceLine(args: {
         : itemCode ||
           (ln.description &&
             po.description &&
-            ln.description.trim().toLocaleLowerCase("en-IN") ===
-              po.description.trim().toLocaleLowerCase("en-IN")),
+            serviceDescriptionKey(ln.description) !== "" &&
+            serviceDescriptionKey(ln.description) ===
+              serviceDescriptionKey(po.description)),
     );
     if (identified.length === 1) pick = identified[0];
     else if (

@@ -201,6 +201,91 @@ test("account-based service PO lines are retained without an ItemCode and use SA
   );
 });
 
+test("service descriptions ignore repeated and standard Unicode whitespace, not service identity", () => {
+  for (const gap of ["  ", "   ", "\t", "\n", "\r\n", "\u00a0", "\u202f"]) {
+    const inv = invoice({
+      lines: [
+        {
+          ...invoice().lines[0],
+          description: "Hosting support (15-10-2026 to 31-03-2027)",
+        },
+      ],
+    });
+    const ctx = context([
+      po({
+        description: `  Hosting${gap}support${gap}(15-10-2026 to 31-03-2027)  `,
+      }),
+      po({ lineNum: 1, description: "Other service" }),
+    ]);
+    const result = evaluateMatch({ invoice: inv, context: ctx });
+    assert.equal(result.status, "ready", JSON.stringify(gap));
+    assert.equal(result.payload?.lines[0].baseLine, 0);
+    assert.equal(result.payload?.lines[0].baseEntry, 7001);
+    assert.equal(result.lines[0].manual, false);
+  }
+});
+
+test("whitespace comparison does not infer changed dates, missing words, punctuation or merged words", () => {
+  const description = "Hosting support (15-10-2026 to 31-03-2027)";
+  for (const different of [
+    "Hosting support (15-10-2026 to 31-03-2028)",
+    "Hosting (15-10-2026 to 31-03-2027)",
+    "Hosting support (15/10/2026 to 31/03/2027)",
+    "Hostingsupport (15-10-2026 to 31-03-2027)",
+  ]) {
+    const result = evaluateMatch({
+      invoice: invoice({ lines: [{ ...invoice().lines[0], description }] }),
+      context: context([
+        po({ description: different }),
+        po({ lineNum: 1, description: "Other service" }),
+      ]),
+    });
+    assert.equal(result.status, "blocked", different);
+    assert.equal(result.lines[0].allocatedQty, 0);
+  }
+});
+
+test("multiple service lines with the same spacing-normalized description still require confirmation", () => {
+  const result = evaluateMatch({
+    invoice: invoice(),
+    context: context([
+      po({ description: "Monthly  advisory" }),
+      po({ lineNum: 1, description: "Monthly\tadvisory" }),
+    ]),
+  });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.lines[0].allocatedQty, 0);
+});
+
+test("spacing-normalized service selection cannot cross suppliers or PO references", () => {
+  for (const changed of [{ cardCode: "V-OTHER" }, { poRefs: ["SO-701"] }]) {
+    const result = evaluateMatch({
+      invoice: invoice(),
+      context: context([po({ description: "Monthly  advisory", ...changed })]),
+    });
+    assert.equal(result.status, "blocked");
+    assert.equal(result.lines[0].allocatedQty, 0);
+  }
+});
+
+test("spacing-normalized service matches still enforce open balance and duplicate protection", () => {
+  const ctx = context([
+    po({ description: "Monthly  advisory", openAmount: 999 }),
+  ]);
+  const result = evaluateMatch({ invoice: invoice(), context: ctx });
+  assert.equal(result.status, "blocked");
+  assert.ok(result.open.some((check) => check.id === "amt-0"));
+  const duplicate = evaluateMatch({
+    invoice: invoice(),
+    context: {
+      ...context([po({ description: "Monthly  advisory" })]),
+      existingInvoice: { docNum: 123, kind: "invoice" },
+    },
+  });
+  assert.equal(duplicate.status, "blocked");
+  assert.ok(duplicate.open.some((check) => check.id === "dup"));
+});
+
 test("service invoice matches an exact PO without stock item, GRPO, quantity or transporter", () => {
   const result = evaluateMatch({ invoice: invoice(), context: context() });
   assert.equal(result.status, "ready");
