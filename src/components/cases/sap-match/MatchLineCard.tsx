@@ -228,7 +228,8 @@ export function MatchLineCard({
             {line.nonStockPoCandidates?.length ? (
               <section className="rounded-lg border border-[#f0d7a6] bg-[#fdfaf3] p-3">
                 <h3 className="mb-2 text-[12px] font-semibold">
-                  Or confirm an item through a non-stock PO
+                  Found on this supplier’s purchase orders · confirmation
+                  required
                 </h3>
                 <p className="mb-2 text-[11px] text-[#6b5d50]">
                   These are the supplier’s SAP-confirmed non-stock PO lines, not

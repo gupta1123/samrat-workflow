@@ -18,6 +18,7 @@ import type { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { sapPostingDate } from "./dates";
 import { resolveReceiptSupplier } from "./receipt-supplier";
 import { recordedInvoiceEvidence } from "./recorded-invoice";
+import { loadCatalogSuggestions } from "./catalog-suggestions";
 import {
   branchForShipTo,
   buildMatchInvoice,
@@ -699,7 +700,28 @@ export async function computeCaseMatch(params: {
     why: `Recorded on GRPO ${[...new Set(receipts.filter((receipt) => referenceEntries.has(receipt.docEntry) && receipt.itemCode === itemCode).map((receipt) => receipt.docNum))].join(", ")} with this invoice's exact invoice or e-way bill reference; product confirmation required`,
   }));
 
+  // Keep catalog candidates separate from context.items: adding them there
+  // could turn a suggestion into an automatic direct-code recognition.
+  const unlinkedLines = invoice.lines.filter((line) => {
+    const key = itemMappingKey(line);
+    const mapped = key && itemMap[key] && !itemMappingConflicts[key];
+    const direct =
+      line.vendorItemCode &&
+      Object.keys(items).some(
+        (code) => normalizeRef(code) === normalizeRef(line.vendorItemCode),
+      );
+    return !mapped && !direct;
+  });
+  const catalog =
+    vendor && unlinkedLines.length
+      ? await loadCatalogSuggestions(
+          { ...invoice, lines: unlinkedLines },
+          (query) => client.searchItems(query),
+        )
+      : {};
+
   const context: MatchContext = {
+    ...catalog,
     vendor,
     supplierIdentification,
     receiptSearch,

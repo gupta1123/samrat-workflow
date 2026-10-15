@@ -14,6 +14,7 @@ export function LinkSearch({
   help,
   suggestionsLabel,
   suggestions,
+  additionalSuggestionGroups = [],
   noun,
   placeholder,
   busy,
@@ -25,6 +26,7 @@ export function LinkSearch({
   help?: string;
   suggestionsLabel: string;
   suggestions: LinkChoice[];
+  additionalSuggestionGroups?: Array<{ label: string; choices: LinkChoice[] }>;
   noun: "item" | "vendor";
   placeholder: string;
   busy: boolean;
@@ -127,6 +129,19 @@ export function LinkSearch({
               {suggestions.map(row)}
             </div>
           ) : null}
+          {additionalSuggestionGroups
+            .filter((group) => group.choices.length)
+            .map((group) => (
+              <div
+                key={group.label}
+                className="mt-2 overflow-hidden rounded-md border border-[#e0d8cc] bg-white"
+              >
+                <div className="border-b border-[#f0ece4] bg-[#faf8f4] px-3 py-1 text-[10px] text-[#6b5d50]">
+                  {group.label}
+                </div>
+                {group.choices.map(row)}
+              </div>
+            ))}
           <label className="mt-2 flex h-8 max-w-md items-center gap-2 rounded-md border border-[#e0d8cc] bg-white px-2.5 text-[#8a7f72] focus-within:border-[#a89c8e] focus-within:ring-2 focus-within:ring-[#6b4a33]/10">
             {searching ? (
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />

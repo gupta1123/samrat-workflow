@@ -174,6 +174,52 @@ const tables = (): Record<string, Array<Record<string, unknown>>> => ({
   ],
 });
 
+test("loader finds full Item Master names outside supplier documents without automatically linking them", async () => {
+  const data = tables();
+  data.sap_item_mappings = [];
+  let searched = "";
+  const match = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    client: sapClient({
+      searchItems: async (query: string) => {
+        searched = query;
+        // Even a coincidentally equal invoice code must remain a suggestion.
+        return [
+          {
+            ItemCode: "3434405",
+            ItemName: "Binding Wire TW20",
+            InventoryItem: "tNO",
+          },
+        ];
+      },
+    }) as never,
+  });
+  assert.equal(searched, "Binding Wire TW20");
+  assert.equal(match.available, true);
+  if (!match.available) return;
+  assert.equal(match.result.lines[0].kind, "unmapped");
+  assert.equal(match.result.lines[0].itemCode, null);
+  const check = match.result.checks.find((c) => c.id === "map-0");
+  assert.equal(check?.itemMasterSuggestions?.[0].itemCode, "3434405");
+  assert.equal(check?.itemSuggestions?.[0].itemCode, "BW-TW20-091");
+});
+
+test("mapped stock items do not trigger extra catalog calls", async () => {
+  let searches = 0;
+  await computeCaseMatch({
+    db: fakeDb(tables()) as never,
+    caseRow: CASE,
+    client: sapClient({
+      searchItems: async () => {
+        searches++;
+        return [];
+      },
+    }) as never,
+  });
+  assert.equal(searches, 0);
+});
+
 test("source-verified service invoices load service POs without querying goods receipts", async () => {
   const data = tables();
   data.packet_documents = [

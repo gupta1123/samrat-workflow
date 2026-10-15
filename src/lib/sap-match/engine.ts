@@ -754,6 +754,9 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
         itemSuggestions: context.receiptItemSuggestions?.length
           ? context.receiptItemSuggestions
           : suggestItems(ln, context, invoice),
+        itemMasterSuggestions:
+          context.itemMasterSuggestions?.[String(ln.index)],
+        itemMasterSearchUnavailable: context.itemMasterSearchUnavailable,
       });
       continue;
     }

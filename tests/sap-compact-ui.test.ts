@@ -67,6 +67,15 @@ test("unmapped goods expose complete non-stock PO evidence without replacing the
     branch: null,
     items: { "EXP-PRINT": { name: "Marketing expense", inventory: false } },
     itemMap: {},
+    itemMasterSuggestions: {
+      "0": [
+        {
+          itemCode: "CATALOG-PRINT",
+          name: "A4 printed publication",
+          why: "Same name in SAP Item Master. Not proof of a supplier PO match; confirm before linking.",
+        },
+      ],
+    },
     receipts: [],
     poLines: [
       {
@@ -117,7 +126,11 @@ test("unmapped goods expose complete non-stock PO evidence without replacing the
   );
   for (const text of [
     "Search SAP items",
-    "Or confirm an item through a non-stock PO",
+    "Found on this supplier’s purchase orders",
+    "Found in SAP Item Master",
+    "CATALOG-PRINT",
+    "name match only",
+    "Not proof of a supplier PO match",
     "Filter by SAP PO",
     "Publication RCP A4",
     "August northern region",

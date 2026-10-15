@@ -729,6 +729,46 @@ test("billing more than was received is blocked and never invents stock", () => 
   assert.equal(result.lines[0].allocatedQty, 50);
 });
 
+test("catalog evidence stays separate and never automatically recognises an invoice item", () => {
+  const inv = invoice({
+    lines: [
+      {
+        index: 0,
+        vendorItemCode: "NEW",
+        description: "Visiting Cards",
+        hsnSac: null,
+        quantity: 30200,
+        unit: "Nos",
+        rate: 1,
+        amount: 30200,
+      },
+    ],
+  });
+  const ctx = context([], {
+    itemMap: {},
+    itemMasterSuggestions: {
+      "0": [
+        {
+          itemCode: "NEW",
+          name: "Visiting Cards",
+          why: "Same name in SAP Item Master; confirm",
+        },
+      ],
+    },
+  });
+  const result = evaluateMatch({ invoice: inv, context: ctx });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.lines[0].kind, "unmapped");
+  assert.equal(result.lines[0].itemCode, null);
+  assert.equal(result.payload, null);
+  assert.equal(
+    result.checks.find((c) => c.id === "map-0")?.itemMasterSuggestions?.[0]
+      .itemCode,
+    "NEW",
+  );
+  assert.equal(ctx.items.NEW, undefined);
+});
+
 test("an item that is not linked blocks and suggests SAP items", () => {
   const inv = invoice({
     lines: [

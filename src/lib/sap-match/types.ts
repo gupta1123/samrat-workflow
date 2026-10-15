@@ -225,6 +225,12 @@ export type MatchContext = {
     name: string;
     why: string;
   }>;
+  /** Catalog-only evidence: never participates in automatic item recognition. */
+  itemMasterSuggestions?: Record<
+    string,
+    Array<{ itemCode: string; name: string; why: string }>
+  >;
+  itemMasterSearchUnavailable?: boolean;
   /** More than one SAP vendor has the same authoritative invoice identifier. */
   ambiguousVendors: Array<{ cardCode: string; cardName: string; why: string }>;
   /** How this invoice's vendor is remembered (GSTIN or name), used when linking it to a SAP vendor. */
@@ -298,6 +304,12 @@ export type MatchCheck = {
   open: boolean;
   /** Suggested SAP items, shown when an item is not yet linked. */
   itemSuggestions?: Array<{ itemCode: string; name: string; why: string }>;
+  itemMasterSuggestions?: Array<{
+    itemCode: string;
+    name: string;
+    why: string;
+  }>;
+  itemMasterSearchUnavailable?: boolean;
   /** Set on the vendor check when the vendor could not be matched. */
   vendorSuggestions?: Array<{
     cardCode: string;
