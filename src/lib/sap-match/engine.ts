@@ -765,7 +765,30 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     });
     if (!context.vendor) continue;
 
-    const isService = info?.inventory === false;
+    // Non-stock goods may already have been received through SAP. Preserve
+    // that GRPO-based flow instead of trying to invoice their PO a second way.
+    const goods =
+      invoice.supplyNature === "goods" || invoice.supplyNature === "mixed";
+    const sameReference = (left: string | null, right: string | null) =>
+      Boolean(
+        left &&
+        right &&
+        left.trim().toUpperCase() === right.trim().toUpperCase(),
+      );
+    const existingReceipt =
+      goods &&
+      context.receipts.some(
+        (receipt) =>
+          receipt.cardCode === context.vendor?.cardCode &&
+          receipt.itemCode === itemCode &&
+          receipt.openQty > 0 &&
+          (sameReference(receipt.vendorRef, invoice.invoiceNumber) ||
+            sameReference(receipt.eWayBill, invoice.eWayBill) ||
+            sameReference(receipt.lorryReceipt, invoice.lorryReceipt) ||
+            (state.allocations[String(ln.index)]?.[receiptKey(receipt)] ?? 0) >
+              0),
+      );
+    const isService = info?.inventory === false && !existingReceipt;
     if (invoice.supplyNature === "services" && info?.inventory === true) {
       checks.push({
         id: `kind-${ln.index}`,

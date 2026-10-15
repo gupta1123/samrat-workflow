@@ -224,6 +224,42 @@ test("stock items cannot be selected through the non-stock alternatives even wit
   assert.ok(result.lines.every((line) => !line.nonStockPoCandidates?.length));
 });
 
+test("non-stock goods with an existing open receipt preserve their GRPO-based material flow", () => {
+  const { invoice, context } = fixture();
+  invoice.lines = [{ ...invoice.lines[0], vendorItemCode: "EXP-PRINT" }];
+  invoice.taxableTotal = invoice.lines[0].amount;
+  context.receipts = [
+    {
+      kind: "GRPO",
+      docEntry: 900,
+      docNum: 990,
+      lineNum: 0,
+      cardCode: "V-PUBLISHER",
+      itemCode: "EXP-PRINT",
+      date: "2026-08-10",
+      branchId: null,
+      warehouse: null,
+      poDocEntry: 880,
+      poDocNum: 475,
+      poLineNum: 0,
+      poRefs: ["475"],
+      quantity: 350,
+      openQty: 350,
+      price: 8.25,
+      vehicle: null,
+      vendorRef: invoice.invoiceNumber,
+      eWayBill: null,
+      lorryReceipt: null,
+    },
+  ];
+  const result = evaluateMatch({ invoice, context });
+  assert.equal(result.status, "ready");
+  assert.equal(result.method, "3-way");
+  assert.equal(result.lines[0].kind, "material");
+  assert.equal(result.payload?.lines[0].baseType, 20);
+  assert.equal(result.payload?.lines[0].baseEntry, 900);
+});
+
 test("unknown SAP inventory status does not authorize a non-stock PO bypass", () => {
   const { invoice, context, state } = fixture();
   context.items["EXP-PRINT"].inventory = null;
