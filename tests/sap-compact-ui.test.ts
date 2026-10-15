@@ -418,15 +418,64 @@ test("service review compares the invoice with non-stock SAP PO items without cl
       checks: [],
     }),
   );
-  assert.ok(
-    confirmedHtml.includes(
-      "SAP item confirmed by selecting the service PO line",
-    ),
-  );
-  assert.ok(confirmedHtml.includes("Invoice and SAP item comparison"));
-  assert.ok(confirmedHtml.includes("no reusable item mapping was saved"));
+  assert.ok(confirmedHtml.includes("Matched"));
+  assert.ok(confirmedHtml.includes("Change PO line"));
+  assert.ok(confirmedHtml.includes("View matching details"));
+  assert.ok(!confirmedHtml.includes('type="radio"'));
+  assert.ok(!confirmedHtml.includes("Service PO lines"));
+  assert.ok(confirmedHtml.includes("From the invoice"));
+  assert.ok(confirmedHtml.includes("From SAP · PO 70"));
   assert.ok(confirmedHtml.includes("Billing units"));
   assert.ok(confirmedHtml.includes("Unit price"));
+
+  const lockedHtml = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      ...props,
+      locked: true,
+      line: confirmed.lines[0],
+      checks: [],
+    }),
+  );
+  assert.ok(!lockedHtml.includes("Change PO line"));
+  assert.ok(!lockedHtml.includes('type="radio"'));
+
+  const serviceContext = {
+    ...context,
+    poLines: context.poLines.map((line) => ({
+      ...line,
+      documentType: "dDocument_Service" as const,
+      itemCode: "",
+      accountCode: "ACCOUNT-1",
+      description: "Quarterly advisory",
+    })),
+  };
+  const serviceInvoice = { ...invoice, poReferences: ["70"] };
+  const serviceResult = evaluateMatch({
+    invoice: serviceInvoice,
+    context: serviceContext,
+  });
+  const serviceHtml = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      ...props,
+      invoice: serviceInvoice,
+      line: serviceResult.lines[0],
+      checks: serviceResult.open,
+    }),
+  );
+  assert.ok(!serviceHtml.includes("Billing units"));
+  assert.ok(!serviceHtml.includes("Unit price"));
+  assert.ok(serviceHtml.includes("Matched"));
+  const draftHtml = renderToStaticMarkup(
+    createElement(WhatGoesToSap, {
+      invoice: serviceInvoice,
+      result: serviceResult,
+      lines: serviceResult.lines,
+      vendorLabel: "Advisory Ltd",
+    }),
+  );
+  assert.ok(draftHtml.includes("Quarterly advisory"));
+  assert.ok(!draftHtml.includes(">Quantity<"));
+  assert.ok(!draftHtml.includes(">Unit price<"));
 });
 
 test("the line card uses one comparison table for every screen size", () => {

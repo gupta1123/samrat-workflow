@@ -1,6 +1,10 @@
 "use client";
 
-import type { LineResult, MatchResult } from "@/lib/sap-match/types";
+import type {
+  LineResult,
+  MatchResult,
+  MatchInvoice,
+} from "@/lib/sap-match/types";
 import { formatDate, inr, qty } from "./format";
 import { SAP_TERMS } from "@/lib/sap-match/terminology";
 import { useState, type ReactNode } from "react";
@@ -16,6 +20,7 @@ export function WhatGoesToSap({
   caseId,
   result,
   lines,
+  invoice,
   vendorLabel,
   saved = false,
   savedDetails,
@@ -24,6 +29,7 @@ export function WhatGoesToSap({
   caseId?: string;
   result: MatchResult;
   lines: LineResult[];
+  invoice?: MatchInvoice;
   vendorLabel: string;
   saved?: boolean;
   savedDetails?: PostedSapDetails;
@@ -34,6 +40,9 @@ export function WhatGoesToSap({
     return <SavedPostingCard caseId={caseId} details={savedDetails} />;
   const plan = result.payload;
   if (!plan) return null;
+  const servicePreview =
+    plan.lines.length > 0 &&
+    plan.lines.every((line) => line.documentType === "dDocument_Service");
   const priceOf = (baseEntry: number, baseLine: number) =>
     lines
       .flatMap((line) => line.candidates)
@@ -41,26 +50,38 @@ export function WhatGoesToSap({
         (candidate) =>
           candidate.docEntry === baseEntry && candidate.lineNum === baseLine,
       )?.price ?? null;
-  const nameOf = (index: number) =>
-    lines.find((line) => line.index === index)?.itemName ?? "";
+  const nameOf = (index: number) => {
+    const matchLine = lines.find((line) => line.index === index);
+    if (
+      matchLine?.kind === "service" ||
+      (matchLine?.kind === "non-stock" && invoice?.supplyNature === "services")
+    )
+      return (
+        invoice?.lines.find((line) => line.index === index)?.description ||
+        matchLine.candidates.find((candidate) => candidate.allocated > 0)
+          ?.poEvidence?.description ||
+        matchLine.itemName ||
+        "Service charge"
+      );
+    return matchLine?.itemName ?? "";
+  };
   const rows = plan.lines.map((line) => {
     const rate = line.unitPrice ?? priceOf(line.baseEntry, line.baseLine);
-    const value = line.lineTotal ?? (rate !== null ? rate * line.quantity : null);
+    const value =
+      line.lineTotal ?? (rate !== null ? rate * line.quantity : null);
     return { line, rate, value };
   });
   const itemsTotal = rows.reduce((sum, row) => sum + (row.value ?? 0), 0);
-  const differs =
-    plan.difference !== null && Math.abs(plan.difference) > 0.005;
+  const differs = plan.difference !== null && Math.abs(plan.difference) > 0.005;
   const rounding = differs && Math.abs(plan.difference!) <= 1;
 
   return (
     <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
-      <details
-        open
-        onToggle={(event) => setExpanded(event.currentTarget.open)}
-      >
+      <details open onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-[12px] font-semibold text-[#111827] [&::-webkit-details-marker]:hidden">
-          <span>{saved ? "Saved A/P Invoice Draft Preview" : "A/P Invoice Draft"}</span>
+          <span>
+            {saved ? "Saved A/P Invoice Draft Preview" : "A/P Invoice Draft"}
+          </span>
           <span className="rounded-full bg-[#f2efe9] px-2 py-0.5 text-[10px] font-medium text-[#6b5d50]">
             {saved ? "Submitted" : "Not created yet"}
           </span>
@@ -108,14 +129,20 @@ export function WhatGoesToSap({
                 <thead>
                   <tr className="border-b border-[#e0d8cc] bg-[#faf8f4] text-left text-[10px] uppercase tracking-wider text-[#8a7f72]">
                     <th className="w-8 px-4 py-2 font-semibold">#</th>
-                    <th className="py-2 pr-3 font-semibold">Item</th>
+                    <th className="py-2 pr-3 font-semibold">
+                      {servicePreview ? "Service" : "Item"}
+                    </th>
                     <th className="py-2 pr-3 font-semibold">Base document</th>
-                    <th className="py-2 pr-3 text-right font-semibold">
-                      Quantity
-                    </th>
-                    <th className="py-2 pr-3 text-right font-semibold">
-                      Unit price
-                    </th>
+                    {!servicePreview ? (
+                      <>
+                        <th className="py-2 pr-3 text-right font-semibold">
+                          Quantity
+                        </th>
+                        <th className="py-2 pr-3 text-right font-semibold">
+                          Unit price
+                        </th>
+                      </>
+                    ) : null}
                     <th className="py-2 pr-4 text-right font-semibold">
                       Value
                     </th>
@@ -143,17 +170,21 @@ export function WhatGoesToSap({
                           line {line.baseLine + 1}
                         </div>
                       </td>
-                      <td className="py-2 pr-3 text-right">
-                        {line.lineTotal !== null ? "—" : qty(line.quantity)}
-                      </td>
-                      <td className="py-2 pr-3 text-right">
-                        {line.lineTotal !== null ? "—" : inr(rate)}
-                        {line.unitPrice !== null ? (
-                          <div className="text-[10px] text-[#9a5a0a]">
-                            Vendor Invoice Unit Price
-                          </div>
-                        ) : null}
-                      </td>
+                      {!servicePreview ? (
+                        <>
+                          <td className="py-2 pr-3 text-right">
+                            {line.lineTotal !== null ? "—" : qty(line.quantity)}
+                          </td>
+                          <td className="py-2 pr-3 text-right">
+                            {line.lineTotal !== null ? "—" : inr(rate)}
+                            {line.unitPrice !== null ? (
+                              <div className="text-[10px] text-[#9a5a0a]">
+                                Vendor Invoice Unit Price
+                              </div>
+                            ) : null}
+                          </td>
+                        </>
+                      ) : null}
                       <td className="py-2 pr-4 text-right font-medium text-[#111827]">
                         {inr(value)}
                       </td>
@@ -171,13 +202,17 @@ export function WhatGoesToSap({
               </div>
               <dl className="space-y-1 text-[11px] tabular-nums">
                 <div className="flex justify-between gap-3">
-                  <dt className="text-[#8a7f72]">Items</dt>
+                  <dt className="text-[#8a7f72]">
+                    {servicePreview ? "Services" : "Items"}
+                  </dt>
                   <dd className="text-[#3d3530]">{inr(itemsTotal)}</dd>
                 </div>
                 {plan.freightExpense ? (
                   <div className="flex justify-between gap-3">
                     <dt className="text-[#8a7f72]">Freight charge</dt>
-                    <dd className="text-[#3d3530]">{inr(plan.freightExpense)}</dd>
+                    <dd className="text-[#3d3530]">
+                      {inr(plan.freightExpense)}
+                    </dd>
                   </div>
                 ) : null}
                 {plan.freightExcluded ? (
@@ -200,7 +235,12 @@ export function WhatGoesToSap({
         </div>
       </details>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[#ece6dc] px-4 py-3">
-        {differs ? (
+        {servicePreview && !saved && result.status !== "ready" ? (
+          <span className="text-[11px] text-[#6b5d50]">
+            Matching incomplete · Invoice taxable value{" "}
+            {inr(plan.invoiceTaxable)}
+          </span>
+        ) : differs ? (
           rounding ? (
             <span className="text-[11px] text-[#24583e]">
               ✓ Matches invoice {inr(plan.invoiceTaxable)} (rounding{" "}
@@ -219,7 +259,6 @@ export function WhatGoesToSap({
         )}
         <div className="ml-auto min-w-0">{actions}</div>
       </div>
-
     </section>
   );
 }

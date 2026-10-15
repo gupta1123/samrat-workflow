@@ -135,6 +135,7 @@ export function PostedInvoice({
               />
             ))}
             <WhatGoesToSap
+              invoice={match.invoice}
               result={match.result}
               lines={match.result.lines}
               vendorLabel={

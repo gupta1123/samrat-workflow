@@ -14,6 +14,7 @@ import { quantityBalances } from "@/lib/sap-match/evidence";
 import { ItemMatchingEvidence } from "./MatchingEvidence";
 import { receiptProblems } from "@/lib/sap-match/receipt-problems";
 import { ServicePoCandidates } from "./ServicePoCandidates";
+import { ServiceLineReview } from "./ServiceLineReview";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -171,6 +172,25 @@ export function MatchLineCard({
   const grpoLabel = grpoNumbers.length
     ? `${grpoNumbers.length} GRPO${grpoNumbers.length === 1 ? "" : "s"}`
     : "No GRPO";
+
+  if (
+    line.kind === "service" ||
+    (nonStock && invoice.supplyNature === "services")
+  )
+    return (
+      <ServiceLineReview
+        invoice={invoice}
+        line={line}
+        checks={checks}
+        lineCount={lineCount}
+        busy={busy}
+        locked={locked}
+        onChoose={onChoose}
+        onUndo={onUndo}
+        onAllocate={onAllocate}
+        onResetAllocation={onResetAllocation}
+      />
+    );
 
   return (
     <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">

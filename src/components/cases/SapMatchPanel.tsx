@@ -793,6 +793,7 @@ function Matched({
 
       <WhatGoesToSap
         caseId={caseId}
+        invoice={invoice}
         result={result}
         lines={result.lines}
         vendorLabel={vendorLabel}

@@ -10,6 +10,7 @@ export function ServicePoCandidates({
   disabled,
   onAllocate,
   onReset,
+  compact = false,
 }: {
   line: LineResult;
   invoiceLine: MatchInvoiceLine | undefined;
@@ -17,7 +18,9 @@ export function ServicePoCandidates({
   disabled: boolean;
   onAllocate: (index: number, allocations: Record<string, number>) => void;
   onReset: (index: number) => void;
+  compact?: boolean;
 }) {
+  const [showUnavailable, setShowUnavailable] = useState(false);
   const nonStock = line.kind === "non-stock";
   const selectedPo = line.candidates.find(
     (candidate) => candidate.allocated > 0,
@@ -72,102 +75,170 @@ export function ServicePoCandidates({
           ranked automatically.
         </p>
       ) : null}
-      {candidates.map((candidate) => (
-        <label
-          key={candidate.key}
-          className="flex items-start gap-2 rounded-lg border border-[#e0d8cc] p-2"
+      {compact && candidates.some((candidate) => candidate.rejected) ? (
+        <button
+          type="button"
+          className="underline"
+          onClick={() => setShowUnavailable(!showUnavailable)}
         >
-          <input
-            type="radio"
-            name={`service-po-${line.index}`}
-            checked={candidate.allocated > 0}
-            disabled={
-              disabled || Boolean(candidate.rejected) || !line.invoiceAmount
-            }
-            onChange={() =>
-              onAllocate(line.index, { [candidate.key]: line.invoiceAmount! })
-            }
-          />
-          <span className="min-w-0 flex-1">
-            <strong>
-              PO {candidate.docNum} · SAP line {candidate.lineNum}
-            </strong>
-            <span className="block">{candidate.note || "Service PO"}</span>
-            <span className="my-2 grid gap-3 rounded-md bg-[#faf8f4] p-2 sm:grid-cols-2">
-              <span className="min-w-0 break-words">
-                <strong className="block">From the invoice</strong>
-                <span className="block">
-                  Code:{" "}
-                  {invoiceLine?.vendorItemCode || "Not printed / extracted"}
-                </span>
-                <span className="block">
-                  Name: {invoiceLine?.description || "Not recorded"}
-                </span>
-                <span className="block">Amount: {inr(line.invoiceAmount)}</span>
-                <span className="block">
-                  Quantity: {qty(invoiceLine?.quantity)}{" "}
-                  {invoiceLine?.unit ?? ""}
-                </span>
-                <span className="block">
-                  Unit price: {inr(invoiceLine?.rate)}
-                </span>
-                <span className="block">
-                  PO reference:{" "}
-                  {invoicePoReferences.join(", ") || "Not recorded"}
-                </span>
-              </span>
-              <span className="min-w-0 break-words">
-                <strong className="block">From SAP</strong>
-                {candidate.documentType === "dDocument_Items" ? (
-                  <>
-                    <span className="block">Code: {candidate.itemCode}</span>
-                    <span className="block">
-                      Name: {candidate.itemName || "Not recorded"}
-                    </span>
-                    <span className="block">Non-stock item</span>
-                  </>
-                ) : (
-                  <span className="block">
-                    Service account: {candidate.accountCode || "Not recorded"}
+          {showUnavailable
+            ? "Hide unavailable lines"
+            : `Show unavailable lines (${candidates.filter((candidate) => candidate.rejected).length})`}
+        </button>
+      ) : null}
+      {candidates
+        .filter(
+          (candidate) =>
+            !compact ||
+            showUnavailable ||
+            !candidate.rejected ||
+            candidate.allocated > 0,
+        )
+        .map((candidate) => (
+          <label
+            key={candidate.key}
+            className="flex items-start gap-2 rounded-lg border border-[#e0d8cc] p-2"
+          >
+            <input
+              type="radio"
+              name={`service-po-${line.index}`}
+              checked={candidate.allocated > 0}
+              disabled={
+                disabled || Boolean(candidate.rejected) || !line.invoiceAmount
+              }
+              onChange={() =>
+                onAllocate(line.index, { [candidate.key]: line.invoiceAmount! })
+              }
+            />
+            <span className="min-w-0 flex-1">
+              <strong>
+                PO {candidate.docNum} ·{" "}
+                {compact
+                  ? `line ${candidate.lineNum + 1}`
+                  : `SAP line ${candidate.lineNum}`}
+              </strong>
+              {compact ? (
+                <>
+                  <span className="mt-1 block">
+                    {candidate.poEvidence?.description ||
+                      candidate.itemName ||
+                      candidate.note ||
+                      "Description not recorded"}
                   </span>
-                )}
-                <span className="block">Open value: {inr(candidate.open)}</span>
-                <span className="block">
-                  PO reference:{" "}
-                  {candidate.references?.po.join(", ") ||
-                    String(candidate.docNum)}
-                </span>
-                {candidate.poEvidence ? (
-                  <>
+                  {candidate.itemCode ? (
                     <span className="block">
-                      PO line description:{" "}
-                      {candidate.poEvidence.description ?? "Not recorded"}
+                      From SAP · {candidate.itemCode} · {candidate.itemName} ·
+                      Non-stock item
                     </span>
-                    <span className="block font-medium">
-                      Line remarks:{" "}
-                      {candidate.poEvidence.lineRemarks ?? "Not recorded"}
-                    </span>
+                  ) : null}
+                  <span className="mt-1 block">
+                    Available value: {inr(candidate.open)}
+                  </span>
+                  {candidate.documentType === "dDocument_Items" ? (
                     <span className="block">
-                      PO remarks:{" "}
-                      {candidate.poEvidence.headerRemarks ?? "Not recorded"}
+                      {qty(candidate.poEvidence?.openQuantity)} units available
+                      · Unit price {inr(candidate.price)}
                     </span>
-                    <span className="block">
-                      Open quantity: {qty(candidate.poEvidence.openQuantity)}
+                  ) : null}
+                  <span className="block text-[#6b5d50]">
+                    {candidate.rejected === "Fully billed already"
+                      ? "No remaining value for this selection"
+                      : candidate.rejected ||
+                        [...candidate.good, ...candidate.bad].join(" · ")}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="block">
+                    {candidate.note || "Service PO"}
+                  </span>
+                  <span className="my-2 grid gap-3 rounded-md bg-[#faf8f4] p-2 sm:grid-cols-2">
+                    <span className="min-w-0 break-words">
+                      <strong className="block">From the invoice</strong>
+                      <span className="block">
+                        Code:{" "}
+                        {invoiceLine?.vendorItemCode ||
+                          "Not printed / extracted"}
+                      </span>
+                      <span className="block">
+                        Name: {invoiceLine?.description || "Not recorded"}
+                      </span>
+                      <span className="block">
+                        Amount: {inr(line.invoiceAmount)}
+                      </span>
+                      <span className="block">
+                        Quantity: {qty(invoiceLine?.quantity)}{" "}
+                        {invoiceLine?.unit ?? ""}
+                      </span>
+                      <span className="block">
+                        Unit price: {inr(invoiceLine?.rate)}
+                      </span>
+                      <span className="block">
+                        PO reference:{" "}
+                        {invoicePoReferences.join(", ") || "Not recorded"}
+                      </span>
                     </span>
-                    <span className="block">
-                      Unit price: {inr(candidate.price)}
+                    <span className="min-w-0 break-words">
+                      <strong className="block">From SAP</strong>
+                      {candidate.documentType === "dDocument_Items" ? (
+                        <>
+                          <span className="block">
+                            Code: {candidate.itemCode}
+                          </span>
+                          <span className="block">
+                            Name: {candidate.itemName || "Not recorded"}
+                          </span>
+                          <span className="block">Non-stock item</span>
+                        </>
+                      ) : (
+                        <span className="block">
+                          Service account:{" "}
+                          {candidate.accountCode || "Not recorded"}
+                        </span>
+                      )}
+                      <span className="block">
+                        Open value: {inr(candidate.open)}
+                      </span>
+                      <span className="block">
+                        PO reference:{" "}
+                        {candidate.references?.po.join(", ") ||
+                          String(candidate.docNum)}
+                      </span>
+                      {candidate.poEvidence ? (
+                        <>
+                          <span className="block">
+                            PO line description:{" "}
+                            {candidate.poEvidence.description ?? "Not recorded"}
+                          </span>
+                          <span className="block font-medium">
+                            Line remarks:{" "}
+                            {candidate.poEvidence.lineRemarks ?? "Not recorded"}
+                          </span>
+                          <span className="block">
+                            PO remarks:{" "}
+                            {candidate.poEvidence.headerRemarks ??
+                              "Not recorded"}
+                          </span>
+                          <span className="block">
+                            Open quantity:{" "}
+                            {qty(candidate.poEvidence.openQuantity)}
+                          </span>
+                          <span className="block">
+                            Unit price: {inr(candidate.price)}
+                          </span>
+                        </>
+                      ) : null}
                     </span>
-                  </>
-                ) : null}
-              </span>
+                  </span>
+                  <span className="block text-[#6b5d50]">
+                    {candidate.rejected ||
+                      [...candidate.good, ...candidate.bad].join(" · ")}
+                  </span>
+                </>
+              )}
             </span>
-            <span className="block text-[#6b5d50]">
-              {candidate.rejected ||
-                [...candidate.good, ...candidate.bad].join(" · ")}
-            </span>
-          </span>
-        </label>
-      ))}
+          </label>
+        ))}
       {line.manual ? (
         <button
           type="button"
