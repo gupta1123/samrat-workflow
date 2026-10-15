@@ -2519,9 +2519,16 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
                     <button
                       key={file.id}
                       type="button"
-                      onClick={() => setDraftPreviewFile(file)}
-                      aria-label={`Open ${file.originalName}`}
-                      className="relative flex h-14 w-14 items-center justify-center rounded-2xl border border-[#e5ddd0] bg-[#faf8f4] text-[#8a7f72] shadow-sm"
+                      disabled={isAnalyzing}
+                      onClick={() => {
+                        if (!isAnalyzing) setDraftPreviewFile(file);
+                      }}
+                      aria-label={
+                        isAnalyzing
+                          ? file.originalName
+                          : `Open ${file.originalName}`
+                      }
+                      className="relative flex h-14 w-14 items-center justify-center rounded-2xl border border-[#e5ddd0] bg-[#faf8f4] text-[#8a7f72] shadow-sm disabled:cursor-default"
                       title={file.originalName}
                     >
                       <FileText className="h-6 w-6" />
@@ -2565,7 +2572,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
 
           <SavedDocumentDialog
             caseId={detail.case.id}
-            file={draftPreviewFile}
+            file={isAnalyzing ? null : draftPreviewFile}
             onClose={() => setDraftPreviewFile(null)}
           />
           <DuplicateUploadDialog
