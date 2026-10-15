@@ -2689,6 +2689,187 @@ test("targeted packet contradiction rechecks only the affected source", async (t
   assert.equal(packetCalls, 2);
 });
 
+test("a repeated PAN reference reaches reference-only repair, not unrelated source-audit repair", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const doc = {
+    ...documents[0],
+    fields: { ...documents[0].fields, panNumber: "ABCDE1234F" },
+  };
+  const good = await compact(doc);
+  good.references.panNumber = {
+    value: "ABCDE1234F",
+    sourceLabel: "PAN",
+    valueKind: "reference",
+    pageNumber: "p1",
+    quote: "PAN: ABCDE1234F",
+  };
+  const wrong = {
+    ...good,
+    newReferences: [{ field: "panNumber", ...good.references.panNumber }],
+  };
+  const other = await compact(documents[1]);
+  let referenceRepairs = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review")
+        return response(context.sourcePageNumbers[0] === 1 ? wrong : other);
+      if (name === "source_reference_repair") {
+        referenceRepairs++;
+        return response({ references: good.references, newReferences: [] });
+      }
+      if (name === "packet_reconciliation") return response(packet());
+      assert.notEqual(name, "source_audit_repair");
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (c: { mismatchId: string }) => ({
+            mismatchId: c.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source discrepancy.",
+          }),
+        ),
+      });
+    },
+  );
+  const result = await reviewExtractedDocumentsInStages([doc, documents[1]], {
+    sourcePages: pages,
+  });
+  assert.equal(referenceRepairs, 1);
+  assert.equal(result.documents[0].fields.panNumber, "ABCDE1234F");
+  assert.notEqual(result.review.documentAudits?.[0].status, "needs_review");
+});
+
+for (const repairable of [true, false]) {
+  test(`conflicting invoice classifications ${repairable ? "are repaired from source" : "remain safely blocked when unresolved"}`, async (t) => {
+    const { reviewExtractedDocumentsInStages } =
+      await import("../src/server/processing/staged-review");
+    const header: CaseDoc = {
+      ...documents[0],
+      fields: { invoiceNumber: "INV-42", vendorName: "Aster", currency: "INR" },
+      md: "Programme overview. Line Details are in Annexure.",
+    };
+    const annex: CaseDoc = {
+      ...documents[1],
+      type: "Invoice",
+      fields: { invoiceNumber: "INV-42", currency: "INR" },
+      lineItems: [
+        {
+          description: "Steel bars",
+          quantity: "1",
+          unit: "MT",
+          rate: "100",
+          lineTotal: "100",
+        },
+      ],
+      md: "Steel bars 1 MT 100 100",
+    };
+    const sources = await Promise.all([header, annex].map(compact));
+    const sourceCalls = [0, 0];
+    let packetCalls = 0;
+    const plan = {
+      invoiceNumber: "INV-42",
+      fieldSources: Object.keys(header.fields).map((field) => ({
+        field,
+        docId: "d1",
+      })),
+      documents: [
+        { docId: "d1", role: "header", duplicateOfDocId: null },
+        { docId: "d2", role: "billing", duplicateOfDocId: null },
+      ],
+      reason: "Explicit cover and billed annexure for INV-42.",
+    };
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        const name = body.response_format.json_schema.name;
+        const context = JSON.parse(body.messages[1].content[0].text);
+        if (name === "source_document_review") {
+          const index = context.sourcePageNumbers[0] - 1;
+          sourceCalls[index]++;
+          const kind =
+            index === 1
+              ? "goods"
+              : context.recheckReason && repairable
+                ? "unknown"
+                : "services";
+          return response({
+            ...sources[index],
+            supplyNature: {
+              kind,
+              evidence:
+                kind === "unknown"
+                  ? []
+                  : [
+                      {
+                        pageNumber: "p1",
+                        quote:
+                          index === 0 ? "Programme overview" : "Steel bars",
+                      },
+                    ],
+            },
+          });
+        }
+        if (name === "packet_reconciliation") {
+          packetCalls++;
+          return response({
+            ...packet(),
+            invoiceAssemblies: [plan],
+            packetGroups: [
+              {
+                ...packet().packetGroups[0],
+                caseSummary: {
+                  counterpartySource: { docId: "d1", field: "vendorName" },
+                  invoiceNumber: "INV-42",
+                  poNumber: "",
+                  primaryReference: "INV-42",
+                  packetCategory: "goods",
+                },
+              },
+            ],
+          });
+        }
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (c: { mismatchId: string }) => ({
+              mismatchId: c.mismatchId,
+              status: "dismissed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "No source discrepancy.",
+            }),
+          ),
+        });
+      },
+    );
+    const result = await reviewExtractedDocumentsInStages([header, annex], {
+      sourcePages: pages,
+    });
+    assert.deepEqual(sourceCalls, [2, 2]);
+    assert.equal(packetCalls, 2);
+    assert.equal(result.documents[1].supplyNature?.kind, "goods");
+    assert.equal(
+      result.authoritativeReview.invoiceAssemblies?.length,
+      repairable ? 1 : 0,
+    );
+    assert.equal(
+      result.reviewIssues.some(
+        (issue) => issue.id === "evidence-review-workflow-packet",
+      ),
+      !repairable,
+    );
+    if (!repairable) assert.equal(result.review.verdict, "needs_review");
+  });
+}
+
 test("corrupt extraction snapshots cannot bypass source-page provenance", async () => {
   const { parseExtractionCheckpoint } =
     await import("../src/server/processing/extraction-checkpoint");

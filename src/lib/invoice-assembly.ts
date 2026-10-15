@@ -22,10 +22,56 @@ export type AssemblyDocument = Pick<
   | "sourceFileName"
   | "sourcePageNumbers"
 >;
-export function invoiceAssemblySchema(fields: readonly string[]) {
+/** A source contradiction needs a source reread, not a guessed assembly. */
+export class InvoiceAssemblySourceConflict extends Error {
+  constructor(
+    readonly documentIds: string[],
+    message: string,
+  ) {
+    super(message);
+    this.name = "InvoiceAssemblySourceConflict";
+  }
+}
+
+export function invoiceAssemblySchema(
+  fields: readonly string[],
+  sources?: Array<{
+    docId: string;
+    fields: string[];
+    roles: InvoiceAssembly["documents"][number]["role"][];
+  }>,
+) {
   const text = { type: "string" };
+  const fieldSource = (fieldKeys: readonly string[], docIds?: string[]) => ({
+    type: "object",
+    properties: {
+      field: { type: "string", enum: [...fieldKeys] },
+      docId: docIds ? { type: "string", enum: docIds } : text,
+    },
+    required: ["field", "docId"],
+    additionalProperties: false,
+  });
+  const member = (
+    docId?: string,
+    roles: InvoiceAssembly["documents"][number]["role"][] = [
+      "header",
+      "billing",
+      "duplicate",
+    ],
+  ) => ({
+    type: "object",
+    properties: {
+      docId: docId ? { type: "string", enum: [docId] } : text,
+      role: { type: "string", enum: roles },
+      duplicateOfDocId: { type: ["string", "null"] },
+    },
+    required: ["docId", "role", "duplicateOfDocId"],
+    additionalProperties: false,
+  });
+  const populated = sources?.filter((source) => source.fields.length);
   return {
     type: "array",
+    ...(sources && !sources.length ? { maxItems: 0 } : {}),
     items: {
       type: "object",
       properties: {
@@ -33,31 +79,23 @@ export function invoiceAssemblySchema(fields: readonly string[]) {
         reason: text,
         fieldSources: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              field: { type: "string", enum: [...fields] },
-              docId: text,
-            },
-            required: ["field", "docId"],
-            additionalProperties: false,
-          },
+          items: populated?.length
+            ? {
+                anyOf: populated.map((source) =>
+                  fieldSource(source.fields, [source.docId]),
+                ),
+              }
+            : fieldSource(fields),
         },
         documents: {
           type: "array",
-          items: {
-            type: "object",
-            properties: {
-              docId: text,
-              role: {
-                type: "string",
-                enum: ["header", "billing", "duplicate"],
-              },
-              duplicateOfDocId: { type: ["string", "null"] },
-            },
-            required: ["docId", "role", "duplicateOfDocId"],
-            additionalProperties: false,
-          },
+          items: sources?.length
+            ? {
+                anyOf: sources.map((source) =>
+                  member(source.docId, source.roles),
+                ),
+              }
+            : member(),
         },
       },
       required: ["invoiceNumber", "fieldSources", "documents", "reason"],
@@ -79,6 +117,46 @@ function sameRows(a: CommercialLineItem[], b: CommercialLineItem[]) {
       ).map((key) => row[key] ?? null),
     );
   return a.length > 0 && JSON.stringify(cells(a)) === JSON.stringify(cells(b));
+}
+
+let currencyMetadata:
+  { codes: Set<string>; symbols: Map<string, Set<string>> } | undefined;
+function equivalentPrintedCurrency(values: Set<string>) {
+  // Use the runtime's standard currency metadata, never a supplier-specific
+  // alias table. A symbol shared by several currencies cannot prove identity.
+  if (!currencyMetadata) {
+    const codes = new Set(Intl.supportedValuesOf("currency"));
+    const symbols = new Map<string, Set<string>>();
+    for (const code of codes) {
+      for (const currencyDisplay of ["symbol", "narrowSymbol"] as const) {
+        const symbol = new Intl.NumberFormat("en", {
+          style: "currency",
+          currency: code,
+          currencyDisplay,
+        })
+          .formatToParts(0)
+          .find((part) => part.type === "currency")
+          ?.value.toUpperCase();
+        if (!symbol) continue;
+        const currencies = symbols.get(symbol) ?? new Set<string>();
+        currencies.add(code);
+        symbols.set(symbol, currencies);
+      }
+    }
+    currencyMetadata = { codes, symbols };
+  }
+  const printedCodes = [...values].filter((value) =>
+    currencyMetadata!.codes.has(value),
+  );
+  if (printedCodes.length !== 1) return null;
+  const code = printedCodes[0];
+  return [...values].every((value) => {
+    if (value === code) return true;
+    const candidates = currencyMetadata!.symbols.get(value);
+    return candidates?.size === 1 && candidates.has(code);
+  })
+    ? code
+    : null;
 }
 
 /** Validate semantic page/role decisions against retained source observations.
@@ -175,7 +253,7 @@ export function parseInvoiceAssemblies(
         )
       )
         throw new Error(
-        "An excluded duplicate must reproduce an included billing table exactly.",
+          "An excluded duplicate must reproduce an included billing table exactly.",
         );
     }
     const selected = new Set<string>();
@@ -225,7 +303,11 @@ export function parseInvoiceAssemblies(
           return value ? [value] : [];
         }),
       );
-      if (values.size > 1)
+      const equivalentCurrency =
+        field === "currency" && values.size > 1
+          ? equivalentPrintedCurrency(values)
+          : null;
+      if (values.size > 1 && !equivalentCurrency)
         throw new Error(
           `Invoice pages have conflicting ${field}; source review is required.`,
         );
@@ -233,6 +315,16 @@ export function parseInvoiceAssemblies(
         throw new Error(
           `Invoice assembly omitted the retained ${field} source.`,
         );
+      if (equivalentCurrency) {
+        const source = fieldSources.find((source) => source.field === field)!;
+        if (
+          byId.get(source.docId)!.fields.currency?.trim().toUpperCase() !==
+          equivalentCurrency
+        )
+          throw new Error(
+            "Equivalent printed currency representations need the retained ISO currency-code page as their currency field source. Preserve every original source value.",
+          );
+      }
     }
     const kinds = new Set(
       members.flatMap((member) => {
@@ -241,7 +333,10 @@ export function parseInvoiceAssemblies(
       }),
     );
     if (kinds.size > 1)
-      throw new Error("Invoice pages have conflicting supply classifications.");
+      throw new InvoiceAssemblySourceConflict(
+        members.map((member) => member.docId),
+        "Invoice pages have conflicting supply classifications. Independently reread each page's actual billed scope; generic header/program wording must remain unknown when it does not establish goods or services. Do not infer from document absence or SAP inventory status.",
+      );
     return {
       invoiceNumber: entry.invoiceNumber,
       fieldSources,

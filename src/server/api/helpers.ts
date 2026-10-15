@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "../supabase/admin";
 import { requireRequestUser } from "./request-auth";
+import { caseDisplayIdentity } from "@/lib/case-display-identity";
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -95,7 +96,10 @@ export function mapCase(row: {
   return {
     id: row.id,
     slug: row.slug,
-    displayName: row.display_name,
+    ...caseDisplayIdentity({
+      displayName: row.display_name,
+      processingMeta: row.processing_meta,
+    }),
     buyerName: row.buyer_name,
     receiverName: row.processing_meta?.receiverName ?? row.buyer_name,
     category: row.processing_meta?.caseCategory || "Document packet",

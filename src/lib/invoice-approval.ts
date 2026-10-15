@@ -133,14 +133,23 @@ export function buildInvoiceNumberRequiredIssues(params: {
     params.verificationGroups,
     params.invoiceAssemblies,
   ).filter((invoice) => !present(invoice.invoiceNumber));
+  const missingNumber = missingInvoices.length > 0;
   return (missingInvoices.length ? missingInvoices : [{ id: "packet" }]).map(
     (invoice) => ({
       id: `required-invoice-number:${invoice.id}`,
       field: INVOICE_NUMBER_REQUIRED_FIELD,
-      values: [{ docId: invoice.id, value: "Invoice number is missing" }],
+      values: [
+        {
+          docId: invoice.id,
+          value: missingNumber
+            ? "Invoice number is missing"
+            : "Invoice number needs verification",
+        },
+      ],
       analysis: reason,
-      fixPlan:
-        "Upload a corrected packet with a buyer-facing invoice that shows its invoice number, then analyze again. This requirement cannot be waived by settling an issue.",
+      fixPlan: missingNumber
+        ? "Upload a corrected packet with a buyer-facing invoice that shows its invoice number, then analyze again. This requirement cannot be waived by settling an issue."
+        : "Review the invoice's printed number and re-run analysis to complete verification. A printed number must not be replaced merely because automated verification was deferred. Approval remains blocked until it is verified.",
     }),
   );
 }

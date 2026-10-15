@@ -9,6 +9,7 @@ import { FIELD_DEFINITIONS } from "../src/server/document-schema";
 import { serializeFieldsWithLineItems } from "../src/server/line-items";
 import { buildMatchInvoice } from "../src/server/sap/match-mapping";
 import { packetPointerAliases } from "../src/server/processing/staged-review";
+import { packetTaskSchema } from "../src/server/processing/staged-review";
 import type { CaseDoc } from "../src/types/pipeline";
 import { getInvoiceNumberApprovalBlockReason } from "../src/lib/invoice-approval";
 import { buildDuplicateInvoiceIssues } from "../src/lib/duplicate-invoice";
@@ -120,6 +121,84 @@ const match = (docs = [header, annex], plan: unknown = [assembly()]) =>
     invoiceAssemblies: plan,
   });
 
+test("packet field-source choices are bound to retained values on eligible invoice pages", () => {
+  const schema = JSON.parse(
+    JSON.stringify(packetTaskSchema([header, annex], [], new Set([annex.id]))),
+  );
+  const item = schema.properties.invoiceAssemblies.items;
+  const members = item.properties.documents.items.anyOf;
+  assert.equal(members.length, 1);
+  assert.deepEqual(members[0].properties.docId.enum, ["d1"]);
+  assert.deepEqual(members[0].properties.role.enum, ["header"]);
+  const choices = item.properties.fieldSources.items.anyOf;
+  assert.equal(choices.length, 1);
+  assert.deepEqual(choices[0].properties.docId.enum, ["d1"]);
+  assert.deepEqual(
+    choices[0].properties.field.enum,
+    FIELD_DEFINITIONS.filter((field) =>
+      Boolean(header.fields[field.key]?.trim()),
+    ).map((field) => field.key),
+  );
+  assert.ok(!choices[0].properties.field.enum.includes("paymentTerms"));
+});
+
+test("verified totals-only copies can supply headers, never duplicate billing rows", () => {
+  const totals = {
+    ...header,
+    id: "totals-copy",
+    fields: { invoiceNumber: "CONS/17", totalAmount: "11800" },
+  };
+  const schema = JSON.parse(
+    JSON.stringify(packetTaskSchema([header, annex, totals], [])),
+  );
+  const members =
+    schema.properties.invoiceAssemblies.items.properties.documents.items.anyOf;
+  assert.deepEqual(
+    members.map(
+      (member: { properties: { role: { enum: string[] } } }) =>
+        member.properties.role.enum,
+    ),
+    [["header"], ["billing", "duplicate"], ["header"]],
+  );
+  const plan = assembly();
+  plan.documents.push({
+    docId: totals.id,
+    role: "header",
+    duplicateOfDocId: null,
+  });
+  plan.fieldSources = plan.fieldSources.map((source) =>
+    source.field === "totalAmount" ? { ...source, docId: totals.id } : source,
+  );
+  assert.equal(
+    parseInvoiceAssemblies(
+      [plan],
+      [header, annex, totals],
+      FIELD_DEFINITIONS.map((field) => field.key),
+    ).length,
+    1,
+  );
+});
+
+test("conflicting goods and service observations require a typed source reread, never a service override", async () => {
+  const { InvoiceAssemblySourceConflict } =
+    await import("../src/lib/invoice-assembly");
+  const goods = {
+    ...annex,
+    supplyNature: {
+      kind: "goods" as const,
+      evidence: [{ sourcePage: 2, quote: "Physical steel bars" }],
+    },
+  };
+  assert.throws(
+    () => parseInvoiceAssemblies([assembly()], [header, goods], fields),
+    (error) => {
+      assert.ok(error instanceof InvoiceAssemblySourceConflict);
+      assert.deepEqual(error.documentIds, [header.id, annex.id]);
+      return true;
+    },
+  );
+});
+
 test("assemble a verified header and annexure without losing supplier GSTIN or billing source", () => {
   const invoice = match()!;
   assert.equal(invoice.extractionIssue, undefined);
@@ -215,6 +294,54 @@ test("excluded copies require explicit duplicate decisions and identical billing
     lineItems: [{ ...copy.lineItems[0], quantity: "2" }],
   };
   assert.ok(match([header, annex, changed], [plan])?.extractionIssue);
+});
+
+test("a printed currency code and its unambiguous standard symbol agree without changing source values", () => {
+  for (const [code, symbol] of [
+    ["INR", "₹"],
+    ["EUR", "€"],
+  ]) {
+    const coded = { ...header, fields: { ...header.fields, currency: code } };
+    const symbolPage = {
+      ...annex,
+      fields: { ...annex.fields, currency: symbol },
+    };
+    assert.equal(
+      parseInvoiceAssemblies([assembly()], [coded, symbolPage], fields).length,
+      1,
+    );
+    assert.equal(symbolPage.fields.currency, symbol);
+    const wrongSource = assembly();
+    wrongSource.fieldSources = wrongSource.fieldSources.map((source) =>
+      source.field === "currency" ? { ...source, docId: annex.id } : source,
+    );
+    assert.throws(
+      () => parseInvoiceAssemblies([wrongSource], [coded, symbolPage], fields),
+      /ISO currency-code page/,
+    );
+  }
+});
+
+test("different currencies and ambiguous shared currency symbols remain blocked", () => {
+  for (const [left, right] of [
+    ["INR", "USD"],
+    ["USD", "$"],
+    ["CAD", "$"],
+    ["INR", "unrecognized"],
+  ]) {
+    assert.throws(
+      () =>
+        parseInvoiceAssemblies(
+          [assembly()],
+          [
+            { ...header, fields: { ...header.fields, currency: left } },
+            { ...annex, fields: { ...annex.fields, currency: right } },
+          ],
+          fields,
+        ),
+      /conflicting currency/,
+    );
+  }
 });
 
 test("different invoices, conflicting GSTINs, missing pages and unverified tables stay blocked", () => {

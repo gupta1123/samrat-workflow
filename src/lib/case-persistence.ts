@@ -22,6 +22,8 @@ export type SavedCaseRecord = {
   category: string;
   poNumber: string | null;
   invoiceNumber: string | null;
+  /** Display-only audited reference; it cannot satisfy approval or SAP posting. */
+  displayInvoiceNumber?: string | null;
   status: string;
   riskScore: number;
   uploadCount: number;

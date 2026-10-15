@@ -38,6 +38,7 @@ import { createSupabaseAdminClient } from "./supabase/admin";
 import { TERMS_COMPLIANCE_MISMATCH_MODE } from "./terms-compliance";
 import { buildAnalysisIntegrityRecord } from "../lib/analysis-integrity";
 import { composeAuthoritativeCaseDisplayName } from "./case-naming";
+import { caseDisplayIdentity } from "@/lib/case-display-identity";
 import { ReviewContractError } from "./processing/review-contract-error";
 import {
   OpenRouterOutputLimitError,
@@ -584,7 +585,8 @@ async function processJob(jobId: string) {
         }),
         ...buildCrossCaseDuplicateInvoiceIssues({
           invoiceNumber:
-            authoritativeSummary?.invoiceNumber ?? summaryDocuments.find(
+            authoritativeSummary?.invoiceNumber ??
+            summaryDocuments.find(
               (document) =>
                 document.type === "Invoice" || document.type === "Tax Invoice",
             )?.fields.invoiceNumber,
@@ -623,7 +625,12 @@ async function processJob(jobId: string) {
         ? composeAuthoritativeCaseDisplayName({
             counterpartyName: authoritativeSummary.counterpartyName,
             primaryReference: authoritativeSummary.primaryReference,
-            fallback: "Case",
+            fallback: caseDisplayIdentity({
+              processingMeta: {
+                extractionReview: reviewed.review,
+                verificationGroups: x.verificationGroups,
+              },
+            }).displayName,
           })
         : derivedSummary.displayName;
       const summary = authoritativeSummary
@@ -667,9 +674,10 @@ async function processJob(jobId: string) {
           termsComplianceMismatchMode: TERMS_COMPLIANCE_MISMATCH_MODE,
           extractionReview: reviewed.review,
           invoiceAssemblies: (authoritative.invoiceAssemblies ?? []).filter(
-            (assembly) => assembly.documents.every(
-              (member) => groupDocumentIds.has(member.docId),
-            ),
+            (assembly) =>
+              assembly.documents.every((member) =>
+                groupDocumentIds.has(member.docId),
+              ),
           ),
           documentPageQuality: groupPageQuality,
           analysisIntegrity: buildAnalysisIntegrityRecord({

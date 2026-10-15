@@ -14,6 +14,25 @@ const invoice = {
   invoiceNumber: "INV-0532",
 };
 
+test("a present but unverified invoice number is not described as missing and still blocks approval", () => {
+  const issues = buildInvoiceNumberRequiredIssues({
+    invoiceNumber: "",
+    documents: [invoice],
+  });
+  assert.equal(issues[0].values[0].value, "Invoice number needs verification");
+  assert.ok(
+    getInvoiceNumberApprovalBlockReason({
+      invoiceNumber: "",
+      documents: [invoice],
+    }),
+  );
+  const missing = buildInvoiceNumberRequiredIssues({
+    invoiceNumber: "",
+    documents: [{ ...invoice, invoiceNumber: "" }],
+  });
+  assert.equal(missing[0].values[0].value, "Invoice number is missing");
+});
+
 test("the same missing invoice requirement has one owner regardless of AI wording", () => {
   const required = buildInvoiceNumberRequiredIssues({
     invoiceNumber: "",

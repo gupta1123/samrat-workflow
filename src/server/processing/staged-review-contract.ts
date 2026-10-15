@@ -597,75 +597,75 @@ export function parseCompactSourceAudit(
   const referenceKeys = new Set<string>(
     REFERENCE_FIELD_DEFINITIONS.map(({ key }) => key),
   );
-  for (const [field, rawReference] of Object.entries(
-    object(payload.references),
-  )) {
-    const reference = object(rawReference);
-    if (
-      !referenceKeys.has(field) ||
-      Object.keys(reference).some(
-        (key) =>
-          ![
-            "value",
-            "sourceLabel",
-            "valueKind",
-            "pageNumber",
-            "quote",
-          ].includes(key),
-      )
-    )
-      throw new Error(
-        `Reference ${field} must be a known keyed value-and-proof entry, without a repeated field property.`,
-      );
-    // valueKind is the model's semantic decision. A candidate classified as a
-    // date, party, heading or other non-reference is a removal, even if the
-    // model unnecessarily echoed the candidate text in `value`.
-    fields[field] = {
-      ...reference,
-      value: reference.valueKind === "reference" ? reference.value : null,
-      sourceFileName: document.sourceFileName,
-    };
-  }
-  for (const rawReference of array(payload.newReferences)) {
-    const reference = object(rawReference);
-    const field = reference.field;
-    if (
-      typeof field !== "string" ||
-      !referenceKeys.has(field) ||
-      Object.hasOwn(fields, field) ||
-      String(document.fields[field as FieldKey] ?? "").trim()
-    )
-      throw new Error(
-        `A newly discovered reference must be known and distinct from every original or discovered reference: ${String(field)}.`,
-      );
-    const { field: ignoredField, ...entry } = reference;
-    void ignoredField;
-    if (
-      Object.keys(entry).some(
-        (key) =>
-          ![
-            "value",
-            "sourceLabel",
-            "valueKind",
-            "pageNumber",
-            "quote",
-          ].includes(key),
-      )
-    )
-      throw new Error(
-        `New reference ${field} has unexpected evidence properties.`,
-      );
-    // A discovered candidate that the reviewer itself classifies as something
-    // other than a reference is not a reference-ledger entry.
-    if (
-      reference.valueKind !== "reference" ||
-      typeof reference.value !== "string" ||
-      !reference.value.trim()
-    )
-      continue;
-    fields[field] = { ...entry, sourceFileName: document.sourceFileName };
-  }
   try {
+    for (const [field, rawReference] of Object.entries(
+      object(payload.references),
+    )) {
+      const reference = object(rawReference);
+      if (
+        !referenceKeys.has(field) ||
+        Object.keys(reference).some(
+          (key) =>
+            ![
+              "value",
+              "sourceLabel",
+              "valueKind",
+              "pageNumber",
+              "quote",
+            ].includes(key),
+        )
+      )
+        throw new Error(
+          `Reference ${field} must be a known keyed value-and-proof entry, without a repeated field property.`,
+        );
+      // valueKind is the model's semantic decision. A candidate classified as a
+      // date, party, heading or other non-reference is a removal, even if the
+      // model unnecessarily echoed the candidate text in `value`.
+      fields[field] = {
+        ...reference,
+        value: reference.valueKind === "reference" ? reference.value : null,
+        sourceFileName: document.sourceFileName,
+      };
+    }
+    for (const rawReference of array(payload.newReferences)) {
+      const reference = object(rawReference);
+      const field = reference.field;
+      if (
+        typeof field !== "string" ||
+        !referenceKeys.has(field) ||
+        Object.hasOwn(fields, field) ||
+        String(document.fields[field as FieldKey] ?? "").trim()
+      )
+        throw new Error(
+          `A newly discovered reference must be known and distinct from every original or discovered reference: ${String(field)}.`,
+        );
+      const { field: ignoredField, ...entry } = reference;
+      void ignoredField;
+      if (
+        Object.keys(entry).some(
+          (key) =>
+            ![
+              "value",
+              "sourceLabel",
+              "valueKind",
+              "pageNumber",
+              "quote",
+            ].includes(key),
+        )
+      )
+        throw new Error(
+          `New reference ${field} has unexpected evidence properties.`,
+        );
+      // A discovered candidate that the reviewer itself classifies as something
+      // other than a reference is not a reference-ledger entry.
+      if (
+        reference.valueKind !== "reference" ||
+        typeof reference.value !== "string" ||
+        !reference.value.trim()
+      )
+        continue;
+      fields[field] = { ...entry, sourceFileName: document.sourceFileName };
+    }
     // Validate the reference section independently so a later repair can be
     // routed by contract ownership instead of parsing an error message.
     readReferenceLedger({ document, fields, sourcePages: pages });

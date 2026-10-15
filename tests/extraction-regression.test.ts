@@ -20,6 +20,45 @@ SGST @ 9% 55,800.00
 Invoice total (INR) 731,600.00
 Price: fixed per KG; packing and freight included. GST: CGST 9% + SGST 9%.`;
 
+test("copy labels and repeated products never erase a continuation source before audit", async (t) => {
+  const previous = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = "test-key-no-network";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previous;
+  });
+  const { verifyProcessedDocuments } =
+    await import("../src/server/processing/pipeline");
+  const first: CaseDoc = {
+    id: "goods-page-1",
+    type: "Tax Invoice",
+    title: "Original for recipient",
+    pages: 1,
+    sourceFileName: "invoice.pdf",
+    sourcePageNumbers: [1],
+    fields: { invoiceNumber: "INV-42", totalAmount: "11800" },
+    lineItems: [
+      { description: "Plate", quantity: "10", unit: "KG", rate: "500" },
+    ],
+    md: "Original for recipient. Invoice INV-42. Plate 10 KG at 500. Continued.",
+  };
+  const second: CaseDoc = {
+    ...first,
+    id: "goods-page-2",
+    sourcePageNumbers: [2],
+    md: "Original for recipient. Invoice INV-42. Plate 10 KG at 500. Total 11800.",
+  };
+  const original = structuredClone([first, second]);
+  const result = verifyProcessedDocuments([first, second], {
+    considerFormatting: false,
+  });
+  assert.deepEqual(
+    new Set(result.verificationGroups.flatMap((group) => group.documentIds)),
+    new Set([first.id, second.id]),
+  );
+  assert.deepEqual([first, second], original);
+});
+
 test("included freight does not inherit nearby subtotal or goods tax, even in flattened PDF text", () => {
   for (const source of [invoiceText, invoiceText.replace(/\n/g, " ")]) {
     const recovered = extractInvoiceCommercialFieldsFromText(source);

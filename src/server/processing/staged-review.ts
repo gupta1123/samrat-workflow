@@ -11,6 +11,7 @@ import {
 import { FIELD_DEFINITIONS } from "../document-schema";
 import {
   invoiceAssemblySchema,
+  InvoiceAssemblySourceConflict,
   parseInvoiceAssemblies,
 } from "@/lib/invoice-assembly";
 import { buildDocumentReadabilityMismatches } from "../document-readability";
@@ -285,6 +286,7 @@ const SOURCE_REVIEW_INSTRUCTION =
   "Independently read the original pages. Previously extracted values are deliberately withheld to prevent copying a wrong proposal. The original page images are the source of truth. " +
   SOURCE_VALUE_INSTRUCTION +
   "Return supplyNature {kind:goods|services|mixed|unknown,evidence:[{pageNumber,quote}]}. Decide from the substance of the invoice's billed lines and the PO's scope, not supplier names, filenames, missing logistics documents, amount patterns or a non-stock flag. Services have no transfer of physical goods; a non-inventory consumable is still goods. Quote the source service/goods descriptions. Use mixed when both are billed, unknown when undecidable. A services/goods/mixed decision requires own-page evidence. Read servicePeriod only when a billing/service period is printed. Services may be billed by hours, months or a lump sum: preserve the printed basis and amounts without inventing weights. " +
+  "A header, totals page or cover naming only a programme or brand does not establish the billed supply. Return unknown unless its own-page text actually proves that scope; the invoice's billing pages will supply the classification. " +
   LOGISTICS_SOURCE_ROLES_INSTRUCTION +
   "Independently return the COMPLETE logisticsRows inventory from this document, even when initial extraction missed every row. Each review row has kind, cells and pageNumber (a supplied p pointer, not sourcePage). Each cell is {field:one allowed logistics field, value:literal printed value, quote:own-page label/column-and-value quote proving that cell's role}. Use each field once per row; omit absent cells. No transport/weighment entries means []. Logistics rows never count as commercial tableCoverage rows. " +
   "Every pageNumber is a supplied sourcePagePointers pointer such as p1, NOT an integer. The app binds it to the exact original page. Do not use local numbers or an extracted table's sourcePage. " +
@@ -1150,6 +1152,9 @@ export function packetPointerAliases(documents: CaseDoc[]) {
 export const PACKET_INSTRUCTION =
   "You are the SAME Pro review role performing whole-packet reconciliation AFTER mandatory own-source audits. Return compact JSON for ONLY this task. " +
   "All supplied document fields are source-audited. Their sourceAudits/pageQuality describe verified corrections and reading limits. " +
+  "A sourceAudits entry marked needs_review is NOT verified. Preserve its review warning and do not include that page in invoiceAssemblies. The supplied assembly schema lists only eligible invoice pages and retained field/source pairs; never name a field that was removed or is absent from its selected source. " +
+  "Document-role choices are bound to each source's verified table coverage: a totals-only page, including a repeated totals-only copy, is header, never billing or duplicate. The duplicate role excludes only a complete repeated billing table; header pages add no billed rows. " +
+  "When invoice pages print both a currency symbol and its ISO currency code, choose the actual printed ISO-code page for the currency field source. Keep the literal observations on every original page; do not invent a code or resolve ambiguous symbols. " +
   "Respect each invoice's source-audited supplyNature. For a pure services packet, goods logistics (GRPO, LR, weighment, e-way bill, goods certificate and truck details) are not applicable: never report their absence as a mismatch. Retain actual invoice/supplier/tax/amount conflicts and a service-completion evidence requirement only when explicitly required by the service contract. Mixed or unknown packets must not be treated as service-only merely because goods documents are missing. " +
   "Return invoiceAssemblies for logical invoices, including standalone invoices. Read the original pages together to associate invoice cover pages, annexures and continuations; do not group by filename, position, amount or name similarity. Each assembly has its printed invoiceNumber, reason, documents [{docId,role:header|billing|duplicate,duplicateOfDocId:null or included billing docId}], and fieldSources [{field,docId}]. Choose every applicable retained invoice header field from its actual role-bearing page; prefer the legal supplier identity over a logo, retain GSTINs, date, currency, totals and printed tax values without inventing missing ones. Do not copy an annexure's brand into the legal supplier field. A header page has a verified not_present table; billing pages have complete rows. Include EVERY billed continuation table once. Duplicate copies can be excluded only when their complete retained tables equal the named included billing source. Every source-verified invoice page with a printed number must belong to exactly one assembly, within one packet group; different printed numbers or conflicting identities must never be merged. Non-invoice support documents are not invoice members. Preserve original documents and row evidence; this is a logical association, not a rewrite of source observations. " +
   "Use the entire packet to decide document roles, actual shipment relationships, explicit terms, missing evidence and root business discrepancies. " +
@@ -1170,6 +1175,7 @@ export const PACKET_INSTRUCTION =
 export function packetTaskSchema(
   documents: CaseDoc[],
   pages: ReviewSourcePage[],
+  unverifiedIds: ReadonlySet<string> = new Set(),
 ) {
   const properties = object(
     buildAuthoritativeReviewResponseSchema({
@@ -1180,12 +1186,34 @@ export function packetTaskSchema(
     }).properties,
   );
   const text = { type: "string" };
+  const aliases = packetPointerAliases(documents);
+  const sources = documents
+    .filter(
+      (doc) =>
+        ["Invoice", "Tax Invoice"].includes(doc.type) &&
+        !unverifiedIds.has(doc.id),
+    )
+    .map((doc) => ({
+      docId: aliases.documentToAlias.get(doc.id)!,
+      fields: FIELD_DEFINITIONS.filter(({ key }) =>
+        Boolean(doc.fields[key]?.trim()),
+      ).map(({ key }) => key),
+      // This encodes the existing runtime table invariant, not a guessed page
+      // relationship. The reviewer must still prove grouping and duplicates.
+      roles: (doc.tableCoverage?.status === "not_present" &&
+      !doc.lineItems?.length
+        ? ["header"]
+        : ["billing", "duplicate"]) as Array<
+        "header" | "billing" | "duplicate"
+      >,
+    }));
   return {
     type: "object",
     properties: {
       packetGroups: properties.packetGroups,
       invoiceAssemblies: invoiceAssemblySchema(
         FIELD_DEFINITIONS.map((field) => field.key),
+        sources,
       ),
       termsChecklist: properties.termsChecklist,
       sourceRecheckRequests: {
@@ -1241,6 +1269,34 @@ export function packetTaskSchema(
       "notes",
     ],
     additionalProperties: false,
+  };
+}
+
+function deferredPacketPayload(documents: CaseDoc[]) {
+  return {
+    packetGroups: [
+      {
+        label: "Packet requires review",
+        documentIds: documents.map((document) => document.id),
+        relationship: "standard",
+        primaryDocumentIds: [],
+        contextDocumentIds: [],
+        rationale:
+          "Automated packet reconciliation was deferred without applying an unverified grouping decision.",
+        caseSummary: {
+          counterpartySource: null,
+          poNumber: "",
+          invoiceNumber: "",
+          primaryReference: "",
+          packetCategory: "Packet under review",
+        },
+      },
+    ],
+    termsChecklist: [],
+    invoiceAssemblies: [],
+    sourceRecheckRequests: [],
+    packetIssues: [],
+    notes: [],
   };
 }
 
@@ -1457,16 +1513,33 @@ export async function reviewExtractedDocumentsInStages(
         "Packet task returned duplicate source recheck requests.",
       );
     const audits = sourceReviews.map((result) => result.audit);
-    const invoiceAssemblies = parseInvoiceAssemblies(
-      payload.invoiceAssemblies,
-      currentDocuments,
-      FIELD_DEFINITIONS.map((field) => field.key),
-      new Set(
-        audits
-          .filter((audit) => audit.status === "needs_review")
-          .map((audit) => audit.docId),
-      ),
-    );
+    // A requested source repair must run before validating the assembly that
+    // depends on it. Such proposals are never cached or used as final results.
+    if (requests.length)
+      return { payload, requests, discardedPacketIssueCount: 0 };
+    let invoiceAssemblies: ReturnType<typeof parseInvoiceAssemblies>;
+    try {
+      invoiceAssemblies = parseInvoiceAssemblies(
+        payload.invoiceAssemblies,
+        currentDocuments,
+        FIELD_DEFINITIONS.map((field) => field.key),
+        new Set(
+          audits
+            .filter((audit) => audit.status === "needs_review")
+            .map((audit) => audit.docId),
+        ),
+      );
+    } catch (error) {
+      if (!(error instanceof InvoiceAssemblySourceConflict)) throw error;
+      return {
+        payload,
+        requests: error.documentIds.map((docId) => ({
+          docId,
+          reason: error.message,
+        })),
+        discardedPacketIssueCount: 0,
+      };
+    }
     for (const assembly of invoiceAssemblies) {
       const group = (
         payload.packetGroups as Array<{ documentIds: string[] }>
@@ -1593,16 +1666,22 @@ export async function reviewExtractedDocumentsInStages(
       validate: parsePacket,
       cacheWhen: (result) => result.requests.length === 0,
       run: async () => {
+        const unverifiedIds = new Set(
+          sourceReviews
+            .filter((source) => source.audit.status === "needs_review")
+            .map((source) => source.document.id),
+        );
+        const schema = packetTaskSchema(
+          currentDocuments,
+          options.sourcePages,
+          unverifiedIds,
+        );
         const result = await completeReviewRequest({
           operation: "packet-reconciliation",
           validate: parsePacket,
           outputLimitFallbackModel: getExtractionReviewFallbackModel(),
-          schema: packetTaskSchema(currentDocuments, options.sourcePages),
-          messages: await boundedPacketMessages(
-            messages,
-            packetTaskSchema(currentDocuments, options.sourcePages),
-            8192,
-          ),
+          schema,
+          messages: await boundedPacketMessages(messages, schema, 8192),
           maxTokens: configuredPositive(
             "PACKET_RECONCILIATION_MAX_OUTPUT_TOKENS",
             8192,
@@ -1624,31 +1703,7 @@ export async function reviewExtractedDocumentsInStages(
       workflowReviewIssues.push(
         deferredWorkflowReviewIssue("packet", currentDocuments),
       );
-      packetRaw = {
-        packetGroups: [
-          {
-            label: "Packet requires review",
-            documentIds: currentDocuments.map((document) => document.id),
-            relationship: "standard",
-            primaryDocumentIds: [],
-            contextDocumentIds: [],
-            rationale:
-              "Automated packet reconciliation was deferred without applying an unverified grouping decision.",
-            caseSummary: {
-              counterpartySource: null,
-              poNumber: "",
-              invoiceNumber: "",
-              primaryReference: "",
-              packetCategory: "Packet under review",
-            },
-          },
-        ],
-        termsChecklist: [],
-        invoiceAssemblies: [],
-        sourceRecheckRequests: [],
-        packetIssues: [],
-        notes: [],
-      };
+      packetRaw = deferredPacketPayload(currentDocuments);
       break;
     }
     const result = packetResult;
@@ -1663,7 +1718,9 @@ export async function reviewExtractedDocumentsInStages(
       workflowReviewIssues.push(
         deferredWorkflowReviewIssue("packet", currentDocuments),
       );
-      packetRaw = { ...packetRaw, sourceRecheckRequests: [] };
+      // Exhausted source repairs leave an explicit review block. Never promote
+      // a proposal which was accepted only to schedule a reread into a result.
+      packetRaw = deferredPacketPayload(currentDocuments);
       break;
     }
     await mapReviewTasks(
@@ -1858,6 +1915,11 @@ export async function reviewExtractedDocumentsInStages(
     packetRaw.invoiceAssemblies,
     currentDocuments,
     FIELD_DEFINITIONS.map((field) => field.key),
+    new Set(
+      sourceReviews
+        .filter((source) => source.audit.status === "needs_review")
+        .map((source) => source.document.id),
+    ),
   );
   // Packet reconciliation can discover source-proved conflicts that were not
   // present in the deterministic candidate set. They must enter the same final

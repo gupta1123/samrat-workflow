@@ -28,31 +28,20 @@ import {
 } from "@/components/ui/table";
 import {
   fetchCaseDetailPreferCache,
-  fetchCasePage,
   recycleCase,
   type SavedCaseRecord,
 } from "@/lib/case-persistence";
+import {
+  createCaseListLoader,
+  getCaseListCacheKey,
+  type ApprovalFilter,
+  type ReconciliationFilter,
+  type CaseListQuery,
+} from "@/lib/case-list";
 
 type LoadState = "loading" | "ready" | "error";
-type ApprovalFilter = "all" | "pending" | "in_review" | "completed" | "failed";
-type ReconciliationFilter = "all" | "issues" | "clean";
-type CaseListQuery = {
-  query: string;
-  approval: ApprovalFilter;
-  reconciliation: ReconciliationFilter;
-  page: number;
-  pageSize: number;
-};
-type CachedCaseList = {
-  cases: SavedCaseRecord[];
-  totalCount: number;
-  totalPages: number;
-};
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50];
-// The list API has no reconciliation filter, so that filter reads up to this
-// many cases for the approval state and paginates them in the browser.
-const RECONCILIATION_SCAN_LIMIT = 500;
 
 const APPROVAL_OPTIONS: { value: ApprovalFilter; label: string }[] = [
   { value: "all", label: "All Approval States" },
@@ -69,94 +58,12 @@ const RECONCILIATION_OPTIONS: { value: ReconciliationFilter; label: string }[] =
     { value: "clean", label: "No issues" },
   ];
 
-const caseListCache = new Map<string, CachedCaseList>();
-const pendingCaseListReads = new Map<string, Promise<CachedCaseList>>();
+const caseListLoader = createCaseListLoader();
 
 function warmCaseDetail(caseId: string) {
   void fetchCaseDetailPreferCache(caseId).catch(() => {
     // Navigation still performs its normal load if a speculative read fails.
   });
-}
-
-function getCaseListCacheKey(params: CaseListQuery) {
-  return [
-    "active",
-    params.query.trim().toLowerCase(),
-    params.approval,
-    params.reconciliation,
-    `page:${params.page}`,
-    `limit:${params.pageSize}`,
-  ].join(":");
-}
-
-function hasAnalysisResult(item: SavedCaseRecord) {
-  return (
-    item.status === "completed" ||
-    item.status === "accepted" ||
-    item.status === "rejected"
-  );
-}
-
-function matchesReconciliation(
-  item: SavedCaseRecord,
-  filter: ReconciliationFilter,
-) {
-  if (filter === "issues") return item.mismatchCount > 0;
-  if (filter === "clean")
-    return hasAnalysisResult(item) && item.mismatchCount === 0;
-  return true;
-}
-
-async function loadCaseList(params: CaseListQuery): Promise<CachedCaseList> {
-  const statusFilter = params.approval;
-  if (params.reconciliation === "all") {
-    const payload = await fetchCasePage({
-      scope: "active",
-      limit: params.pageSize,
-      page: params.page,
-      query: params.query,
-      statusFilter,
-    });
-    return {
-      cases: payload.cases,
-      totalCount: payload.totalCount ?? payload.cases.length,
-      totalPages: payload.totalPages ?? 1,
-    };
-  }
-
-  const payload = await fetchCasePage({
-    scope: "active",
-    limit: RECONCILIATION_SCAN_LIMIT,
-    page: 1,
-    query: params.query,
-    statusFilter,
-  });
-  const matching = payload.cases.filter((item) =>
-    matchesReconciliation(item, params.reconciliation),
-  );
-  const start = (params.page - 1) * params.pageSize;
-  return {
-    cases: matching.slice(start, start + params.pageSize),
-    totalCount: matching.length,
-    totalPages: Math.max(1, Math.ceil(matching.length / params.pageSize)),
-  };
-}
-
-function fetchCaseListOnce(cacheKey: string, params: CaseListQuery) {
-  const pending = pendingCaseListReads.get(cacheKey);
-  if (pending) return pending;
-
-  const request = loadCaseList(params)
-    .then((result) => {
-      caseListCache.set(cacheKey, result);
-      return result;
-    })
-    .finally(() => {
-      pendingCaseListReads.delete(cacheKey);
-    });
-
-  pendingCaseListReads.set(cacheKey, request);
-  return request;
 }
 
 function formatDate(value: string) {
@@ -276,7 +183,9 @@ function getCustomerName(item: SavedCaseRecord) {
 }
 
 function getInvoiceLabel(item: SavedCaseRecord) {
-  return item.invoiceNumber || item.poNumber || "—";
+  return (
+    item.invoiceNumber || item.poNumber || item.displayInvoiceNumber || "—"
+  );
 }
 
 function FilterSelect<T extends string>({
@@ -481,7 +390,7 @@ export function CasesPage() {
   }, [searchQuery]);
 
   useEffect(() => {
-    const cached = caseListCache.get(cacheKey);
+    const cached = caseListLoader.peek(listQuery);
     let active = true;
     let latest = cached?.cases ?? [];
     let inFlight = false;
@@ -500,9 +409,10 @@ export function CasesPage() {
     const refresh = async () => {
       if (inFlight || !active) return;
       inFlight = true;
+      const revision = caseListLoader.revision;
       try {
-        const payload = await fetchCaseListOnce(cacheKey, listQuery);
-        if (!active) return;
+        const payload = await caseListLoader.read(listQuery);
+        if (!active || revision !== caseListLoader.revision) return;
         latest = payload.cases;
         setCases(latest);
         setTotalCount(payload.totalCount);
@@ -510,7 +420,7 @@ export function CasesPage() {
         setStatus("ready");
         setError(null);
       } catch (loadError) {
-        if (!active) return;
+        if (!active || revision !== caseListLoader.revision) return;
         setError(
           loadError instanceof Error
             ? loadError.message
@@ -542,14 +452,14 @@ export function CasesPage() {
   }, [cacheKey, listQuery]);
 
   async function handleConfirmDelete() {
-    if (!pendingCase) return;
+    if (!pendingCase || isDeleting) return;
 
+    let removed = false;
     try {
       setIsDeleting(true);
       setError(null);
       await recycleCase(pendingCase.id);
-      // Other cached pages and filters now have stale counts.
-      caseListCache.clear();
+      removed = true;
       const nextTotalCount = Math.max(0, totalCount - 1);
       const nextTotalPages = Math.max(1, Math.ceil(nextTotalCount / pageSize));
 
@@ -558,15 +468,23 @@ export function CasesPage() {
       );
       setTotalCount(nextTotalCount);
       setTotalPages(nextTotalPages);
-      if (currentPage > nextTotalPages) {
-        setCurrentPage(nextTotalPages);
-      }
+      // Re-read the same filtered page so the next case fills the gap. If the
+      // last page disappeared, the loader returns the new last page instead.
+      const payload = await caseListLoader.refillAfterRemoval(listQuery);
+      setCases(payload.cases);
+      setTotalCount(payload.totalCount);
+      setTotalPages(payload.totalPages);
+      setCurrentPage(payload.page);
+      setStatus("ready");
       setPendingCase(null);
     } catch (mutationError) {
+      if (removed) setPendingCase(null);
       setError(
-        mutationError instanceof Error
-          ? mutationError.message
-          : "Failed to move case to the recycle bin.",
+        removed
+          ? "The case was moved to the recycle bin, but the list could not refresh. Refresh the page to load the remaining cases."
+          : mutationError instanceof Error
+            ? mutationError.message
+            : "Failed to move case to the recycle bin.",
       );
     } finally {
       setIsDeleting(false);
