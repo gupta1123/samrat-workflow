@@ -128,6 +128,7 @@ export function SapMatchPanel({
   const [draftMessage, setDraftMessage] = useState<{
     text: string;
     failed: boolean;
+    numberingSeriesRequired?: boolean;
   } | null>(null);
   const [showPassed, setShowPassed] = useState(false);
 
@@ -200,9 +201,13 @@ export function SapMatchPanel({
     setCreating(true);
     setDraftMessage(null);
     const result = await createMatchedSapDraft(caseId, choices);
-    setDraftMessage({ text: result.message, failed: !result.ok });
+    setDraftMessage({
+      text: result.message,
+      failed: !result.ok,
+      numberingSeriesRequired: result.numberingSeriesRequired,
+    });
     setCreating(false);
-    setConfirmingDraft(false);
+    setConfirmingDraft(!result.ok && result.numberingSeriesRequired);
     await load(true);
   }
 
@@ -484,7 +489,11 @@ function Matched({
   actionError: string | null;
   confirmingDraft: boolean;
   creating: boolean;
-  draftMessage: { text: string; failed: boolean } | null;
+  draftMessage: {
+    text: string;
+    failed: boolean;
+    numberingSeriesRequired?: boolean;
+  } | null;
   showPassed: boolean;
   onTogglePassed: () => void;
   onConfirmDraft: (value: boolean) => void;
@@ -644,6 +653,7 @@ function Matched({
           <DraftHeaderFields
             caseId={caseId}
             confirming
+            numberingSeriesRetry={draftMessage?.numberingSeriesRequired}
             busy={creating}
             onConfirm={onCreateDraft}
             onCancel={() => onConfirmDraft(false)}

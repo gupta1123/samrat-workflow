@@ -16,7 +16,10 @@ import {
   buildDraftHeaderFields,
   DRAFT_FIELD_NAMES,
 } from "@/server/sap/draft-fields";
-import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
+import type {
+  DraftFieldChoices,
+  DraftHeaderPreview,
+} from "@/lib/sap-draft-fields";
 import { draftSelectionsComplete } from "@/lib/sap-draft-fields";
 import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import { saveSapMatch } from "@/lib/sap-posted-details";
@@ -100,9 +103,30 @@ export async function GET(request: Request, context: Context) {
       );
     }
     const match = job.result;
-    const header = await withTestServiceLayer((client) =>
-      loadHeader(db, client, id, match),
-    );
+    const header = await withTestServiceLayer(async (client) => {
+      const header = await loadHeader(db, client, id, match);
+      const preview: DraftHeaderPreview = header.preview;
+      if (new URL(request.url).searchParams.get("series") === "1") {
+        const base = match.result.baseDocuments[0];
+        if (!base)
+          throw new ApiError(
+            "Match a SAP base document before choosing its numbering series.",
+            409,
+          );
+        const document =
+          base.kind === "GRPO"
+            ? await client.getGrpo(base.docEntry)
+            : await client.getPurchaseOrder(base.docEntry);
+        preview.numberingSeries = {
+          postingDate: match.result.payload!.docDate,
+          options: await client.listGstApInvoiceSeries(
+            match.result.payload!.docDate,
+            document.BPL_IDAssignedToInvoice,
+          ),
+        };
+      }
+      return { ...header, preview };
+    });
     return { ok: true, preview: header.preview };
   });
 }
@@ -128,6 +152,13 @@ export async function POST(request: Request, context: Context) {
       throw new ApiError("Approve the case before creating an SAP draft.", 409);
     }
     const body = (await jsonBody(request)) as DraftFieldChoices;
+    if (
+      body?.numberingSeries !== undefined &&
+      (typeof body.numberingSeries !== "number" ||
+        !Number.isSafeInteger(body.numberingSeries) ||
+        body.numberingSeries <= 0)
+    )
+      throw new ApiError("Choose a numbering series from SAP.", 400);
     const choices: DraftFieldChoices = {
       materialForm:
         typeof body?.materialForm === "string"
@@ -308,13 +339,16 @@ export async function POST(request: Request, context: Context) {
           postingDate: plan.docDate,
           taxDate: plan.taxDate,
           baseDocument: first,
+          numberingSeries: body?.numberingSeries,
         });
         return { match, plan, created, header };
       });
     } catch (error) {
       if (error instanceof ApiError) throw error;
       if (error instanceof MatchDraftError)
-        throw new ApiError(error.message, 409);
+        throw new ApiError(error.message, 409, {
+          numberingSeriesRequired: error.numberingSeriesRequired,
+        });
       console.error("SAP Test matched AP draft creation failed", {
         caseId: id,
         error: error instanceof Error ? error.message : String(error),
@@ -403,6 +437,8 @@ export async function POST(request: Request, context: Context) {
         allocations: match.state.allocations,
         draftHeaderFields: header.values,
         draftHeaderEvidence: header.preview.fields,
+        requestedNumberingSeries: body?.numberingSeries ?? null,
+        numberingSeries: created.series,
       },
     });
     if (event.error)

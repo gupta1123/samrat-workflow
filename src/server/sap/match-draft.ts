@@ -7,7 +7,14 @@ import { sapTestPostingDateCandidates } from "./dates";
 import type { SapMatchDocument } from "./service-layer";
 import { serviceOpenBalance } from "@/lib/sap-service-balance";
 
-export class MatchDraftError extends Error {}
+export class MatchDraftError extends Error {
+  constructor(
+    message: string,
+    public numberingSeriesRequired = false,
+  ) {
+    super(message);
+  }
+}
 
 type BaseDocument = SapMatchDocument & { DocType?: string };
 
@@ -238,6 +245,10 @@ export function buildMatchedDraftPayload(params: {
 }
 
 type DraftClient = {
+  listGstApInvoiceSeries?: (
+    postingDate: string,
+    branchId?: number | null,
+  ) => Promise<Array<{ value: string; label: string }>>;
   getAdminCurrencies: () => Promise<{
     LocalCurrency?: string;
     SystemCurrency?: string;
@@ -261,6 +272,7 @@ export async function createMatchedDraft(
     currency: string;
     postingDate: string;
     taxDate: string;
+    numberingSeries?: number;
     baseDocument: BaseDocument & {
       Series?: number;
       BPL_IDAssignedToInvoice?: number | null;
@@ -270,6 +282,12 @@ export async function createMatchedDraft(
   const { baseDocument } = params;
   let postingDate = params.postingDate;
   let usedHistoricalPostingDate = false;
+  if (
+    params.numberingSeries !== undefined &&
+    (!Number.isSafeInteger(params.numberingSeries) ||
+      params.numberingSeries <= 0)
+  )
+    throw new MatchDraftError("Choose a numbering series from SAP.", true);
 
   const currencies = await client.getAdminCurrencies();
   if (!currencies.LocalCurrency || !currencies.SystemCurrency) {
@@ -302,6 +320,10 @@ export async function createMatchedDraft(
 
   const missing = await missingRatesFor(postingDate);
   if (missing.length) {
+    if (params.numberingSeries !== undefined)
+      throw new MatchDraftError(
+        `SAP has no required reporting-currency rate for ${postingDate}. Ask the SAP team to add it; the posting date was not changed.`,
+      );
     // The historical fallback only applies when booking on the vendor's invoice date.
     const canFallBack = postingDate === params.taxDate;
     let compatible: string | null = null;
@@ -334,6 +356,26 @@ export async function createMatchedDraft(
   };
   let series: number | null =
     typeof payload.Series === "number" ? payload.Series : null;
+  if (params.numberingSeries !== undefined) {
+    if (!client.listGstApInvoiceSeries)
+      throw new MatchDraftError(
+        "SAP numbering series could not be validated.",
+        true,
+      );
+    const options = await client.listGstApInvoiceSeries(
+      postingDate,
+      baseDocument.BPL_IDAssignedToInvoice,
+    );
+    if (
+      !options.some((option) => option.value === String(params.numberingSeries))
+    )
+      throw new MatchDraftError(
+        "That numbering series is no longer available for this posting date and branch. Reload the choices or contact your SAP administrator.",
+        true,
+      );
+    series = params.numberingSeries;
+    payload = { ...payload, Series: series };
+  }
   let created;
   try {
     created = await client.createDraft(payload);
@@ -342,7 +384,8 @@ export async function createMatchedDraft(
       throw error;
     if (series !== null) {
       throw new MatchDraftError(
-        `SAP rejected Open Documents invoice series ${series} for posting date ${postingDate}. Ask the SAP team to correct its series or posting period; no alternative series was substituted.`,
+        `SAP rejected numbering series ${series} for posting date ${postingDate}. Choose another SAP series or contact your SAP administrator; no alternative series was substituted.`,
+        true,
       );
     }
     series = await client.resolveGstApInvoiceSeries(
@@ -353,6 +396,7 @@ export async function createMatchedDraft(
     if (!series) {
       throw new MatchDraftError(
         `SAP Test has no usable GST A/P Invoice numbering series for ${postingDate}. No draft was created.`,
+        true,
       );
     }
     try {
@@ -362,6 +406,7 @@ export async function createMatchedDraft(
       if (/10000521|define the numbering series/i.test(String(retryError))) {
         throw new MatchDraftError(
           `SAP Test rejected its existing GST A/P Invoice series ${series} for posting date ${postingDate}. No draft was created.`,
+          true,
         );
       }
       throw retryError;

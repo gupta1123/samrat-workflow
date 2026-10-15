@@ -122,9 +122,10 @@ export async function postSapMatchAction(
 
 export async function fetchDraftHeaderPreview(
   caseId: string,
+  includeSeries = false,
 ): Promise<DraftHeaderPreview> {
   const response = await apiFetch(
-    `/api/cases/${encodeURIComponent(caseId)}/sap-match/draft`,
+    `/api/cases/${encodeURIComponent(caseId)}/sap-match/draft${includeSeries ? "?series=1" : ""}`,
   );
   const body = await readJson(response);
   if (!response.ok || !body.preview)
@@ -147,6 +148,7 @@ export async function createMatchedSapDraft(
   const body = await readJson(response);
   return {
     ok: response.ok,
+    numberingSeriesRequired: body.numberingSeriesRequired === true,
     message:
       typeof body.message === "string" && body.message
         ? body.message

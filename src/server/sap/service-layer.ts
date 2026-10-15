@@ -6,6 +6,8 @@ import {
   selectExistingGstApInvoiceSeries,
   type SapNumberedApInvoice,
   type SapNumberingSeries,
+  availableGstApSeries,
+  type SapSeriesPeriod,
 } from "./numbering-series";
 import type { SapWithholdingTaxRow } from "./draft-total";
 import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
@@ -226,6 +228,10 @@ export async function withTestServiceLayer<T>(
       branchId: number | null | undefined,
       baseSeries: number | undefined,
     ) => Promise<number | null>;
+    listGstApInvoiceSeries: (
+      postingDate: string,
+      branchId?: number | null,
+    ) => Promise<Array<{ value: string; label: string }>>;
     createDraft: (
       payload: Record<string, unknown>,
     ) => Promise<SapDraftResponse>;
@@ -585,6 +591,61 @@ export async function withTestServiceLayer<T>(
         );
         const dates = rows.map((row) => row.DocDate ?? "").filter(Boolean);
         return [...new Set(dates)];
+      },
+      async listGstApInvoiceSeries(postingDate, branchId) {
+        const [configured, categories] = await Promise.all([
+          request("/SeriesService_GetDocumentSeries", {
+            method: "POST",
+            body: JSON.stringify({
+              DocumentTypeParams: { Document: "18", DocumentSubType: "GA" },
+            }),
+          }),
+          request("/CompanyService_GetPeriods", { method: "POST", body: "{}" }),
+        ]);
+        const ids = Array.isArray(categories.body.value)
+          ? (categories.body.value as Array<{ AbsoluteEntry?: number }>)
+          : [];
+        if (
+          !ids.length ||
+          ids.some((row) => !Number.isInteger(row.AbsoluteEntry))
+        )
+          throw new Error(
+            "SAP posting-period configuration could not be read. Contact your SAP administrator.",
+          );
+        const periods: SapSeriesPeriod[] = [];
+        // Bound concurrent reads to avoid flooding SAP in companies with many years.
+        for (let offset = 0; offset < ids.length; offset += 4) {
+          periods.push(
+            ...(
+              await Promise.all(
+                ids.slice(offset, offset + 4).map(async (row) => {
+                  const { body } = await request(
+                    "/CompanyService_GetFinancePeriods",
+                    {
+                      method: "POST",
+                      body: JSON.stringify({
+                        PeriodCategoryParams: {
+                          AbsoluteEntry: row.AbsoluteEntry,
+                        },
+                      }),
+                    },
+                  );
+                  if (!Array.isArray(body.value))
+                    throw new Error(
+                      "SAP did not return posting-period dates. Contact your SAP administrator.",
+                    );
+                  return body.value as SapSeriesPeriod[];
+                }),
+              )
+            ).flat(),
+          );
+        }
+        return availableGstApSeries(
+          seriesRows(configured.body),
+          periods,
+          postingDate,
+          branchId,
+        );
       },
       async resolveGstApInvoiceSeries(postingDate, branchId, baseSeries) {
         let periodIndicator: string | null = null;

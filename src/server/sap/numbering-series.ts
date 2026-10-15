@@ -8,6 +8,8 @@ export type SapNumberedApInvoice = {
 };
 
 export type SapNumberingSeries = {
+  Name?: string;
+  Remarks?: string | null;
   Series?: number;
   Document?: string;
   DocumentSubType?: string;
@@ -17,6 +19,51 @@ export type SapNumberingSeries = {
   NextNumber?: number;
   LastNumber?: number | null;
 };
+
+export type SapSeriesPeriod = {
+  PeriodIndicator?: string;
+  PostingDateFrom?: string;
+  PostingDateTo?: string;
+  Locked?: string;
+  PeriodStatus?: string;
+};
+
+/** Exact SAP configuration only; no recognition by name or inferred fiscal-year labels. */
+export function availableGstApSeries(
+  series: SapNumberingSeries[],
+  periods: SapSeriesPeriod[],
+  postingDate: string,
+  branchId?: number | null,
+) {
+  const date = postingDate.slice(0, 10);
+  const indicators = new Set(
+    periods
+      .filter(
+        (period) =>
+          period.PostingDateFrom &&
+          period.PostingDateTo &&
+          period.Locked !== "tYES" &&
+          ["ltUnlocked", "ltUnlockedExceptSales", "ltPeriodClosing"].includes(
+            period.PeriodStatus ?? "",
+          ) &&
+          period.PostingDateFrom.slice(0, 10) <= date &&
+          period.PostingDateTo.slice(0, 10) >= date,
+      )
+      .map((period) => period.PeriodIndicator),
+  );
+  return series
+    .filter(
+      (row) =>
+        validConfiguredSeries(row) &&
+        row.PeriodIndicator &&
+        indicators.has(row.PeriodIndicator) &&
+        (row.BPLID == null || row.BPLID === -1 || row.BPLID === branchId),
+    )
+    .map((row) => ({
+      value: String(row.Series),
+      label: `${row.Name || row.Series} — ${row.Remarks || "A/P Invoice"} · ${row.PeriodIndicator} (${row.Series})`,
+    }));
+}
 
 type SeriesSelection = {
   postingDate: string;
@@ -106,7 +153,8 @@ function validConfiguredSeries(
 ): candidate is SapNumberingSeries & { Series: number } {
   const number = Number(candidate.Series);
   const next = Number(candidate.NextNumber);
-  const last = candidate.LastNumber == null ? null : Number(candidate.LastNumber);
+  const last =
+    candidate.LastNumber == null ? null : Number(candidate.LastNumber);
   return (
     Number.isInteger(number) &&
     number > 0 &&
@@ -135,11 +183,12 @@ export function selectConfiguredGstApInvoiceSeries({
   const global = valid.filter(
     (candidate) => candidate.BPLID == null || candidate.BPLID === -1,
   );
-  const candidates = exactBranch.length > 0
-    ? exactBranch
-    : Number.isInteger(branchId)
-      ? global
-      : valid;
+  const candidates =
+    exactBranch.length > 0
+      ? exactBranch
+      : Number.isInteger(branchId)
+        ? global
+        : valid;
   if (candidates.length === 1) return candidates[0].Series;
 
   for (const preferred of [defaultSeries, historicalSeries]) {

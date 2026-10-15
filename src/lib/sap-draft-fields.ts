@@ -1,6 +1,14 @@
-export type DraftFieldChoices = { materialForm?: string; transporter?: string };
+export type DraftFieldChoices = {
+  materialForm?: string;
+  transporter?: string;
+  numberingSeries?: number;
+};
 
 export type DraftHeaderPreview = {
+  numberingSeries?: {
+    options: Array<{ value: string; label: string }>;
+    postingDate: string;
+  };
   service?: boolean;
   fields: Array<{
     key: string;

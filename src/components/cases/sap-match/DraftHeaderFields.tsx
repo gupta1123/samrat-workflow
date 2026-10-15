@@ -19,19 +19,27 @@ export function DraftHeaderFields({
   busy = false,
   onConfirm,
   onCancel,
+  numberingSeriesRetry = false,
 }: {
   caseId: string;
   confirming?: boolean;
   busy?: boolean;
   onConfirm?: (choices: DraftFieldChoices) => void;
   onCancel?: () => void;
+  numberingSeriesRetry?: boolean;
 }) {
   const [preview, setPreview] = useState<DraftHeaderPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [choices, setChoices] = useState<DraftFieldChoices>({});
+  const [showSeries, setShowSeries] = useState(numberingSeriesRetry);
+  useEffect(() => {
+    if (numberingSeriesRetry) setShowSeries(true);
+  }, [numberingSeriesRetry]);
   useEffect(() => {
     let active = true;
-    fetchDraftHeaderPreview(caseId)
+    setError(null);
+    setPreview(null);
+    fetchDraftHeaderPreview(caseId, showSeries)
       .then((value) => {
         if (!active) return;
         setPreview(value);
@@ -51,7 +59,7 @@ export function DraftHeaderFields({
     return () => {
       active = false;
     };
-  }, [caseId]);
+  }, [caseId, showSeries]);
   return (
     <div className="space-y-2 text-[11px] text-[#3d3530]">
       {error ? (
@@ -130,6 +138,60 @@ export function DraftHeaderFields({
               {warning}
             </p>
           ))}
+          {confirming ? (
+            showSeries ? (
+              <div className="space-y-1 rounded-lg border border-[#e0d8cc] bg-[#faf8f4] p-3">
+                <label
+                  htmlFor={`series-${caseId}`}
+                  className="block font-medium"
+                >
+                  SAP numbering series
+                </label>
+                <select
+                  id={`series-${caseId}`}
+                  disabled={busy}
+                  className="w-full rounded-md border border-[#e0d8cc] bg-white p-2"
+                  value={choices.numberingSeries ?? ""}
+                  onChange={(event) =>
+                    setChoices((current) => ({
+                      ...current,
+                      numberingSeries: event.target.value
+                        ? Number(event.target.value)
+                        : undefined,
+                    }))
+                  }
+                >
+                  <option value="">Choose a SAP series…</option>
+                  {preview.numberingSeries?.options.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[#6b5d50]">
+                  SAP series for posting date{" "}
+                  {preview.numberingSeries?.postingDate}. No series is selected
+                  automatically. SAP validates posting permissions and period
+                  status when you confirm.
+                </p>
+                {!preview.numberingSeries?.options.length ? (
+                  <p className="text-[#b91c1c]">
+                    No available series returned for this date and branch.
+                    Contact your SAP administrator.
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                className="text-[#6b4a33] underline"
+                onClick={() => setShowSeries(true)}
+              >
+                Choose a different SAP numbering series
+              </button>
+            )
+          ) : null}
         </>
       )}
       {confirming ? (
@@ -141,6 +203,7 @@ export function DraftHeaderFields({
               busy ||
               !preview ||
               !!error ||
+              (showSeries && !choices.numberingSeries) ||
               Boolean(preview && !draftSelectionsComplete(preview, choices))
             }
             onClick={() => onConfirm?.(choices)}

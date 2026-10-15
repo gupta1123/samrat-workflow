@@ -305,6 +305,98 @@ function fakeClient(
 
 const base = { DocDate: "2026-06-13", Series: 5, BPL_IDAssignedToInvoice: 1 };
 
+test("an explicit SAP series is re-read and applied without altering dates or attachments", async () => {
+  const { client, calls } = fakeClient();
+  const reads: unknown[] = [];
+  const selectedClient = {
+    ...client,
+    listGstApInvoiceSeries: async (date: string, branch?: number | null) => {
+      reads.push([date, branch]);
+      return [{ value: "88", label: "Configured service series" }];
+    },
+  };
+  const result = await createMatchedDraft(selectedClient, {
+    payload: { Series: 2017, AttachmentEntry: 123 },
+    currency: "INR",
+    postingDate: "2026-06-24",
+    taxDate: "2026-06-24",
+    baseDocument: base,
+    numberingSeries: 88,
+  });
+  assert.equal(result.series, 88);
+  assert.deepEqual(reads, [["2026-06-24", 1]]);
+  assert.equal(calls[0].Series, 88);
+  assert.equal(calls[0].AttachmentEntry, 123);
+  assert.equal(result.postingDate, "2026-06-24");
+});
+
+test("tampered, unavailable and stale series cannot reach a SAP create call", async () => {
+  const { client, calls } = fakeClient();
+  for (const numberingSeries of [-1, 1.5, 88]) {
+    await assert.rejects(
+      createMatchedDraft(
+        { ...client, listGstApInvoiceSeries: async () => [] },
+        {
+          payload: { Series: 2017 },
+          currency: "INR",
+          postingDate: "2026-06-24",
+          taxDate: "2026-06-24",
+          baseDocument: base,
+          numberingSeries,
+        },
+      ),
+      MatchDraftError,
+    );
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("a rejected explicit series exposes the retry choice and never substitutes another series", async () => {
+  const { client, calls } = fakeClient();
+  await assert.rejects(
+    createMatchedDraft(
+      {
+        ...client,
+        listGstApInvoiceSeries: async () => [
+          { value: "88", label: "SAP series" },
+        ],
+        createDraft: async (payload) => {
+          calls.push(payload);
+          throw Error("10000521 define the numbering series");
+        },
+      },
+      {
+        payload: { Series: 2017 },
+        currency: "INR",
+        postingDate: "2026-06-24",
+        taxDate: "2026-06-24",
+        baseDocument: base,
+        numberingSeries: 88,
+      },
+    ),
+    (error) =>
+      error instanceof MatchDraftError && error.numberingSeriesRequired,
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].Series, 88);
+});
+
+test("an explicit series choice prevents the legacy automatic posting-date fallback", async () => {
+  const { client, calls } = fakeClient({ missingRateOn: ["2026-06-24"] });
+  await assert.rejects(
+    createMatchedDraft(client, {
+      payload: {},
+      currency: "INR",
+      postingDate: "2026-06-24",
+      taxDate: "2026-06-24",
+      baseDocument: base,
+      numberingSeries: 88,
+    }),
+    /posting date was not changed/,
+  );
+  assert.equal(calls.length, 0);
+});
+
 const openRows = () =>
   plan().lines.map((line) => ({
     DocEntry: line.baseEntry,
