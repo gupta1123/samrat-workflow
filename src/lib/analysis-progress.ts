@@ -38,7 +38,7 @@ export function getAnalysisProgressNotice(
       const nextAttempt = Math.min(job.attemptCount + 1, job.maxAttempts);
       return `The previous attempt did not finish. Automatic retry ${nextAttempt} of ${job.maxAttempts} will start ${retryTimeLabel(job.nextRunAt, now)}.`;
     }
-    return "Waiting for an analysis worker to start.";
+    return "Queued — your documents are saved. Analysis will start automatically when a worker is available. You can upload another case.";
   }
 
   if (job.status !== "running") return null;

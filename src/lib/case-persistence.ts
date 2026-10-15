@@ -250,6 +250,7 @@ const AUTH_SESSION_ERROR =
 
 class ApiRequestError extends Error {
   status?: number;
+  code?: string;
   isAuthError: boolean;
   duplicateCase?: DuplicateCaseReference;
 
@@ -257,6 +258,7 @@ class ApiRequestError extends Error {
     message: string,
     options?: {
       status?: number;
+      code?: string;
       isAuthError?: boolean;
       duplicateCase?: DuplicateCaseReference;
     },
@@ -264,6 +266,7 @@ class ApiRequestError extends Error {
     super(message);
     this.name = "ApiRequestError";
     this.status = options?.status;
+    this.code = options?.code;
     this.isAuthError = Boolean(options?.isAuthError);
     this.duplicateCase = options?.duplicateCase;
   }
@@ -504,6 +507,13 @@ function toApiRequestError(
 
   return new ApiRequestError(message, {
     status: options?.status,
+    code:
+      payload &&
+      typeof payload === "object" &&
+      "code" in payload &&
+      typeof payload.code === "string"
+        ? payload.code
+        : undefined,
     isAuthError,
     duplicateCase,
   });

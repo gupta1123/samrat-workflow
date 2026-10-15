@@ -1,5 +1,7 @@
 "use client";
 
+import { getFriendlyAnalysisStartError } from "@/lib/analysis-start";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -2157,11 +2159,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
       );
     } catch (analysisFailure) {
       setAnalysisNotice(null);
-      setAnalysisError(
-        getFriendlyAnalysisError(
-          analysisFailure instanceof Error ? analysisFailure.message : null,
-        ),
-      );
+      setAnalysisError(getFriendlyAnalysisStartError(analysisFailure));
       setAnalysisStatus("error");
     } finally {
       draftMutationBusy.current = false;

@@ -13,6 +13,7 @@ import {
 } from "@/server/comparison";
 import { mapProcessingJob } from "@/server/processing/jobs";
 import { isConfirmedAnalysisStart } from "@/lib/analysis-start";
+import { analysisStartDatabaseError } from "@/server/processing/analysis-start-error";
 function workerUrl(request: Request) {
   const base =
     process.env.APP_BASE_URL ||
@@ -46,11 +47,14 @@ export async function POST(
       p_case: uuid(id),
       p_options: { analysisMode, comparisonOptions },
     });
+    const startError = analysisStartDatabaseError(error);
+    if (startError) throw startError;
     dbCheck(error);
     if (!isConfirmedAnalysisStart(data)) {
       throw new ApiError(
         "Analysis did not start. The case is still safe in Draft; please retry.",
         503,
+        { code: "analysis_start_unconfirmed" },
       );
     }
     // The on-prem/local stack runs a persistent queue worker beside Next.js.

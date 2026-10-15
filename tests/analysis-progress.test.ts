@@ -7,6 +7,17 @@ import {
 
 const now = Date.parse("2026-09-08T09:00:00.000Z");
 
+test("waiting cases are presented as saved queued work, not analysis failures", () => {
+  const notice = getAnalysisProgressNotice({
+    status: "queued",
+    attemptCount: 0,
+    maxAttempts: 2,
+    progress: 0,
+  });
+  assert.ok(notice?.includes("documents are saved"));
+  assert.ok(notice?.includes("start automatically"));
+});
+
 test("explains a scheduled retry instead of showing a frozen percentage", () => {
   const notice = getAnalysisProgressNotice(
     {

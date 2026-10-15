@@ -11,7 +11,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { AppShell } from "@/components/dashboard/AppShell";
-import { getFriendlyAnalysisError } from "@/lib/analysis-progress";
+import { getFriendlyAnalysisStartError } from "@/lib/analysis-start";
 import { Button } from "@/components/ui/button";
 import { AnalysisOptionsDialog } from "./AnalysisOptionsDialog";
 import { AnalysisModeActions } from "./AnalysisModeActions";
@@ -158,11 +158,7 @@ export function WorkspacePage() {
       router.replace(`/cases/${savedCase.id}`);
       // Keep actions locked until navigation; a second click must not enqueue another job.
     } catch (failure) {
-      setError(
-        getFriendlyAnalysisError(
-          failure instanceof Error ? failure.message : null,
-        ),
-      );
+      setError(getFriendlyAnalysisStartError(failure));
       busyRef.current = false;
       setBusy("");
     }

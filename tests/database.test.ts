@@ -152,6 +152,15 @@ before(async () => {
     ),
   );
   await db.query("insert into auth.users(id) values($1),($2)", [user, other]);
+  await db.exec(
+    readFileSync(
+      new URL(
+        "../supabase/migrations/20261015080435_queue_case_analysis_without_active_case_rejection.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
 });
 after(async () => db.close());
 async function upload(
@@ -570,6 +579,100 @@ test("one job and one worker can own a case; file writes are blocked during anal
     /current analysis/,
   );
   await complete(one.job.id, c.id);
+});
+
+test("more than three saved cases queue durably while running work stays bounded", async () => {
+  const owner = randomUUID();
+  await db.query("insert into auth.users(id) values($1)", [owner]);
+  const cases = await Promise.all(
+    Array.from({ length: 7 }, () => createCase(owner)),
+  );
+  const queued = await Promise.all(cases.map((c) => job(c.id, owner)));
+  assert.equal(new Set(queued.map((result) => result.job.id)).size, 7);
+  assert.ok(
+    queued.every(
+      (result) =>
+        result.job.status === "queued" && result.case.status === "processing",
+    ),
+  );
+  assert.equal((await job(cases[3].id, owner)).job.id, queued[3].job.id);
+  for (const item of queued.slice(0, 3))
+    assert.equal((await claim(item.job.id)).status, "running");
+  assert.equal(await claim(queued[3].job.id), null);
+  const waiting = await db.query<{
+    status: string;
+    attempt_count: number;
+    locked_at: string | null;
+    locked_by: string | null;
+  }>(
+    "select status,attempt_count,locked_at,locked_by from public.packet_processing_jobs where id=$1",
+    [queued[3].job.id],
+  );
+  assert.deepEqual(waiting.rows[0], {
+    status: "queued",
+    attempt_count: 0,
+    locked_at: null,
+    locked_by: null,
+  });
+  await complete(queued[0].job.id, cases[0].id);
+  assert.equal((await claim(queued[3].job.id)).status, "running");
+  assert.equal(await claim(queued[3].job.id, "second-worker"), null);
+  // Other owners do not share this owner's capacity slots.
+  const independent = await createCase(other);
+  const independentJob = await job(independent.id, other);
+  assert.equal((await claim(independentJob.job.id)).status, "running");
+  await complete(independentJob.job.id, independent.id);
+});
+
+test("queue admission keeps the daily safeguard and idempotency at the limit", async () => {
+  const owner = randomUUID();
+  await db.query("insert into auth.users(id) values($1)", [owner]);
+  let first: { caseId: string; jobId: string } | undefined;
+  for (let index = 0; index < 40; index++) {
+    const c = await createCase(owner);
+    const result = await job(c.id, owner);
+    first ??= { caseId: c.id, jobId: result.job.id };
+  }
+  assert.equal((await job(first!.caseId, owner)).job.id, first!.jobId);
+  const extra = await createCase(owner);
+  await assert.rejects(job(extra.id, owner), (error: unknown) => {
+    const failure = error as { code?: string; detail?: string };
+    assert.equal(failure.code, "PT429");
+    assert.equal(JSON.parse(failure.detail!).code, "analysis_daily_limit");
+    return true;
+  });
+  assert.equal(
+    await scalar("select status result from public.packet_cases where id=$1", [
+      extra.id,
+    ]),
+    "draft",
+  );
+  for (const signature of [
+    "public.enqueue_case_analysis(uuid,uuid,jsonb)",
+    "public.claim_case_job(uuid,text)",
+  ]) {
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('authenticated',$1,'EXECUTE') result",
+        [signature],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('anon',$1,'EXECUTE') result",
+        [signature],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('service_role',$1,'EXECUTE') result",
+        [signature],
+      ),
+      true,
+    );
+  }
 });
 test("an active background job cannot silently return its case to Draft", async () => {
   const c = await createCase();
