@@ -139,7 +139,10 @@ function Detail({
     <div className="dt">
       <p className={`dt-sum ${verdict}`}>{summary}</p>
       {ranked.otherWarnings.length ? (
-        <p className="gr-note" style={{ margin: "8px 14px 0", paddingBottom: 0 }}>
+        <p
+          className="gr-note"
+          style={{ margin: "8px 14px 0", paddingBottom: 0 }}
+        >
           {ranked.otherWarnings.join("; ")}
         </p>
       ) : null}
@@ -241,7 +244,7 @@ export function ReceiptCandidatesPanel({
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [folds, setFolds] = useState<Set<string>>(new Set());
-  const service = line.kind === "service";
+  const service = line.kind === "service" || line.kind === "non-stock";
   const label = service ? "POs" : SAP_TERMS.grpos;
   const selection = receiptSelection(line, locked ? {} : edits);
   const unitLabel = service ? "" : unit;

@@ -99,7 +99,8 @@ export function MatchLineCard({
   onLink: (line: LineResult, itemCode: string) => void;
 }) {
   const invoiceLine = invoice.lines[line.index];
-  const service = line.kind === "service";
+  const service = line.kind === "service" || line.kind === "non-stock";
+  const nonStock = line.kind === "non-stock";
   const unmapped = line.kind === "unmapped";
   const selected = line.candidates.filter(
     (candidate) => candidate.allocated > 0,
@@ -189,7 +190,7 @@ export function MatchLineCard({
               {invoiceLine?.vendorItemCode ? " → " : ""}
               <span className="font-mono">{line.itemCode}</span>
               {line.itemName && !sameAsTitle ? ` · ${line.itemName}` : ""}
-              {` · ${service ? "service, 2-way check" : "stock item, 3-way check"}`}
+              {` · ${nonStock ? "non-stock item, invoice-to-PO check" : service ? "service, 2-way check" : "stock item, 3-way check"}`}
             </div>
           ) : null}
           {service && !line.itemCode ? (
@@ -216,13 +217,39 @@ export function MatchLineCard({
           <ItemMatchingEvidence invoice={invoice} line={line} />
         ) : null}
         {unmapped && mapCheck ? (
-          <ItemLinker
-            caseId={caseId}
-            check={mapCheck}
-            canLink={vendorFound}
-            busy={busy || locked}
-            onLink={(itemCode) => onLink(line, itemCode)}
-          />
+          <>
+            <ItemLinker
+              caseId={caseId}
+              check={mapCheck}
+              canLink={vendorFound}
+              busy={busy || locked}
+              onLink={(itemCode) => onLink(line, itemCode)}
+            />
+            {line.nonStockPoCandidates?.length ? (
+              <section className="rounded-lg border border-[#f0d7a6] bg-[#fdfaf3] p-3">
+                <h3 className="mb-2 text-[12px] font-semibold">
+                  Or confirm an item through a non-stock PO
+                </h3>
+                <p className="mb-2 text-[11px] text-[#6b5d50]">
+                  These are the supplier’s SAP-confirmed non-stock PO lines, not
+                  automatic product matches. Keep the stock-item flow above if
+                  these do not describe this purchase.
+                </p>
+                <ServicePoCandidates
+                  line={{
+                    ...line,
+                    kind: "non-stock",
+                    candidates: line.nonStockPoCandidates,
+                  }}
+                  invoiceLine={invoiceLine}
+                  invoicePoReferences={invoice.poReferences}
+                  disabled={busy || locked}
+                  onAllocate={onAllocate}
+                  onReset={onResetAllocation}
+                />
+              </section>
+            ) : null}
+          </>
         ) : (
           <>
             <div className="overflow-x-auto">
@@ -274,7 +301,7 @@ export function MatchLineCard({
                       </tr>
                       {line.itemCode && line.invoiceQty != null ? (
                         <tr className="border-t border-[#f0ece4]">
-                          {rowLabel("Billing units")}
+                          {rowLabel(nonStock ? "Quantity" : "Billing units")}
                           <Cell
                             value={
                               line.po?.qty != null
@@ -457,6 +484,7 @@ export function MatchLineCard({
                   <ServicePoCandidates
                     line={line}
                     invoiceLine={invoiceLine}
+                    invoicePoReferences={invoice.poReferences}
                     disabled={busy || locked}
                     onAllocate={onAllocate}
                     onReset={onResetAllocation}

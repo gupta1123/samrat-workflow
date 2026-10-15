@@ -148,6 +148,9 @@ export type SapPoLine = {
   lineTotal: number | null;
   openAmount: number | null;
   description?: string | null;
+  /** Original SAP PO line/header text, not a generated product match. */
+  lineRemarks?: string | null;
+  headerRemarks?: string | null;
 };
 
 export type SapItemInfo = {
@@ -333,6 +336,12 @@ export type CandidateView = {
   itemName?: string | null;
   documentType?: "dDocument_Service" | "dDocument_Items";
   accountCode?: string | null;
+  poEvidence?: {
+    description: string | null;
+    lineRemarks: string | null;
+    headerRemarks: string | null;
+    openQuantity: number;
+  };
   supplierCode?: string;
   purchaseOrder?: {
     docEntry: number;
@@ -343,7 +352,9 @@ export type CandidateView = {
 
 export type LineResult = {
   index: number;
-  kind: "material" | "service" | "unmapped";
+  kind: "material" | "service" | "non-stock" | "unmapped";
+  /** Optional, unselected alternatives; never establish product identity. */
+  nonStockPoCandidates?: CandidateView[];
   itemCode: string | null;
   itemName: string | null;
   invoiceQty: number | null;

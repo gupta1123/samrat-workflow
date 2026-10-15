@@ -604,6 +604,8 @@ export function mapPoLines(
         lineTotal,
         openAmount,
         description: text(line.ItemDescription) || null,
+        lineRemarks: text(line.FreeText) || null,
+        headerRemarks: text(document.Comments) || null,
       });
     }
   }

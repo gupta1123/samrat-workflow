@@ -52,7 +52,9 @@ function buildTiles(
   const lines = result.lines;
   const unmapped = lines.filter((line) => line.kind === "unmapped");
   const material = lines.filter((line) => line.kind === "material");
-  const services = lines.filter((line) => line.kind === "service");
+  const services = lines.filter(
+    (line) => line.kind === "service" || line.kind === "non-stock",
+  );
   const pendingServiceItems = services.filter(
     (line) =>
       !line.itemCode &&
@@ -172,8 +174,10 @@ function buildTiles(
               : "No eligible PO",
       sub:
         services.length > 1
-          ? `${services.length} service lines`
-          : "Service · no GRPO needed",
+          ? `${services.length} ${services.every((line) => line.kind === "non-stock") ? "non-stock" : "service / non-stock"} lines`
+          : services[0]?.kind === "non-stock"
+            ? "Non-stock · invoice-to-PO check"
+            : "Service · no GRPO needed",
       mode: linkedCount === services.length ? "ok" : "warn",
     };
   } else if (!material.length) {

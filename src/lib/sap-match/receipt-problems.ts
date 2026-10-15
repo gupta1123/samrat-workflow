@@ -19,7 +19,7 @@ export function receiptProblems(invoice: MatchInvoice, line: LineResult) {
   const selected = line.candidates.filter(
     (candidate) => candidate.allocated > 0,
   );
-  const service = line.kind === "service";
+  const service = line.kind === "service" || line.kind === "non-stock";
   const ignorePo = !service && poNotOnInvoice(invoice, line.candidates);
   const rows: string[] = [];
   for (const candidate of selected) {

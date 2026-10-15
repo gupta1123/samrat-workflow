@@ -26,6 +26,7 @@ import {
   buildMatchedDraftPayload,
   createMatchedDraft,
   MatchDraftError,
+  revalidateNonStockPoItems,
 } from "@/server/sap/match-draft";
 import {
   withTestServiceLayer,
@@ -265,6 +266,9 @@ export async function POST(request: Request, context: Context) {
           );
         }
 
+        await revalidateNonStockPoItems(plan, bases, (code) =>
+          client.getItemInventoryState(code),
+        );
         const { payload, currency } = buildMatchedDraftPayload({
           caseId: id,
           plan,

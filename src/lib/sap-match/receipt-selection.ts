@@ -5,6 +5,7 @@ export function receiptSelection(
   line: LineResult,
   edits: Record<string, string>,
 ) {
+  const poBased = line.kind === "service" || line.kind === "non-stock";
   const allocations: Record<string, number> = {};
   const errors: Record<string, string> = {};
   let dirty = false;
@@ -20,7 +21,7 @@ export function receiptSelection(
     if (raw !== undefined && value !== candidate.allocated) dirty = true;
     if (!Number.isFinite(value) || value < 0) {
       errors[candidate.key] = "Enter a valid quantity of zero or more.";
-    } else if (line.kind !== "service" && value > candidate.open + 0.000001) {
+    } else if (!poBased && value > candidate.open + 0.000001) {
       errors[candidate.key] =
         "Quantity exceeds what is available on this receipt.";
     }
@@ -30,7 +31,7 @@ export function receiptSelection(
     Math.round(
       Object.values(allocations).reduce((sum, value) => sum + value, 0) * 1000,
     ) / 1000;
-  const billed = line.kind === "service" ? line.invoiceAmount : line.invoiceQty;
+  const billed = poBased ? line.invoiceAmount : line.invoiceQty;
   const remaining =
     billed == null ? null : Math.round((billed - total) * 1000) / 1000;
   return { allocations, errors, dirty, total, billed, remaining };

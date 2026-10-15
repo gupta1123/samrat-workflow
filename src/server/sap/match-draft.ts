@@ -23,6 +23,38 @@ function lineOf(document: BaseDocument | undefined, lineNum: number) {
   );
 }
 
+/** Item-based PO invoicing is allowed only for SAP-confirmed non-stock items.
+ * Re-read this flag immediately before draft creation; a saved review is not
+ * permission to bypass stock receipt checks after SAP master data changes.
+ */
+export async function revalidateNonStockPoItems(
+  plan: PlannedPayload,
+  bases: Map<string, BaseDocument>,
+  readItem: (
+    code: string,
+  ) => Promise<{ ItemCode?: string; InventoryItem?: string }>,
+) {
+  const codes = new Set<string>();
+  for (const line of plan.lines) {
+    if (line.baseType !== 22) continue;
+    const base = bases.get(`22:${line.baseEntry}`);
+    if (base?.DocType === "dDocument_Service") continue;
+    const raw = record(lineOf(base, line.baseLine));
+    if (!line.itemCode || raw.ItemCode !== line.itemCode)
+      throw new MatchDraftError(
+        "The selected PO item changed. Re-check and confirm the PO line again.",
+      );
+    codes.add(line.itemCode);
+  }
+  for (const code of codes) {
+    const item = await readItem(code);
+    if (item.ItemCode !== code || item.InventoryItem !== "tNO")
+      throw new MatchDraftError(
+        "SAP no longer confirms the selected PO item as non-stock. Re-check; stock items require the GRPO flow.",
+      );
+  }
+}
+
 /**
  * @param bases the SAP base documents (receipts or POs) keyed by "<baseType>:<docEntry>",
  *   re-read from SAP immediately before creating the draft.
@@ -74,6 +106,14 @@ export function buildMatchedDraftPayload(params: {
       );
     }
     const baseLine = record(lineOf(base, line.baseLine));
+    if (
+      base.DocType !== "dDocument_Service" &&
+      baseLine.ItemCode != null &&
+      baseLine.ItemCode !== line.itemCode
+    )
+      throw new MatchDraftError(
+        `The item on SAP document ${line.baseDocNum}, line ${line.baseLine} changed. Re-check the match.`,
+      );
     if (
       (line.documentType &&
         base.DocType &&

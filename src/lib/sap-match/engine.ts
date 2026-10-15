@@ -344,6 +344,66 @@ function suggestItems(
     }));
 }
 
+/** All supplier PO lines explicitly marked non-stock by SAP. No name scoring,
+ * suffix stripping, amount-based ranking or inferred product links.
+ */
+function nonStockPoCandidates(
+  invoice: MatchInvoice,
+  ln: MatchInvoiceLine,
+  context: MatchContext,
+  remaining: Map<string, number | null>,
+): Array<{ po: SapPoLine; view: CandidateView }> {
+  return context.poLines
+    .filter(
+      (po) =>
+        po.cardCode === context.vendor?.cardCode &&
+        po.documentType === "dDocument_Items" &&
+        context.items[po.itemCode]?.inventory === false,
+    )
+    .map((po) => {
+      const available = remaining.get(receiptKey(po));
+      const view = candidateView(receiptKey(po), "PO", po, available ?? 0);
+      view.itemName = context.items[po.itemCode]?.name ?? null;
+      view.documentType = po.documentType;
+      view.accountCode = po.accountCode;
+      view.poEvidence = {
+        description: po.description ?? null,
+        lineRemarks: po.lineRemarks ?? null,
+        headerRemarks: po.headerRemarks ?? null,
+        openQuantity: po.openQty,
+      };
+      view.note = po.lineRemarks ?? po.description ?? null;
+      if (
+        context.branch?.bplId != null &&
+        po.branchId != null &&
+        context.branch.bplId !== po.branchId
+      )
+        view.rejected = "Different branch";
+      else if (available == null || available <= 0 || po.openQty <= 0)
+        view.rejected = "No verified open quantity/value on this PO line";
+      view.good.push(
+        "SAP Item Master confirms a non-stock item; PO-line confirmation required",
+      );
+      const exact = (left: string, right: string) =>
+        left.trim().toUpperCase() === right.trim().toUpperCase();
+      if (
+        invoice.poReferences.some((ref) =>
+          po.poRefs.some((sapRef) => exact(ref, sapRef)),
+        )
+      )
+        view.good.push("Exact PO reference recorded");
+      else
+        view.bad.push(
+          "Printed PO reference not confirmed; explicitly confirm this PO and line",
+        );
+      if (ln.quantity !== null && ln.quantity === po.openQty)
+        view.good.push("Invoice quantity equals open PO quantity");
+      if (ln.rate !== null && ln.rate === po.price)
+        view.good.push("Invoice unit price equals PO unit price");
+      return { po, view };
+    });
+}
+
 function stateCode(gstin: string | null) {
   const code = (gstin ?? "").trim().slice(0, 2);
   return /^\d{2}$/.test(code) ? code : null;
@@ -652,6 +712,35 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     }
 
     if (!itemCode) {
+      const alternatives = context.vendor
+        ? nonStockPoCandidates(invoice, ln, context, remainingServiceAmount)
+        : [];
+      const chosen = Object.entries(
+        state.allocations[String(ln.index)] ?? {},
+      ).filter(([, value]) => value > 0);
+      if (
+        chosen.length === 1 &&
+        alternatives.some(
+          ({ view }) => view.key === chosen[0][0] && !view.rejected,
+        )
+      ) {
+        result.kind = "non-stock";
+        evaluateServiceLine({
+          ln,
+          itemCode: null,
+          result,
+          invoice,
+          context,
+          state,
+          checks,
+          planned,
+          remainingServiceAmount,
+          rules,
+        });
+        continue;
+      }
+      if (alternatives.length)
+        result.nonStockPoCandidates = alternatives.map(({ view }) => view);
       checks.push({
         id: `map-${ln.index}`,
         lineIndex: ln.index,
@@ -676,10 +765,7 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     });
     if (!context.vendor) continue;
 
-    const isService =
-      info?.inventory === false &&
-      invoice.supplyNature !== "goods" &&
-      invoice.supplyNature !== "mixed";
+    const isService = info?.inventory === false;
     if (invoice.supplyNature === "services" && info?.inventory === true) {
       checks.push({
         id: `kind-${ln.index}`,
@@ -691,7 +777,11 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
       });
       continue;
     }
-    result.kind = isService ? "service" : "material";
+    result.kind = isService
+      ? invoice.supplyNature === "goods" || invoice.supplyNature === "mixed"
+        ? "non-stock"
+        : "service"
+      : "material";
     if (isService) {
       evaluateServiceLine({
         ln,
@@ -872,7 +962,11 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
       ]),
     ).values(),
   ];
-  const kinds = new Set(lineResults.map((line) => line.kind));
+  const kinds = new Set(
+    lineResults.map((line) =>
+      line.kind === "non-stock" ? "service" : line.kind,
+    ),
+  );
   const method: MatchResult["method"] =
     kinds.has("unmapped") || !lineResults.length
       ? "unknown"
@@ -1460,71 +1554,84 @@ function evaluateServiceLine(args: {
       id: `amt-${i}`,
       lineIndex: i,
       sev: "block",
-      title: "The service invoice line needs its printed pre-tax amount",
+      title: "The invoice line needs its printed pre-tax amount",
       help: "Review the invoice amount. No zero amount or weight will be assumed.",
     });
     return;
   }
   const invoicePos = invoice.poReferences.map(normalizeRef).filter(Boolean);
 
-  const candidates = context.poLines
-    .filter(
-      (po) =>
-        po.cardCode === vendor.cardCode &&
-        (itemCode
-          ? po.itemCode === itemCode
-          : po.documentType === "dDocument_Service" ||
-            (po.documentType === "dDocument_Items" &&
-              context.items[po.itemCode]?.inventory === false)),
-    )
-    .map((po) => {
-      const available = remainingServiceAmount.get(receiptKey(po));
-      const open = available == null ? 0 : r2(available);
-      const view = candidateView(receiptKey(po), "PO", po, open);
-      view.itemName = context.items[po.itemCode]?.name ?? null;
-      view.documentType = po.documentType;
-      view.accountCode = po.accountCode ?? null;
-      if (
-        context.branch?.bplId != null &&
-        po.branchId != null &&
-        po.branchId !== context.branch.bplId
-      ) {
-        view.rejected = "Different branch";
-        return { view, po };
-      }
-      if (available === null || available === undefined || open <= 0) {
-        view.rejected =
-          available == null
-            ? "SAP did not return this service line's open amount"
-            : "Fully billed already";
-        return { view, po };
-      }
-      const score = 0; // Presentation only; never use a ranking score to choose a service PO.
-      if (itemCode) view.good.push("same SAP service item");
-      else if (po.documentType === "dDocument_Items")
-        view.good.push(
-          "SAP confirms this is a non-stock item; confirm the service link",
-        );
-      if (po.poRefs.some((ref) => invoicePos.includes(normalizeRef(ref)))) {
-        view.good.unshift("PO number is on the bill");
-      } else {
-        view.bad.push("PO number not on the bill");
-      }
-      if (open >= amount) {
-        view.good.push("enough value left");
-      } else {
-        view.bad.push(`only ${inr(open)} left`);
-      }
-      view.score = score;
-      view.note =
-        [
-          po.description,
-          po.accountCode ? `SAP account ${po.accountCode}` : null,
-        ]
-          .filter(Boolean)
-          .join(" · ") || null;
-      return { view, po };
-    });
+  const nonStock = result.kind === "non-stock";
+  const candidates = nonStock
+    ? nonStockPoCandidates(invoice, ln, context, remainingServiceAmount).filter(
+        ({ po }) => !itemCode || po.itemCode === itemCode,
+      )
+    : context.poLines
+        .filter(
+          (po) =>
+            po.cardCode === vendor.cardCode &&
+            (itemCode
+              ? po.itemCode === itemCode
+              : po.documentType === "dDocument_Service" ||
+                (po.documentType === "dDocument_Items" &&
+                  context.items[po.itemCode]?.inventory === false)),
+        )
+        .map((po) => {
+          const available = remainingServiceAmount.get(receiptKey(po));
+          const open = available == null ? 0 : r2(available);
+          const view = candidateView(receiptKey(po), "PO", po, open);
+          view.itemName = context.items[po.itemCode]?.name ?? null;
+          view.documentType = po.documentType;
+          view.accountCode = po.accountCode ?? null;
+          view.poEvidence = {
+            description: po.description ?? null,
+            lineRemarks: po.lineRemarks ?? null,
+            headerRemarks: po.headerRemarks ?? null,
+            openQuantity: po.openQty,
+          };
+          if (
+            context.branch?.bplId != null &&
+            po.branchId != null &&
+            po.branchId !== context.branch.bplId
+          ) {
+            view.rejected = "Different branch";
+            return { view, po };
+          }
+          if (available === null || available === undefined || open <= 0) {
+            view.rejected =
+              available == null
+                ? "SAP did not return this service line's open amount"
+                : "Fully billed already";
+            return { view, po };
+          }
+          const score = 0; // Presentation only; never use a ranking score to choose a service PO.
+          if (itemCode) view.good.push("same SAP service item");
+          else if (po.documentType === "dDocument_Items")
+            view.good.push(
+              "SAP confirms this is a non-stock item; confirm the service link",
+            );
+          if (po.poRefs.some((ref) => invoicePos.includes(normalizeRef(ref)))) {
+            view.good.unshift("PO number is on the bill");
+          } else {
+            view.bad.push("PO number not on the bill");
+          }
+          if (open >= amount) {
+            view.good.push("enough value left");
+          } else {
+            view.bad.push(`only ${inr(open)} left`);
+          }
+          view.score = score;
+          view.note =
+            [
+              po.lineRemarks,
+              po.description,
+              po.headerRemarks,
+              po.accountCode ? `SAP account ${po.accountCode}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || null;
+          return { view, po };
+        });
 
   const manual = state.allocations[String(i)];
   const eligible = candidates.filter((candidate) => !candidate.view.rejected);
@@ -1537,7 +1644,7 @@ function evaluateServiceLine(args: {
         (candidate) => candidate.view.key === selections[0][0],
       );
     }
-  } else {
+  } else if (!nonStock) {
     // A non-stock PO item is only a candidate when the invoice did not identify
     // that item. Even an exact PO reference must not silently establish its
     // product identity; the reviewer confirms the PO line and item together.
@@ -1571,19 +1678,25 @@ function evaluateServiceLine(args: {
     id: `kind-${i}`,
     lineIndex: i,
     sev: "pass",
-    title: "Service: nothing to receive, so no receipt is needed",
+    title: nonStock
+      ? "SAP non-stock item: invoice-to-PO check, no stock GRPO required"
+      : "Service: nothing to receive, so no receipt is needed",
   });
   if (!pick) {
     checks.push({
       id: `rcpt-${i}`,
       lineIndex: i,
       sev: "block",
-      title: eligible.length
-        ? "Confirm the correct service PO line"
-        : "No eligible open PO line for this service",
-      help: eligible.length
-        ? "Compare the invoice service with the SAP item or account and explicitly select the correct PO line. No PO or item is selected by amount or description similarity."
-        : "No usable service-type or SAP-confirmed non-stock item PO line was found for this supplier. Check the PO type, item status and remaining balance in SAP.",
+      title: nonStock
+        ? "Confirm the correct non-stock PO line"
+        : eligible.length
+          ? "Confirm the correct service PO line"
+          : "No eligible open PO line for this service",
+      help: nonStock
+        ? "Review the original SAP PO remarks, quantity, unit price and amount. Confirm this PO line explicitly; no product identity is inferred from a matching amount or name."
+        : eligible.length
+          ? "Compare the invoice service with the SAP item or account and explicitly select the correct PO line. No PO or item is selected by amount or description similarity."
+          : "No usable service-type or SAP-confirmed non-stock item PO line was found for this supplier. Check the PO type, item status and remaining balance in SAP.",
       options: [RETURN_OPTION],
     });
     return;
@@ -1647,7 +1760,9 @@ function evaluateServiceLine(args: {
       sev: "block",
       title:
         "This non-stock SAP item PO needs the invoice quantity and unit price",
-      help: "Use the printed hours, months or other billing unit. Do not substitute a weight or quantity of one.",
+      help: nonStock
+        ? "Use the printed purchase quantity and unit price. Do not invent a weight or substitute a quantity of one."
+        : "Use the printed hours, months or other billing unit. Do not substitute a weight or quantity of one.",
     });
     return;
   }
@@ -1667,7 +1782,9 @@ function evaluateServiceLine(args: {
         id: `qty-${i}`,
         lineIndex: i,
         sev: "block",
-        title: "The service PO does not have enough unbilled units",
+        title: nonStock
+          ? "The non-stock PO does not have enough unbilled units"
+          : "The service PO does not have enough unbilled units",
         help: "Correct the invoice billing units or amend the PO, then re-check.",
       });
       return;
@@ -1677,14 +1794,18 @@ function evaluateServiceLine(args: {
         id: `rate-${i}`,
         lineIndex: i,
         sev: "unchecked",
-        title: "Service unit price not verified (SAP PO price unavailable)",
+        title: nonStock
+          ? "Non-stock unit price not verified (SAP PO price unavailable)"
+          : "Service unit price not verified (SAP PO price unavailable)",
       });
     } else if (Math.abs(ln.rate! - pick.po.price) < 0.005) {
       checks.push({
         id: `rate-${i}`,
         lineIndex: i,
         sev: "pass",
-        title: "Service unit price matches the PO",
+        title: nonStock
+          ? "Non-stock unit price matches the PO"
+          : "Service unit price matches the PO",
       });
     } else {
       const pct = Math.abs((ln.rate! - pick.po.price) / pick.po.price) * 100;
@@ -1693,7 +1814,9 @@ function evaluateServiceLine(args: {
         id: `rate-${i}`,
         lineIndex: i,
         sev: within ? "ack" : "confirm",
-        title: "The service invoice and PO unit prices differ",
+        title: nonStock
+          ? "The invoice and non-stock PO unit prices differ"
+          : "The service invoice and PO unit prices differ",
         help: `Invoice ${inr(ln.rate!)}; PO ${inr(pick.po.price)} per ${ln.unit ?? "billing unit"}. Difference ${pct.toFixed(2)}%; configured tolerance ${rules.rateTolerancePct}%.`,
         options: [
           {

@@ -42,6 +42,111 @@ const { RecordedInvoiceReview } = requireComponent(
   resolve(outputDir, "RecordedInvoiceReview.js"),
 );
 
+test("unmapped goods expose complete non-stock PO evidence without replacing the stock linker or inventing a PO-reference match", () => {
+  const invoice = {
+    ...matchFixture.invoice,
+    supplyNature: "goods" as const,
+    poReferences: ["REGION/475"],
+    freightAmount: 0,
+    taxableTotal: 1000,
+    lines: [
+      {
+        ...matchFixture.invoice.lines[0],
+        index: 0,
+        vendorItemCode: null,
+        description: "A4 printed publication",
+        quantity: 10,
+        rate: 100,
+        amount: 1000,
+      },
+    ],
+  };
+  const context = {
+    vendor: { cardCode: "V-PRINT", cardName: "Publisher" },
+    ambiguousVendors: [],
+    branch: null,
+    items: { "EXP-PRINT": { name: "Marketing expense", inventory: false } },
+    itemMap: {},
+    receipts: [],
+    poLines: [
+      {
+        kind: "PO" as const,
+        documentType: "dDocument_Items" as const,
+        docEntry: 88,
+        docNum: 475,
+        lineNum: 0,
+        cardCode: "V-PRINT",
+        date: "2026-08-08",
+        itemCode: "EXP-PRINT",
+        branchId: null,
+        warehouse: null,
+        poRefs: ["475"],
+        quantity: 10,
+        openQty: 10,
+        price: 100,
+        lineTotal: 1000,
+        openAmount: 1000,
+        description: "Marketing expense",
+        lineRemarks: "Publication RCP A4",
+        headerRemarks: "August northern region",
+      },
+    ],
+    existingInvoice: null,
+    today: "2026-10-15",
+    closedBefore: null,
+  };
+  const pending = evaluateMatch({ invoice, context });
+  const props = {
+    caseId: "po-review",
+    invoice,
+    locked: false,
+    busy: false,
+    vendorFound: true,
+    onChoose: () => {},
+    onUndo: () => {},
+    onAllocate: () => {},
+    onResetAllocation: () => {},
+    onLink: () => {},
+  };
+  const html = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      ...props,
+      line: pending.lines[0],
+      checks: pending.checks,
+    }),
+  );
+  for (const text of [
+    "Search SAP items",
+    "Or confirm an item through a non-stock PO",
+    "Filter by SAP PO",
+    "Publication RCP A4",
+    "August northern region",
+    "REGION/475",
+    "Open quantity",
+    "Unit price",
+    "Printed PO reference not confirmed",
+  ])
+    assert.ok(html.includes(text), text);
+  assert.ok(!html.includes("Exact PO reference recorded"));
+  const confirmed = evaluateMatch({
+    invoice,
+    context,
+    state: { decisions: {}, allocations: { "0": { "88:0": 1000 } } },
+  });
+  const selected = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      ...props,
+      line: confirmed.lines[0],
+      checks: confirmed.checks,
+    }),
+  );
+  assert.ok(selected.includes("non-stock item, invoice-to-PO check"));
+  assert.ok(selected.includes("accounting item confirmed"));
+  assert.ok(selected.includes("no reusable item mapping was saved"));
+  assert.ok(!selected.includes("stock item, 3-way check"));
+  assert.ok(!selected.includes("service, 2-way check"));
+});
+
 function recordedProps(details = true) {
   const result = {
     ...matchFixture.result,

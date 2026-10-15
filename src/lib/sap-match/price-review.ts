@@ -39,9 +39,17 @@ export function priceReviewDetails(
     return;
   const difference = Math.abs(rate - base);
   if (difference === 0) return;
+  // PO-based allocations are amounts, not quantities. Never multiply a rate
+  // difference by the money allocated to a service/non-stock PO line.
+  const allocatedUnits =
+    line.kind === "service" || line.kind === "non-stock"
+      ? line.invoiceQty
+      : line.allocatedQty;
   const valueDifference =
-    Number.isFinite(line.allocatedQty) && line.allocatedQty > 0
-      ? difference * line.allocatedQty
+    allocatedUnits != null &&
+    Number.isFinite(allocatedUnits) &&
+    allocatedUnits > 0
+      ? difference * allocatedUnits
       : null;
   const invoiceDifference =
     line.invoiceQty != null && line.invoiceQty > 0
@@ -63,7 +71,8 @@ export function priceReviewDetails(
     valueDifference,
     partialAllocation:
       line.invoiceQty != null &&
-      Math.abs(line.allocatedQty - line.invoiceQty) > 0.0005,
+      allocatedUnits != null &&
+      Math.abs(allocatedUnits - line.invoiceQty) > 0.0005,
     freightExplains:
       rate < base &&
       freight > 0 &&
