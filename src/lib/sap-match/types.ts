@@ -181,6 +181,34 @@ export type ReceiptSearch = {
   limit: number;
 };
 
+/** Read-only evidence from this exact supplier invoice, already posted in SAP.
+ * These are accounting lines, never inferred links to the scanned products.
+ */
+export type RecordedInvoiceEvidence = {
+  docEntry: number;
+  docNum: string | number;
+  cardCode: string;
+  invoiceReference: string;
+  currency: string | null;
+  total: number | null;
+  lines: Array<{
+    lineNum: number | null;
+    itemCode: string | null;
+    description: string | null;
+    accountCode: string | null;
+    quantity: number | null;
+    unitPrice: number | null;
+    lineTotal: number | null;
+  }>;
+};
+
+export type ExistingSapInvoice = {
+  docNum: string | number;
+  kind?: "invoice" | "draft";
+  /** Absent if SAP confirmed the duplicate but its details could not be read. */
+  evidence?: RecordedInvoiceEvidence;
+};
+
 export type MatchContext = {
   vendor: { cardCode: string; cardName: string } | null;
   supplierIdentification?: SupplierIdentification | null;
@@ -212,10 +240,7 @@ export type MatchContext = {
   receipts: SapReceiptLine[];
   poLines: SapPoLine[];
   /** A non-cancelled SAP A/P invoice already carries this vendor invoice number. */
-  existingInvoice: {
-    docNum: string | number;
-    kind?: "invoice" | "draft";
-  } | null;
+  existingInvoice: ExistingSapInvoice | null;
   /** YYYY-MM-DD used as "today" (injected so tests are deterministic). */
   today: string;
   /** Posting dates before this are in a closed SAP period. null = unknown / not checked. */
@@ -380,6 +405,8 @@ export type PlannedPayload = {
 };
 
 export type MatchResult = {
+  /** Historical accounting evidence, isolated from new-invoice matching. */
+  existingInvoice?: ExistingSapInvoice;
   checkedAt?: string;
   supplierIdentification?: SupplierIdentification | null;
   receiptSearch?: ReceiptSearch;

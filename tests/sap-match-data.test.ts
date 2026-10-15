@@ -550,6 +550,109 @@ test("an invoice already posted in SAP is a duplicate", async () => {
   }
 });
 
+test("a posted invoice uses only verified historical lines, not open procurement or item mappings", async () => {
+  const calls: string[] = [];
+  const unexpected = async () => {
+    assert.fail(
+      "A duplicate must not read open procurement or build an item pool",
+    );
+  };
+  const db = fakeDb(tables());
+  const from = db.from;
+  db.from = (table: string) => {
+    assert.notEqual(
+      table,
+      "sap_item_mappings",
+      "History must not become a reusable product mapping",
+    );
+    return from(table);
+  };
+  const match = await computeCaseMatch({
+    db: db as never,
+    client: sapClient({
+      findInvoiceByReference: async (vendor: string, ref: string) => {
+        calls.push("duplicate");
+        assert.equal(vendor, "V-TATA01");
+        assert.equal(ref, CASE.invoice_number);
+        return { DocEntry: 987, DocNum: 23755 };
+      },
+      getPurchaseInvoice: async (entry: number) => {
+        calls.push("history");
+        assert.equal(entry, 987);
+        return {
+          DocEntry: 987,
+          DocNum: 23755,
+          CardCode: "V-TATA01",
+          NumAtCard: CASE.invoice_number,
+          Cancelled: "tNO",
+          DocCurrency: "INR",
+          DocumentLines: [
+            {
+              LineNum: 0,
+              ItemCode: "EXP-1",
+              ItemDescription: "General procurement expense",
+              Quantity: 1,
+              LineTotal: 2378640,
+            },
+          ],
+        };
+      },
+      findOpenReceiptDocumentsForInvoice: unexpected,
+      listOpenReceiptDocumentsForVendor: unexpected,
+      listOpenPurchaseOrdersForVendor: unexpected,
+      listItemsByCodes: unexpected,
+      findDraftByVendorReference: unexpected,
+    }) as never,
+    caseRow: CASE,
+  });
+  assert.deepEqual(calls, ["duplicate", "history"]);
+  assert.ok(match.available);
+  if (!match.available) return;
+  assert.equal(
+    match.result.existingInvoice?.evidence?.lines[0].itemCode,
+    "EXP-1",
+  );
+  assert.equal(match.invoice.lines[0].vendorItemCode, "3434405");
+  assert.deepEqual(
+    match.result.open.map((check) => check.id),
+    ["dup"],
+  );
+  assert.deepEqual(match.result.lines, []);
+  assert.equal(match.result.payload, null);
+});
+
+for (const wrongDetails of [false, true]) {
+  test(`duplicate protection survives ${wrongDetails ? "mismatched" : "unavailable"} historical details`, async () => {
+    const match = await computeCaseMatch({
+      db: fakeDb(tables()) as never,
+      client: sapClient({
+        findInvoiceByReference: async () => ({ DocEntry: 987, DocNum: 23755 }),
+        getPurchaseInvoice: async () => {
+          if (!wrongDetails) throw new Error("Details unavailable");
+          return {
+            DocEntry: 987,
+            DocNum: 23755,
+            CardCode: "OTHER",
+            NumAtCard: CASE.invoice_number,
+            Cancelled: "tNO",
+            DocumentLines: [],
+          };
+        },
+      }) as never,
+      caseRow: CASE,
+    });
+    assert.ok(match.available);
+    if (!match.available) return;
+    assert.equal(match.result.status, "blocked");
+    assert.equal(match.result.existingInvoice?.evidence, undefined);
+    assert.equal(match.result.payload, null);
+    assert.deepEqual(
+      match.result.open.map((check) => check.id),
+      ["dup"],
+    );
+  });
+}
+
 test("the draft this app made for the same case is not a duplicate, another draft is", async () => {
   const ours = await computeCaseMatch({
     db: fakeDb(tables()) as never,

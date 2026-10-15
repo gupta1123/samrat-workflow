@@ -98,13 +98,21 @@ export function reviewModel(
     ? []
     : needsRecheck
       ? ["a SAP re-check"]
-      : [...steps, ...(options.approved ? [] : ["case approval"])];
+      : [
+          ...steps,
+          ...(options.approved || result.existingInvoice?.kind === "invoice"
+            ? []
+            : ["case approval"]),
+        ];
 
   let tone: ReviewTone;
   let title: string;
   if (terminal) {
     tone = "off";
     title = TERMINAL_TITLE[terminal.effect] ?? "Closed";
+  } else if (result.existingInvoice?.kind === "invoice") {
+    tone = "bad";
+    title = "Already recorded in SAP";
   } else if (hasBlock) {
     tone = "bad";
     title = "Can't send yet";

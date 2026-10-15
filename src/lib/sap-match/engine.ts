@@ -452,6 +452,30 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     });
   }
 
+  // A posted invoice is an historical review, not a new procurement match.
+  // Never create product mappings, allocations or a draft plan from its
+  // accounting lines, even if saved allocations would otherwise be usable.
+  if (context.existingInvoice && context.existingInvoice.kind !== "draft") {
+    const all = checks.list();
+    const closed = all.some((check) => check.decision?.effect === "close");
+    return {
+      checkedAt: context.checkedAt,
+      supplierIdentification: context.supplierIdentification,
+      existingInvoice: { ...context.existingInvoice, kind: "invoice" },
+      status: closed ? "closed" : "blocked",
+      checks: all,
+      open: all.filter((check) => check.open),
+      lines: [],
+      payload: null,
+      baseDocuments: [],
+      method: "unknown",
+      summary: closed
+        ? "Closed as duplicate"
+        : `Already recorded in SAP as A/P Invoice ${context.existingInvoice.docNum}`,
+      postingDate: null,
+    };
+  }
+
   checks.push({
     id: "branch",
     lineIndex: null,

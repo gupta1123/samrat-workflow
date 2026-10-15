@@ -17,6 +17,7 @@ import {
 import type { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { sapPostingDate } from "./dates";
 import { resolveReceiptSupplier } from "./receipt-supplier";
+import { recordedInvoiceEvidence } from "./recorded-invoice";
 import {
   branchForShipTo,
   buildMatchInvoice,
@@ -467,6 +468,65 @@ export async function computeCaseMatch(params: {
   let itemMap: Record<string, string> = {};
   let existingInvoice: MatchContext["existingInvoice"] = null;
   if (vendor) {
+    const posted = await client.findInvoiceByReference(
+      vendor.cardCode,
+      invoice.invoiceNumber,
+    );
+    if (posted) {
+      existingInvoice = {
+        docNum: posted.DocNum ?? posted.DocEntry ?? "?",
+        kind: "invoice",
+      };
+      if (typeof posted.DocEntry === "number") {
+        try {
+          const evidence = recordedInvoiceEvidence(
+            await client.getPurchaseInvoice(posted.DocEntry),
+            {
+              docEntry: posted.DocEntry,
+              docNum: existingInvoice.docNum,
+              cardCode: vendor.cardCode,
+              invoiceReference: invoice.invoiceNumber,
+            },
+          );
+          if (evidence) existingInvoice.evidence = evidence;
+        } catch {
+          // Detail permissions / a transient read failure must never remove
+          // the duplicate blocker or send this invoice through new matching.
+          console.warn("Could not load recorded SAP invoice details", {
+            caseId: caseRow.id,
+            docEntry: posted.DocEntry,
+          });
+        }
+      }
+      return {
+        available: true,
+        invoice,
+        rules,
+        state,
+        vendor,
+        branch,
+        result: evaluateMatch({
+          invoice,
+          rules,
+          state,
+          context: {
+            vendor,
+            supplierIdentification,
+            checkedAt: new Date().toISOString(),
+            ambiguousVendors: [],
+            branch,
+            itemMap: {},
+            items: {},
+            receipts: [],
+            poLines: [],
+            existingInvoice,
+            today: sapPostingDate(),
+            closedBefore: null,
+          },
+        }),
+      };
+    }
+
     const [
       targetedReceipts,
       vendorReceipts,
@@ -549,30 +609,19 @@ export async function computeCaseMatch(params: {
         ...(await client.listPurchaseOrdersByEntries(referenced)),
       ];
     }
-    const posted = await client.findInvoiceByReference(
+    const draft = await client.findDraftByVendorReference(
       vendor.cardCode,
       invoice.invoiceNumber,
     );
-    if (posted) {
+    // A draft this app created for this very case is expected, not a duplicate.
+    if (
+      draft &&
+      !String(draft.Comments ?? "").startsWith(`Samrat case ${caseRow.id}`)
+    ) {
       existingInvoice = {
-        docNum: posted.DocNum ?? posted.DocEntry ?? "?",
-        kind: "invoice",
+        docNum: draft.DocNum ?? draft.DocEntry ?? "?",
+        kind: "draft",
       };
-    } else {
-      const draft = await client.findDraftByVendorReference(
-        vendor.cardCode,
-        invoice.invoiceNumber,
-      );
-      // A draft this app created for this very case is expected, not a duplicate.
-      if (
-        draft &&
-        !String(draft.Comments ?? "").startsWith(`Samrat case ${caseRow.id}`)
-      ) {
-        existingInvoice = {
-          docNum: draft.DocNum ?? draft.DocEntry ?? "?",
-          kind: "draft",
-        };
-      }
     }
   }
 

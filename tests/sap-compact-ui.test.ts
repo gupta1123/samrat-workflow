@@ -18,6 +18,7 @@ buildSync({
     "src/components/cases/sap-match/CheckBlock.tsx",
     "src/components/cases/sap-match/MatchLineCard.tsx",
     "src/components/cases/sap-match/ReviewHeader.tsx",
+    "src/components/cases/sap-match/RecordedInvoiceReview.tsx",
   ],
   outdir: outputDir,
   bundle: true,
@@ -37,6 +38,158 @@ const { MatchLineCard } = requireComponent(
 const { ReviewHeader } = requireComponent(
   resolve(outputDir, "ReviewHeader.js"),
 );
+const { RecordedInvoiceReview } = requireComponent(
+  resolve(outputDir, "RecordedInvoiceReview.js"),
+);
+
+function recordedProps(details = true) {
+  const result = {
+    ...matchFixture.result,
+    status: "blocked" as const,
+    lines: [],
+    payload: null,
+    existingInvoice: {
+      kind: "invoice" as const,
+      docNum: 551,
+      ...(details
+        ? {
+            evidence: {
+              docEntry: 77,
+              docNum: 551,
+              cardCode: "V-GIFT",
+              invoiceReference: "GIFT-88",
+              currency: "USD",
+              total: 500,
+              lines: [
+                {
+                  lineNum: 0,
+                  itemCode: "EXP-24",
+                  description: "Promotion expense",
+                  accountCode: "AC-45",
+                  quantity: 5,
+                  unitPrice: 100,
+                  lineTotal: 500,
+                },
+              ],
+            },
+          }
+        : {}),
+    },
+    checks: [
+      {
+        id: "dup",
+        lineIndex: null,
+        sev: "block" as const,
+        open: true,
+        title: "Already in SAP as A/P Invoice 551",
+        ask: "Close this invoice?",
+        options: [
+          {
+            choice: "close",
+            title: "Close as duplicate",
+            lines: ["Nothing is sent to SAP"],
+            effect: "close" as const,
+          },
+        ],
+      },
+    ],
+  };
+  return {
+    invoice: {
+      ...matchFixture.invoice,
+      invoiceNumber: "GIFT-88",
+      currency: "USD",
+      lines: [
+        {
+          ...matchFixture.invoice.lines[0],
+          index: 0,
+          vendorItemCode: null,
+          description: "Coffee machine",
+          quantity: 1,
+          amount: 300,
+        },
+        {
+          ...matchFixture.invoice.lines[0],
+          index: 1,
+          vendorItemCode: null,
+          description: "Travel bags",
+          quantity: 4,
+          amount: 200,
+        },
+      ],
+    },
+    vendor: { cardCode: "V-GIFT", cardName: "Rewards Limited" },
+    result,
+    env: "test",
+    busy: false,
+    error: null,
+    onRefresh: () => {},
+    onChoose: () => {},
+    onUndo: () => {},
+  };
+}
+
+test("recorded review shows separate invoice products and SAP accounting lines, without new-match actions", () => {
+  const html = renderToStaticMarkup(
+    createElement(RecordedInvoiceReview, recordedProps()),
+  );
+  for (const text of [
+    "Already recorded in SAP",
+    "A/P Invoice 551",
+    "Coffee machine",
+    "Travel bags",
+    "Promotion expense",
+    "EXP-24",
+    "2 product / service lines",
+    "1 SAP lines",
+    "USD 500",
+    "Historical evidence only",
+    "no item links have been created",
+    "Close as duplicate",
+  ])
+    assert.ok(html.includes(text), text);
+  for (const text of [
+    "Item not linked",
+    "Select Item",
+    "Search SAP items",
+    "Allocate",
+    "Create A/P Invoice Draft",
+    "Go to approval",
+    "Needs a match first",
+    "Matched",
+  ])
+    assert.ok(!html.includes(text), text);
+  assert.ok(!html.includes("<input"));
+});
+
+test("recorded review keeps duplicate protection visible when SAP detail reading fails", () => {
+  const html = renderToStaticMarkup(
+    createElement(RecordedInvoiceReview, recordedProps(false)),
+  );
+  assert.ok(html.includes("its item details are unavailable"));
+  assert.ok(html.includes("Duplicate protection remains active"));
+  assert.ok(html.includes("Close as duplicate"));
+  assert.ok(!html.includes("0 SAP lines"));
+});
+
+test("closed duplicates retain the historical comparison and a reversible decision, not draft actions", () => {
+  const props = recordedProps();
+  const result = {
+    ...props.result,
+    status: "closed",
+    checks: props.result.checks.map((check) => ({
+      ...check,
+      decision: { choice: "close", effect: "close", at: "2026-10-15" },
+    })),
+  };
+  const html = renderToStaticMarkup(
+    createElement(RecordedInvoiceReview, { ...props, result }),
+  );
+  assert.ok(html.includes("Closed as duplicate"));
+  assert.ok(html.includes("Promotion expense"));
+  assert.ok(html.includes("Change"));
+  assert.ok(!html.includes("Create A/P Invoice Draft"));
+});
 
 test("service review compares the invoice with non-stock SAP PO items without claiming an automatic match", () => {
   const invoice = {

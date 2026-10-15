@@ -34,18 +34,40 @@ test("an open price decision and a missing approval are both listed", () => {
   assert.equal(model.tone, "todo");
   assert.equal(model.title, "2 steps left");
   assert.deepEqual(model.waiting, ["price decision", "case approval"]);
-  assert.equal(model.blockedReason, "Waiting for price decision and case approval");
+  assert.equal(
+    model.blockedReason,
+    "Waiting for price decision and case approval",
+  );
   assert.equal(model.ready, false);
 });
 
 test("a blocking check says the invoice can't be sent", () => {
   const model = reviewModel(
-    resultWith([check({ id: "rcpt-0", sev: "block", title: "No GRPO found" })], null),
+    resultWith(
+      [check({ id: "rcpt-0", sev: "block", title: "No GRPO found" })],
+      null,
+    ),
     { approved: true },
   );
   assert.equal(model.title, "Can't send yet");
   assert.equal(model.tone, "bad");
   assert.equal(sidebarSummary(model).pill, "Can't send yet");
+});
+
+test("an existing posted invoice is presented as already recorded, not an item matching task", () => {
+  const model = reviewModel(
+    {
+      ...resultWith(
+        [check({ id: "dup", lineIndex: null, sev: "block" })],
+        null,
+      ),
+      existingInvoice: { docNum: 123, kind: "invoice" },
+    },
+    { approved: false },
+  );
+  assert.equal(model.title, "Already recorded in SAP");
+  assert.equal(model.ready, false);
+  assert.deepEqual(model.waiting, ["duplicate decision"]);
 });
 
 test("a waiting check says waiting for stores", () => {

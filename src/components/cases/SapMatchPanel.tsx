@@ -51,6 +51,7 @@ import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 import { ReviewHeader } from "./sap-match/ReviewHeader";
 import { reviewModel } from "@/lib/sap-match/review-model";
+import { RecordedInvoiceReview } from "./sap-match/RecordedInvoiceReview";
 
 const STATUS: Record<
   MatchStatus,
@@ -520,12 +521,47 @@ function Matched({
               : "by packet references"
           : `the open GRPOs of supplier ${data.vendor?.cardCode ?? ""}`
       } · ${rs.documentsRead} document${rs.documentsRead === 1 ? "" : "s"} returned${
-        rs.documentsRead >= rs.limit ? ` (search limit ${rs.limit} reached)` : ""
+        rs.documentsRead >= rs.limit
+          ? ` (search limit ${rs.limit} reached)`
+          : ""
       }`
     : null;
   const [receiptsLine, setReceiptsLine] = useState<number | null>(null);
   const review = reviewModel(result, { approved: data.postable });
   const openCount = result.open.length;
+
+  if (!locked && result.existingInvoice?.kind === "invoice") {
+    if (variant === "sidebar") {
+      return (
+        <div className="space-y-1 px-4 py-3">
+          <StatusPill
+            status={result.status === "closed" ? "closed" : "review"}
+            label={
+              result.status === "closed"
+                ? "Closed as duplicate"
+                : "Already recorded"
+            }
+          />
+          <div className="text-[11px] leading-4 text-[#3d3530]">
+            A/P Invoice {result.existingInvoice.docNum}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <RecordedInvoiceReview
+        invoice={invoice}
+        vendor={data.vendor}
+        result={result}
+        env={data.sapEnv}
+        busy={busy}
+        error={actionError ? sapMessage(actionError) : null}
+        onRefresh={onRefresh}
+        onChoose={onChoose}
+        onUndo={onUndo}
+      />
+    );
+  }
 
   if (variant === "sidebar") {
     return (

@@ -761,12 +761,70 @@ test("an invoice already in SAP is a duplicate and can be closed", () => {
   });
   const first = evaluateMatch({ invoice: invoice(), context: ctx });
   assert.equal(first.status, "blocked");
+  assert.equal(first.payload, null);
+  assert.deepEqual(first.lines, []);
+  assert.deepEqual(first.baseDocuments, []);
+  assert.deepEqual(
+    first.open.map((check) => check.id),
+    ["dup"],
+  );
   const closed = evaluateMatch({
     invoice: invoice(),
     context: ctx,
     state: decide(EMPTY_MATCH_STATE, "dup", "close"),
   });
   assert.equal(closed.status, "closed");
+  assert.equal(closed.payload, null);
+});
+
+test("posted accounting history cannot auto-link products or consume saved material allocations", () => {
+  const inv = invoice({
+    lines: [{ ...invoice().lines[0], vendorItemCode: null }],
+  });
+  const ctx = context([receipt(4390, truck)], {
+    existingInvoice: {
+      docNum: 23755,
+      kind: "invoice",
+      evidence: {
+        docEntry: 991,
+        docNum: 23755,
+        cardCode: TATA.cardCode,
+        invoiceReference: inv.invoiceNumber,
+        currency: "INR",
+        total: 1000,
+        lines: [
+          {
+            lineNum: 0,
+            itemCode: "BW-TW20-091",
+            description: "Procurement expense",
+            accountCode: "AC-01",
+            quantity: 1,
+            unitPrice: 1000,
+            lineTotal: 1000,
+          },
+        ],
+      },
+    },
+  });
+  const result = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: {
+      decisions: { "map-0": { choice: "ok", at: "2026-10-15" } },
+      allocations: { "0": { "123:0": 34.98 } },
+    },
+  });
+  assert.equal(
+    result.existingInvoice?.evidence?.lines[0].itemCode,
+    "BW-TW20-091",
+  );
+  assert.deepEqual(result.lines, []);
+  assert.equal(result.payload, null);
+  assert.deepEqual(
+    result.open.map((check) => check.id),
+    ["dup"],
+  );
+  assert.equal(ctx.itemMap["D:PROCUREMENTEXPENSE"], undefined);
 });
 
 test("IGST on a same-state supply is blocked", () => {
