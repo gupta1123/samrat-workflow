@@ -704,7 +704,9 @@ function Matched({
   const review = reviewModel(result, { approved: data.postable, invoice });
   const poLines = result.lines.filter(isPoLineReviewLine);
   const otherLines = result.lines.filter((line) => !isPoLineReviewLine(line));
-  const nonStockPoReview = isNonStockPoReview(invoice, result);
+  const poLinePending = poLines.some(
+    (line) => !line.candidates.some((candidate) => candidate.allocated > 0),
+  );
   const openCount = result.open.length;
 
   if (!locked && result.existingInvoice?.kind === "invoice") {
@@ -752,7 +754,7 @@ function Matched({
                 ? ap.status === "posted"
                   ? "Posted"
                   : "Draft saved"
-                : nonStockPoReview && review.tone === "todo"
+                : poLinePending && review.tone === "todo"
                   ? "Confirm PO lines"
                   : undefined
             }
@@ -766,7 +768,7 @@ function Matched({
             ? ap.status === "posted"
               ? `Posted as A/P Invoice ${ap.sap_docnum}`
               : `Completed - Draft Entry No. ${ap.sap_docnum} saved in SAP`
-            : nonStockPoReview && review.tone === "todo"
+            : poLinePending && review.tone === "todo"
               ? review.title
               : result.summary}
         </div>
