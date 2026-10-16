@@ -51,6 +51,7 @@ import { FinalPostSection } from "./sap-match/FinalPostSection";
 import { PostedInvoice } from "./sap-match/PostedInvoice";
 import { sapMatchPresentation, sapMessage } from "@/lib/sap-match/terminology";
 import { MatchLineCard } from "./sap-match/MatchLineCard";
+import { NonStockPoTable } from "./sap-match/NonStockPoTable";
 import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
 import { DraftHeaderFields } from "./sap-match/DraftHeaderFields";
@@ -65,7 +66,10 @@ import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 import { ReviewHeader } from "./sap-match/ReviewHeader";
 import { reviewModel } from "@/lib/sap-match/review-model";
-import { isNonStockPoReview } from "@/lib/sap-match/non-stock-po-review";
+import {
+  isNonStockPoReview,
+  needsNonStockPoConfirmation,
+} from "@/lib/sap-match/non-stock-po-review";
 import { RecordedInvoiceReview } from "./sap-match/RecordedInvoiceReview";
 
 const STATUS: Record<
@@ -971,34 +975,55 @@ function Matched({
           ),
         )}
 
-      {wrapDuplicateLines(
-        result.lines.map((line) => (
-          <MatchLineCard
-            key={line.index}
-            caseId={caseId}
-            invoice={invoice}
-            line={line}
-            checks={result.checks.filter(
-              (check) => check.lineIndex === line.index,
-            )}
-            locked={locked}
-            busy={busy}
-            vendorFound={Boolean(data.vendor)}
-            rateTolerancePct={data.rules.rateTolerancePct}
-            lineCount={result.lines.length}
-            searchNote={searchNote}
-            receiptsOpen={receiptsLine === line.index}
-            onReceiptsOpenChange={(open) =>
-              setReceiptsLine(open ? line.index : null)
-            }
-            onChoose={onChoose}
-            onUndo={onUndo}
-            onAllocate={onAllocate}
-            onResetAllocation={onResetAllocation}
-            onLink={onLink}
-          />
-        )),
-      )}
+      {nonStockPoReview &&
+      result.lines.some((line) =>
+        needsNonStockPoConfirmation(invoice, line),
+      ) ? (
+        <NonStockPoTable
+          caseId={caseId}
+          invoice={invoice}
+          lines={result.lines}
+          checks={result.checks.filter((check) => check.lineIndex !== null)}
+          locked={locked}
+          busy={busy}
+          onChoose={onChoose}
+          onUndo={onUndo}
+          onAllocate={onAllocate}
+          onResetAllocation={onResetAllocation}
+          onLink={onLink}
+        />
+      ) : null}
+      {nonStockPoReview &&
+      result.lines.some((line) => needsNonStockPoConfirmation(invoice, line))
+        ? null
+        : wrapDuplicateLines(
+            result.lines.map((line) => (
+              <MatchLineCard
+                key={line.index}
+                caseId={caseId}
+                invoice={invoice}
+                line={line}
+                checks={result.checks.filter(
+                  (check) => check.lineIndex === line.index,
+                )}
+                locked={locked}
+                busy={busy}
+                vendorFound={Boolean(data.vendor)}
+                rateTolerancePct={data.rules.rateTolerancePct}
+                lineCount={result.lines.length}
+                searchNote={searchNote}
+                receiptsOpen={receiptsLine === line.index}
+                onReceiptsOpenChange={(open) =>
+                  setReceiptsLine(open ? line.index : null)
+                }
+                onChoose={onChoose}
+                onUndo={onUndo}
+                onAllocate={onAllocate}
+                onResetAllocation={onResetAllocation}
+                onLink={onLink}
+              />
+            )),
+          )}
 
       {invoiceLevel.map((check) => (
         <CheckBlock

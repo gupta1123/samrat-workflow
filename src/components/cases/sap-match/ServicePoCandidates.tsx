@@ -40,7 +40,7 @@ function priceGap(invoicePrice: number, sapPrice: number) {
 }
 
 /** Plain differences between the invoice line and one SAP PO line. Facts only: no score, no ranking. */
-function factsFor(
+export function factsFor(
   candidate: CandidateView,
   invoiceLine: MatchInvoiceLine | undefined,
   invoiceAmount: number | null,
