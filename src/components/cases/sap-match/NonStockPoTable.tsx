@@ -16,6 +16,7 @@ import { MatchUpdateNotice, useMatchUpdate } from "./MatchUpdateContext";
 import {
   NonStockPoDrawer,
   confirmedPoCandidate,
+  fitsInvoiceLine,
   poCandidatesOf as candidatesOf,
   poLineTitle,
 } from "./NonStockPoDrawer";
@@ -160,7 +161,14 @@ export function NonStockPoTable({
       line,
       check: checks.find((check) => check.id === `map-${line.index}`),
     }))
-    .filter((entry) => entry.check);
+    .filter(
+      (entry) =>
+        entry.check &&
+        !candidatesOf(entry.line).some(
+          (candidate) =>
+            !candidate.rejected && fitsInvoiceLine(entry.line, candidate),
+        ),
+    );
 
   return (
     <section
