@@ -70,10 +70,11 @@ export function readSupplyNature(raw: unknown): SupplyNature | undefined {
       )
         return;
       const proof = readSupplyNature({
-        kind: "goods",
+        kind: assessment.status === "unknown" ? "unknown" : "goods",
         evidence: assessment.evidence,
       });
-      if (!proof) return;
+      if (!proof || proof.evidence.length !== assessment.evidence.length)
+        return;
       logisticsRequirements[key] = {
         status: assessment.status as LogisticsRequirement["status"],
         reason: assessment.reason,

@@ -199,3 +199,18 @@ test("blank, malformed or partial applicability evidence cannot exempt documents
     "required",
   );
 });
+
+test("unreadable scope can remain unknown without fabricated evidence, but cannot exempt documents", () => {
+  const doc = document("unknown", "unknown");
+  for (const key of ["transport", "weightProof"] as const) {
+    doc.supplyNature!.logisticsRequirements![key].evidence = [];
+    doc.supplyNature!.logisticsRequirements![key].reason =
+      "The source scope is unreadable.";
+  }
+  assert.ok(readSupplyNature(doc.supplyNature));
+  assert.equal(packetLogisticsRequirement([doc], "weightProof"), "unknown");
+  assert.deepEqual(getUnverifiedLogisticsDocumentGroups([doc]), [
+    "Transport Document",
+    "Weight Proof",
+  ]);
+});
