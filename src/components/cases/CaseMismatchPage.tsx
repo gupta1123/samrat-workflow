@@ -1,4 +1,5 @@
 "use client";
+import { CaseReviewFlowBadge } from "@/components/cases/CaseReviewFlowBadge";
 import { AppShell } from "@/components/dashboard/AppShell";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1322,6 +1323,12 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                   {detail?.case.displayName}
                 </h1>
               )}
+              {detail ? (
+                <CaseReviewFlowBadge
+                  flow={detail.case.reviewFlow}
+                  supplyKind={detail.case.supplyKind}
+                />
+              ) : null}
               {detail && reviewMode !== "sap" && (
                 <div className="hidden items-center gap-2 sm:flex shrink-0">
                   <span className="hidden text-[#c4b9ad] sm:inline-block">

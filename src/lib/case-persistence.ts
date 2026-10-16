@@ -31,6 +31,8 @@ export type SavedCaseRecord = {
   mismatchCount: number;
   createdAt: string;
   deletedAt: string | null;
+  reviewFlow?: string | null;
+  supplyKind?: string | null;
 };
 
 export type DuplicateCaseReference = {

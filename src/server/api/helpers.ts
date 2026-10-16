@@ -87,6 +87,8 @@ export function mapCase(row: {
   mismatch_count: number;
   created_at: string;
   deleted_at: string | null;
+  review_flow?: string | null;
+  supply_kind?: string | null;
   processing_meta: {
     receiverName?: string;
     caseCategory?: string;
@@ -112,6 +114,8 @@ export function mapCase(row: {
     mismatchCount: row.mismatch_count,
     createdAt: row.created_at,
     deletedAt: row.deleted_at,
+    reviewFlow: row.review_flow ?? null,
+    supplyKind: row.supply_kind ?? null,
     processingMeta: row.processing_meta,
   };
 }
