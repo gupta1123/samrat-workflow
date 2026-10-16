@@ -251,6 +251,27 @@ function buildInvoiceGroups(documents: PacketDocumentLike[]) {
     const key = getInvoiceGroupKey(document);
     groups.set(key, [...(groups.get(key) ?? []), document]);
   }
+  // A continuation page of one invoice (payment slip, second page) often prints
+  // the invoice number and total but not the buyer. It is the same invoice, not
+  // a second shipment, so fold it into the group that names the buyer.
+  for (const key of [...groups.keys()]) {
+    const parts = key.split(":");
+    if (parts[0] !== "invoice" || parts[3] !== "") continue;
+    const host = [...groups.keys()].find((other) => {
+      const o = other.split(":");
+      return (
+        other !== key &&
+        o[0] === "invoice" &&
+        o[1] === parts[1] &&
+        o[2] === parts[2] &&
+        o[3] !== "" &&
+        o[4] === parts[4]
+      );
+    });
+    if (!host) continue;
+    groups.set(host, [...groups.get(host)!, ...groups.get(key)!]);
+    groups.delete(key);
+  }
 
   return Array.from(groups.entries()).map(
     ([key, groupDocuments]): InvoiceGroup => {

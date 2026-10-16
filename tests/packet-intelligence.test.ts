@@ -172,3 +172,27 @@ test("tax and terms issues are surfaced as packet checks", () => {
   assert.equal(taxTerms.status, "attention");
   assert.match(taxTerms.detail, /tax calculation and terms-compliance/i);
 });
+
+test("a continuation page without a buyer joins its invoice instead of forming a second shipment", () => {
+  const second = invoice({
+    id: "page-2",
+    invoiceNumber: "PL12022927016326",
+    supplierName: "pine labs",
+    totalAmount: "118000",
+  });
+  second.extractedFields.buyerName = "";
+  const result = resolvePacketIntelligence({
+    documents: [
+      invoice({
+        id: "page-1",
+        invoiceNumber: "PL12022927016326",
+        supplierName: "Pine Labs Limited",
+      }),
+      second,
+    ],
+    processingMeta: { uploadFingerprint: "a".repeat(64) },
+  });
+
+  assert.equal(result.kind, "duplicate_document_copies");
+  assert.equal(result.shipmentGroups.length, 1);
+});
