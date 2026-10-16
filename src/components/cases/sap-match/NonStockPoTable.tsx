@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { ChevronRight } from "lucide-react";
 import {
   needsNonStockPoConfirmation,
   nonStockPoReferenceMatches,
@@ -28,13 +28,13 @@ function Row({
   line,
   busy,
   locked,
-  onResetAllocation,
+  onOpen,
 }: {
   invoice: MatchInvoice;
   line: LineResult;
   busy: boolean;
   locked: boolean;
-  onResetAllocation: (index: number) => void;
+  onOpen: () => void;
 }) {
   const source = invoice.lines.find((entry) => entry.index === line.index);
   const update = useMatchUpdate(line.index);
@@ -54,26 +54,23 @@ function Row({
         <MatchUpdateNotice lineIndex={line.index} />
       </td>
       <td className="px-3 py-2">
-        {confirmed ? (
-          <span className="flex flex-wrap items-center gap-2">
+        <span className="flex flex-wrap items-center gap-2">
+          {confirmed ? (
             <span className="font-medium text-[#24583e]">
               ✓ PO {confirmed.docNum} · Line {(confirmed.lineNum ?? 0) + 1} ·{" "}
               {poLineTitle(confirmed)}
             </span>
-            {!locked ? (
-              <button
-                type="button"
-                className="underline disabled:opacity-50"
-                disabled={busy || saving}
-                onClick={() => onResetAllocation(line.index)}
-              >
-                Change
-              </button>
-            ) : null}
-          </span>
-        ) : (
-          <span className="text-[#8a5207]">Needs your choice</span>
-        )}
+          ) : null}
+          <button
+            type="button"
+            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[#d4c9bc] bg-[#fcfbf9] px-2.5 py-1 text-[11px] font-medium text-[#5d422e] hover:bg-[#f0ece4] disabled:opacity-50"
+            disabled={busy || saving}
+            onClick={onOpen}
+          >
+            {locked ? "View PO line" : confirmed ? "Change" : "Choose PO line"}
+            <ChevronRight className="h-3 w-3" />
+          </button>
+        </span>
       </td>
     </tr>
   );
@@ -90,7 +87,6 @@ export function NonStockPoTable({
   onChoose,
   onUndo,
   onAllocate,
-  onResetAllocation,
   onLink,
 }: {
   caseId: string;
@@ -105,7 +101,7 @@ export function NonStockPoTable({
   onResetAllocation: (index: number) => void;
   onLink: (line: LineResult, itemCode: string) => void;
 }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerLine, setDrawerLine] = useState<number | null>(null);
   const [changingPo, setChangingPo] = useState(false);
   const pending = lines.filter((line) =>
     needsNonStockPoConfirmation(invoice, line),
@@ -167,7 +163,7 @@ export function NonStockPoTable({
     >
       <header className="space-y-0.5 border-b border-[#ece6dc] px-4 py-3">
         <h3 className="text-[13px] font-semibold text-[#111827]">
-          Match each invoice line to a PO line
+          Choose the PO line for each invoice line
         </h3>
         <p className="text-[11px] text-[#6b5d50]">
           SAP lists these PO items as non-stock. Nothing is chosen for you.
@@ -255,35 +251,31 @@ export function NonStockPoTable({
                       line={line}
                       busy={busy}
                       locked={locked}
-                      onResetAllocation={onResetAllocation}
+                      onOpen={() => setDrawerLine(line.index)}
                     />
                   ))}
                 </tbody>
               </table>
             </div>
-            {!locked && pending.length ? (
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy}
-                onClick={() => setDrawerOpen(true)}
-              >
-                Match PO lines
-              </Button>
-            ) : null}
-            {currentPo ? (
-              <NonStockPoDrawer
-                open={drawerOpen}
-                onOpenChange={setDrawerOpen}
-                invoice={invoice}
-                lines={lines}
-                poDocEntry={currentPo.docEntry}
-                poLabel={poText(currentPo)}
-                busy={busy}
-                locked={locked}
-                onAllocate={onAllocate}
-              />
-            ) : null}
+            {currentPo
+              ? lines
+                  .filter((line) => line.index === drawerLine)
+                  .map((line) => (
+                    <NonStockPoDrawer
+                      key={line.index}
+                      open
+                      onOpenChange={(next) => !next && setDrawerLine(null)}
+                      invoice={invoice}
+                      line={line}
+                      lines={lines}
+                      poDocEntry={currentPo.docEntry}
+                      poLabel={poText(currentPo)}
+                      busy={busy}
+                      locked={locked}
+                      onAllocate={onAllocate}
+                    />
+                  ))
+              : null}
           </div>
         ) : (
           <p className="text-[#6b5d50]">Choose the SAP PO to see its lines.</p>

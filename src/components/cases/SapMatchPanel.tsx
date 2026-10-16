@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import "./sap-match/grpo-drawer.css";
 import Link from "next/link";
 import {
   AlertTriangle,

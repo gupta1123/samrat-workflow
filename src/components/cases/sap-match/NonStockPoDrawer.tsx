@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { Content as DialogContent } from "@radix-ui/react-dialog";
-import { Check, X } from "lucide-react";
+import { Check, ChevronRight, Search, X } from "lucide-react";
 import {
   Dialog,
   DialogClose,
@@ -16,8 +16,7 @@ import type {
   LineResult,
   MatchInvoice,
 } from "@/lib/sap-match/types";
-import { inr, qty } from "./format";
-import { factsFor } from "./ServicePoCandidates";
+import { formatDate, inr, qty } from "./format";
 
 const EPSILON = 0.005;
 
@@ -59,11 +58,177 @@ export function confirmedPoCandidate(line: LineResult) {
   );
 }
 
-/** Drawer for matching every invoice line to a line of one SAP PO in a single pass. */
+const words = (text: string) =>
+  (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+    (word) => word.length >= 3 && !/^\d+$/.test(word),
+  );
+const sameWord = (a: string, b: string) => a.startsWith(b) || b.startsWith(a);
+
+/** Words the invoice line and a PO line both use, e.g. "CRS" in "CRS550D" and "CRS RCP's". */
+export function sharedWords(invoiceText: string, poText: string) {
+  const po = words(poText);
+  return [
+    ...new Set(
+      words(invoiceText).filter((w) => po.some((o) => sameWord(w, o))),
+    ),
+  ];
+}
+
+function Marked({ text, shared }: { text: string; shared: string[] }) {
+  if (!shared.length) return <>{text}</>;
+  return (
+    <>
+      {text.split(/([A-Za-z0-9]+)/).map((part, index) =>
+        part && shared.some((word) => sameWord(part.toLowerCase(), word)) ? (
+          <mark
+            key={index}
+            className="rounded-sm bg-[#fdf1dc] px-0.5 text-inherit"
+          >
+            {part}
+          </mark>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+function CompareRow({
+  label,
+  invoice,
+  po,
+  ok,
+  children,
+}: {
+  label: string;
+  invoice: ReactNode;
+  po: ReactNode;
+  ok: boolean | null;
+  children?: ReactNode;
+}) {
+  const tone = ok === null ? "unknown" : ok ? "same" : "diff";
+  return (
+    <div className="dt-r" role="row">
+      <span className="dt-k" role="rowheader">
+        {label}
+      </span>
+      <span className="dt-v" role="cell">
+        {invoice}
+      </span>
+      <span className={`dt-v ${tone}`} role="cell">
+        <span className="st-i">{ok === null ? "–" : ok ? "✓" : "≠"}</span>
+        <span>
+          {po}
+          {children}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+function Detail({
+  line,
+  invoiceText,
+  candidate,
+  shared,
+}: {
+  line: LineResult;
+  invoiceText: string;
+  candidate: CandidateView;
+  shared: string[];
+}) {
+  const amount = line.invoiceAmount ?? 0;
+  const openQuantity = candidate.poEvidence?.openQuantity ?? null;
+  const qtyOk =
+    line.invoiceQty == null || openQuantity == null
+      ? null
+      : Math.abs(line.invoiceQty - openQuantity) < EPSILON;
+  const priceOk =
+    line.invoiceRate == null || candidate.price == null
+      ? null
+      : Math.abs(line.invoiceRate - candidate.price) < EPSILON;
+  const enough = amount <= candidate.open + EPSILON;
+  const headerRemarks = candidate.poEvidence?.headerRemarks;
+  const good = qtyOk && priceOk && enough;
+  return (
+    <div className="dt">
+      <p className={`dt-sum ${good ? "strong" : ""}`}>
+        {candidate.rejected
+          ? candidate.rejected
+          : good
+            ? "Quantity and price are the same"
+            : [
+                qtyOk === false ? "Quantity differs" : "",
+                priceOk === false ? "Unit price differs" : "",
+                !enough ? "Not enough left on this PO line" : "",
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Nothing to compare yet"}
+      </p>
+      {candidate.rejected ? null : (
+        <>
+          <div className="dt-grid" role="table">
+            <div className="dt-h" role="row">
+              <span role="columnheader" />
+              <span role="columnheader">This invoice line</span>
+              <span role="columnheader">
+                PO {candidate.docNum} · line {(candidate.lineNum ?? 0) + 1}
+              </span>
+            </div>
+            <CompareRow
+              label="Description"
+              ok={null}
+              invoice={<Marked text={invoiceText} shared={shared} />}
+              po={<Marked text={poLineTitle(candidate)} shared={shared} />}
+            >
+              {headerRemarks ? <small>{headerRemarks}</small> : null}
+            </CompareRow>
+            <CompareRow
+              label="Quantity"
+              ok={qtyOk}
+              invoice={qty(line.invoiceQty)}
+              po={qty(openQuantity)}
+            />
+            <CompareRow
+              label="Unit price"
+              ok={priceOk}
+              invoice={inr(line.invoiceRate)}
+              po={inr(candidate.price)}
+            />
+            <CompareRow
+              label="Amount"
+              ok={enough}
+              invoice={inr(amount)}
+              po={`${inr(candidate.open)} left`}
+            />
+          </div>
+          <dl className="dt-facts">
+            <div>
+              <dt>SAP item</dt>
+              <dd>{candidate.itemCode || "—"}</dd>
+            </div>
+            <div>
+              <dt>PO date</dt>
+              <dd>{formatDate(candidate.date)}</dd>
+            </div>
+            <div>
+              <dt>Item type</dt>
+              <dd>Non-stock</dd>
+            </div>
+          </dl>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Drawer for choosing which line of one SAP PO an invoice line belongs to. */
 export function NonStockPoDrawer({
   open,
   onOpenChange,
   invoice,
+  line,
   lines,
   poDocEntry,
   poLabel,
@@ -74,6 +239,8 @@ export function NonStockPoDrawer({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   invoice: MatchInvoice;
+  line: LineResult;
+  /** Every invoice line, to see what the others already take from each PO line. */
   lines: LineResult[];
   poDocEntry: number;
   poLabel: string;
@@ -81,287 +248,374 @@ export function NonStockPoDrawer({
   locked: boolean;
   onAllocate: (index: number, allocations: Record<string, number>) => void;
 }) {
-  const [picks, setPicks] = useState<Record<number, string>>({});
-  const [queue, setQueue] = useState<Array<[number, string]>>([]);
-  const sent = useRef<[number, string] | null>(null);
-  const [failed, setFailed] = useState<number | null>(null);
+  const source = invoice.lines.find((entry) => entry.index === line.index);
+  const invoiceText = source?.description || `Invoice line ${line.index + 1}`;
+  const amount = line.invoiceAmount ?? 0;
+  const confirmed = confirmedPoCandidate(line);
+  const [edit, setEdit] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [folds, setFolds] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const pick = locked
+    ? (confirmed?.key ?? null)
+    : (edit ?? confirmed?.key ?? null) || null;
 
-  // Lines still to match are the ones with no confirmed PO line yet.
-  const todo = lines.filter((line) => !confirmedPoCandidate(line));
-  const changes = todo.filter((line) => picks[line.index]);
-
-  // Apply one line at a time: each save is validated against SAP before the next.
-  useEffect(() => {
-    if (busy) return;
-    if (sent.current) {
-      const [index, key] = sent.current;
-      const line = lines.find((entry) => entry.index === index);
-      const saved = line?.candidates.some(
-        (candidate) => candidate.key === key && candidate.allocated > 0,
-      );
-      sent.current = null;
-      if (!saved) {
-        setQueue([]);
-        setFailed(index);
-        return;
-      }
-    }
-    if (!queue.length) return;
-    const [next, ...rest] = queue;
-    sent.current = next;
-    setQueue(rest);
-    const line = lines.find((entry) => entry.index === next[0]);
-    onAllocate(next[0], { [next[1]]: line?.invoiceAmount ?? 0 });
-  }, [busy, queue, lines, onAllocate]);
-
-  const applying = queue.length > 0 || sent.current !== null;
-  useEffect(() => {
-    if (!applying && !failed && open && !todo.length) onOpenChange(false);
-  }, [applying, failed, open, todo.length, onOpenChange]);
-
-  const pickedAmount = (key: string, except: number) =>
+  const pool = poCandidatesOf(line).filter(
+    (candidate) => candidate.docEntry === poDocEntry,
+  );
+  /** What other invoice lines have already confirmed on the same PO line. */
+  const claimedBy = (key: string) =>
     lines.reduce((sum, other) => {
-      if (other.index === except) return sum;
-      const taken =
-        picks[other.index] === key ||
-        other.candidates.some(
-          (candidate) => candidate.key === key && candidate.allocated > 0,
-        );
-      return taken ? sum + (other.invoiceAmount ?? 0) : sum;
+      if (other.index === line.index) return sum;
+      return other.candidates.some(
+        (candidate) => candidate.key === key && candidate.allocated > 0,
+      )
+        ? sum + (other.invoiceAmount ?? 0)
+        : sum;
     }, 0);
+  const leftOf = (candidate: CandidateView) =>
+    (candidate.open ?? 0) - claimedBy(candidate.key);
+  const sharedBy = (candidate: CandidateView) =>
+    sharedWords(invoiceText, poLineTitle(candidate));
+  // Words every PO line shares say nothing; only words that tell lines apart are shown.
+  const telling = (candidate: CandidateView) =>
+    sharedBy(candidate).filter(
+      (word) =>
+        !pool.every((other) => sharedBy(other).some((w) => sameWord(w, word))),
+    );
+  const available = (candidate: CandidateView) =>
+    !candidate.rejected && leftOf(candidate) >= amount - EPSILON;
 
-  const overdrawn = changes.some((line) => {
-    const candidate = poCandidatesOf(line).find(
-      (entry) => entry.key === picks[line.index],
-    );
+  const query = search.trim().toLowerCase();
+  const matches = (candidate: CandidateView) =>
+    !query ||
+    `${(candidate.lineNum ?? 0) + 1} ${poLineTitle(candidate)}`
+      .toLowerCase()
+      .includes(query);
+  const groups = [
+    {
+      key: "fit",
+      title: "Same quantity and price",
+      xs: pool.filter(
+        (candidate) =>
+          fitsInvoiceLine(line, candidate) &&
+          (available(candidate) || pick === candidate.key),
+      ),
+      fold: false,
+    },
+    {
+      key: "other",
+      title: "Other lines on this PO",
+      xs: pool.filter(
+        (candidate) =>
+          !candidate.rejected &&
+          !(
+            fitsInvoiceLine(line, candidate) &&
+            (available(candidate) || pick === candidate.key)
+          ),
+      ),
+      fold: true,
+    },
+    {
+      key: "na",
+      title: "Not available",
+      xs: pool.filter((candidate) => candidate.rejected),
+      fold: true,
+    },
+  ]
+    .map((group) => ({ ...group, shown: group.xs.filter(matches) }))
+    .filter((group) => group.shown.length);
+  const hasMain = groups.some((group) => !group.fold);
+
+  const chosen = pool.find((candidate) => candidate.key === pick);
+  const over = chosen ? amount > leftOf(chosen) + EPSILON : false;
+  const dirty = Boolean(pick) && pick !== confirmed?.key;
+  const meterStatus: "ok" | "over" | "short" = !chosen
+    ? "short"
+    : over
+      ? "over"
+      : "ok";
+  const meterLabel = !chosen
+    ? `${inr(amount)} to place`
+    : over
+      ? `Only ${inr(Math.max(leftOf(chosen), 0))} left on this line`
+      : locked
+        ? "Saved choice"
+        : "Adds up";
+  const toggle = (set: Set<string>, key: string) => {
+    const next = new Set(set);
+    if (!next.delete(key)) next.add(key);
+    return next;
+  };
+  const close = () => {
+    setEdit(null);
+    setSearch("");
+    onOpenChange(false);
+  };
+
+  const renderRow = (candidate: CandidateView) => {
+    const isPicked = pick === candidate.key;
+    const isOpen = expanded.has(candidate.key);
+    const na = Boolean(candidate.rejected);
+    const left = leftOf(candidate);
+    const short = !na && amount > left + EPSILON;
+    const tell = telling(candidate);
+    const tag = na
+      ? null
+      : short
+        ? { tone: "conflict", text: "Not enough left" }
+        : fitsInvoiceLine(line, candidate)
+          ? { tone: "strong", text: "Qty and price fit" }
+          : tell.length
+            ? { tone: "maybe", text: `Name has ${tell[0].toUpperCase()}` }
+            : { tone: "none", text: "Price or qty differs" };
+    const note =
+      short && !isPicked
+        ? claimedBy(candidate.key)
+          ? `Other invoice lines already use ${inr(claimedBy(candidate.key))} of this PO line · ${inr(Math.max(left, 0))} left.`
+          : `Only ${inr(Math.max(left, 0))} left on this PO line.`
+        : "";
     return (
-      !candidate ||
-      (line.invoiceAmount ?? 0) + pickedAmount(candidate.key, line.index) >
-        (candidate.open ?? 0) + EPSILON
+      <li
+        key={candidate.key}
+        className={`gr ${isPicked ? "picked" : ""} ${isOpen ? "open" : ""} v-${na ? "na" : short ? "conflict" : "strong"}`}
+        style={{ "--seg": "#3f8a63" } as CSSProperties}
+      >
+        <div className="gr-main">
+          {locked || na ? (
+            <span
+              className={`gr-check ${na ? "na" : isPicked ? "on" : ""}`}
+              aria-hidden="true"
+            >
+              {isPicked ? <Check strokeWidth={3} /> : null}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className={`gr-check ${isPicked ? "on" : ""}`}
+              role="checkbox"
+              aria-checked={isPicked}
+              aria-label={`Use PO line ${(candidate.lineNum ?? 0) + 1}`}
+              disabled={busy}
+              onClick={() => setEdit(isPicked ? "" : candidate.key)}
+            >
+              <Check strokeWidth={3} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="gr-body"
+            aria-expanded={isOpen}
+            style={{ gridTemplateColumns: "1fr 128px 16px" }}
+            onClick={() =>
+              setExpanded((current) => toggle(current, candidate.key))
+            }
+          >
+            <span className="gr-id">
+              <b className="truncate">
+                Line {(candidate.lineNum ?? 0) + 1} · {poLineTitle(candidate)}
+              </b>
+              <small>
+                {qty(candidate.poEvidence?.openQuantity)} ×{" "}
+                {inr(candidate.price)}
+              </small>
+            </span>
+            {na ? (
+              <span className="gr-na">{candidate.rejected}</span>
+            ) : tag ? (
+              <span className={`verdict ${tag.tone}`}>{tag.text}</span>
+            ) : null}
+            <span className="gr-chev">
+              <ChevronRight />
+            </span>
+          </button>
+          {isPicked ? (
+            <span className="gr-qty picked">
+              <span className="gr-alloc">
+                <span className="num">{inr(amount)}</span>
+                <small>of {inr(candidate.open)}</small>
+              </span>
+              <span className={`gr-use ${over ? "over" : ""}`}>
+                <span
+                  style={{
+                    width: `${candidate.open > 0 ? Math.min(100, Math.round((amount / candidate.open) * 100)) : 0}%`,
+                  }}
+                />
+              </span>
+            </span>
+          ) : (
+            <span className="gr-qty">
+              <span className="num">{inr(Math.max(left, 0))}</span>
+              <small>left</small>
+            </span>
+          )}
+        </div>
+        <div className={`gr-note ${short ? "error" : ""}`}>{note}</div>
+        {isOpen ? (
+          <Detail
+            line={line}
+            invoiceText={invoiceText}
+            candidate={candidate}
+            shared={sharedBy(candidate)}
+          />
+        ) : null}
+      </li>
     );
-  });
-  const total = lines.reduce((sum, line) => sum + (line.invoiceAmount ?? 0), 0);
+  };
 
   return (
     <Dialog
       open={open}
-      onOpenChange={(next) => {
-        if (!next && !applying) setPicks({});
-        if (!next) setFailed(null);
-        onOpenChange(next);
-      }}
+      onOpenChange={(next) => (next ? onOpenChange(true) : close())}
     >
       <DialogPortal>
         <DialogOverlay className="bg-[rgba(28,20,14,0.28)] backdrop-blur-none" />
-        <DialogContent className="fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-[640px] flex-col bg-white text-[12px] text-[#111827] shadow-[-24px_0_48px_rgba(43,26,16,0.14)] outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right motion-reduce:animate-none">
-          <header className="flex items-start justify-between gap-3 border-b border-[#ece6dc] px-5 py-4">
-            <div className="min-w-0">
-              <DialogDescription className="text-[11px] text-[#6b5d50]">
-                {poLabel}
-              </DialogDescription>
-              <DialogTitle asChild>
-                <h2 className="mt-1 text-[18px] font-semibold leading-tight">
-                  {locked
-                    ? "PO lines this invoice was matched to"
-                    : "Which PO line is each invoice line?"}
-                </h2>
-              </DialogTitle>
-              <p className="mt-1 tabular-nums text-[#6b5d50]">
-                {lines.length - todo.length} of {lines.length} lines matched ·
-                invoice {inr(total)}
-              </p>
+        <DialogContent className="gd fixed inset-y-0 right-0 z-50 flex h-dvh w-full max-w-[640px] flex-col bg-white shadow-[-24px_0_48px_rgba(43,26,16,0.14)] outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right motion-reduce:animate-none">
+          <header className="v3-head">
+            <div className="v3-top">
+              <div>
+                <DialogDescription className="eyebrow">
+                  {invoiceText} · invoice line {line.index + 1} ·{" "}
+                  {qty(line.invoiceQty)} × {inr(line.invoiceRate)}
+                </DialogDescription>
+                <DialogTitle asChild>
+                  <h2>
+                    {locked
+                      ? "PO line this invoice line was matched to"
+                      : "Which PO line is this?"}
+                  </h2>
+                </DialogTitle>
+                <p className="eyebrow" style={{ marginTop: 4 }}>
+                  {poLabel}
+                </p>
+              </div>
+              <DialogClose className="icon-btn" aria-label="Close">
+                <X size={16} />
+              </DialogClose>
             </div>
-            <DialogClose
-              className="-mr-2 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#6b5d50] hover:bg-[#f0ece4]"
-              aria-label="Close"
-            >
-              <X size={16} />
-            </DialogClose>
+            <div className="meter">
+              <div className="m-row">
+                <span className="m-big num">
+                  {inr(chosen ? amount : 0)}
+                  <span> / {inr(amount)}</span>
+                </span>
+                <span className={`m-state ${meterStatus}`}>
+                  {meterStatus === "ok" ? <Check /> : null}
+                  {meterLabel}
+                </span>
+              </div>
+              <div className="seg">
+                <span
+                  style={{
+                    flexBasis: chosen ? "100%" : "0%",
+                    background: over ? "#c2412f" : "#3f8a63",
+                  }}
+                />
+              </div>
+              <div className="seg-legend">
+                <span>
+                  {chosen
+                    ? `PO line ${(chosen.lineNum ?? 0) + 1} · ${poLineTitle(chosen)}`
+                    : "No PO line picked"}
+                </span>
+              </div>
+            </div>
+            {pool.length > 8 ? (
+              <label className="v3-search">
+                <Search size={15} />
+                <input
+                  aria-label="Search PO lines"
+                  placeholder="Find by line number or description"
+                  autoComplete="off"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
+            ) : null}
           </header>
-
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
-            {lines.map((line) => {
-              const source = invoice.lines.find(
-                (entry) => entry.index === line.index,
-              );
-              const confirmed = confirmedPoCandidate(line);
-              const pool = poCandidatesOf(line).filter(
-                (candidate) => candidate.docEntry === poDocEntry,
-              );
-              const fitting = pool.filter((candidate) =>
-                fitsInvoiceLine(line, candidate),
-              );
-              const others = pool.filter(
-                (candidate) => !fitsInvoiceLine(line, candidate),
-              );
-              const amount = line.invoiceAmount ?? 0;
-              const row = (candidate: CandidateView) => {
-                const claimed = pickedAmount(candidate.key, line.index);
-                const left = (candidate.open ?? 0) - claimed;
-                const short = amount > left + EPSILON;
-                const disabled =
-                  Boolean(candidate.rejected) || short || locked || applying;
-                const checked = picks[line.index] === candidate.key;
-                const facts = factsFor(candidate, source, amount).facts.filter(
-                  (fact) => fact.tone !== "ok" && !fact.text.startsWith("Item"),
-                );
+          <div className="v3-body">
+            {groups.length ? (
+              groups.map((group) => {
+                const isOpen =
+                  !group.fold ||
+                  Boolean(query) ||
+                  folds.has(group.key) ||
+                  (!hasMain && !folds.has(`x:${group.key}`));
                 return (
-                  <li key={candidate.key}>
-                    <label
-                      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 ${checked ? "border-[#3f8a63] bg-[#f1f8f4]" : "border-[#e0d8cc] bg-white hover:bg-[#faf8f4]"} ${disabled && !checked ? "cursor-not-allowed opacity-60" : ""}`}
-                    >
-                      <input
-                        type="radio"
-                        className="mt-0.5"
-                        name={`po-line-${line.index}`}
-                        checked={checked}
-                        disabled={disabled}
-                        onChange={() => {
-                          setFailed(null);
-                          setPicks((current) => ({
-                            ...current,
-                            [line.index]: candidate.key,
-                          }));
+                  <section className="grp" key={group.key}>
+                    <div className="grp-bar">
+                      <button
+                        type="button"
+                        className="grp-head"
+                        disabled={!group.fold}
+                        aria-expanded={group.fold ? isOpen : undefined}
+                        onClick={() => {
+                          if (!group.fold) return;
+                          const auto = !hasMain && !folds.has(group.key);
+                          setFolds((current) =>
+                            toggle(
+                              current,
+                              auto && isOpen ? `x:${group.key}` : group.key,
+                            ),
+                          );
                         }}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-baseline justify-between gap-x-3">
-                          <span className="font-medium">
-                            Line {(candidate.lineNum ?? 0) + 1} ·{" "}
-                            {poLineTitle(candidate)}
+                      >
+                        {group.fold ? (
+                          <span className={`grp-chev ${isOpen ? "down" : ""}`}>
+                            <ChevronRight />
                           </span>
-                          <span className="tabular-nums text-[#3d3530]">
-                            {qty(candidate.poEvidence?.openQuantity)} ×{" "}
-                            {inr(candidate.price)}
-                          </span>
-                        </span>
-                        <span className="mt-0.5 block text-[11px]">
-                          {candidate.rejected ? (
-                            <span className="text-[#6b5d50]">
-                              {candidate.rejected === "Fully billed already"
-                                ? "Already fully billed"
-                                : candidate.rejected}
-                            </span>
-                          ) : short ? (
-                            <span className="text-[#b3261e]">
-                              Only {inr(Math.max(left, 0))} left
-                              {claimed ? " after the lines picked above" : ""}
-                            </span>
-                          ) : facts.length ? (
-                            facts.map((fact) => (
-                              <span
-                                key={fact.text}
-                                className={`mr-3 ${fact.tone === "bad" ? "text-[#b3261e]" : "text-[#8a5207]"}`}
-                              >
-                                {fact.text}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-[#3d5a47]">
-                              ✓ Quantity and price match · {inr(left)} left
-                            </span>
-                          )}
-                        </span>
-                      </span>
-                    </label>
-                  </li>
+                        ) : null}
+                        <span>{group.title}</span>
+                        <span className="grp-count">{group.shown.length}</span>
+                      </button>
+                    </div>
+                    {isOpen ? (
+                      <ul className="gr-list">{group.shown.map(renderRow)}</ul>
+                    ) : null}
+                  </section>
                 );
-              };
-              return (
-                <section
-                  key={line.index}
-                  aria-label={`Invoice line ${line.index + 1}`}
-                >
-                  <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-3">
-                    <h3 className="text-[13px] font-semibold">
-                      {line.index + 1}.{" "}
-                      {source?.description || `Invoice line ${line.index + 1}`}
-                    </h3>
-                    <span className="tabular-nums text-[#6b5d50]">
-                      {qty(line.invoiceQty)} × {inr(line.invoiceRate)} ={" "}
-                      {inr(amount)}
-                    </span>
-                  </div>
-                  {confirmed ? (
-                    <p className="flex items-center gap-1.5 rounded-lg border border-[#c4dfcf] bg-[#f1f8f4] px-3 py-2 font-medium text-[#24583e]">
-                      <Check size={14} /> PO {confirmed.docNum} · Line{" "}
-                      {(confirmed.lineNum ?? 0) + 1} · {poLineTitle(confirmed)}
-                    </p>
-                  ) : (
-                    <>
-                      {fitting.length ? (
-                        <p className="mb-1 text-[10px] font-medium uppercase tracking-wider text-[#8a7f72]">
-                          Same quantity and price
-                        </p>
-                      ) : null}
-                      <ul className="space-y-1.5">{fitting.map(row)}</ul>
-                      {others.length ? (
-                        <>
-                          {fitting.length ? (
-                            <p className="mb-1 mt-2.5 text-[10px] font-medium uppercase tracking-wider text-[#8a7f72]">
-                              Other lines
-                            </p>
-                          ) : null}
-                          <ul className="space-y-1.5">{others.map(row)}</ul>
-                        </>
-                      ) : null}
-                      {!pool.length ? (
-                        <p className="text-[#6b5d50]">
-                          This PO has no open non-stock line for this invoice
-                          line.
-                        </p>
-                      ) : null}
-                    </>
-                  )}
-                </section>
-              );
-            })}
+              })
+            ) : (
+              <p className="empty">
+                {query
+                  ? `No PO line matches “${search}”.`
+                  : "This PO has no open non-stock line for this invoice line."}
+              </p>
+            )}
           </div>
-
-          <footer className="flex items-center justify-between gap-3 border-t border-[#ece6dc] px-5 py-3">
+          <footer className="v3-foot">
             <span
-              className={`min-w-0 text-[11px] ${failed !== null ? "text-[#b3261e]" : "text-[#6b5d50]"}`}
               role="status"
+              aria-live="polite"
+              className={`f-msg ${over ? "error" : ""}`}
             >
-              {failed !== null
-                ? `Line ${failed + 1} could not be saved. Pick it again.`
-                : applying
-                  ? "Saving and checking against SAP…"
-                  : todo.length
-                    ? `${changes.length} of ${todo.length} open lines chosen`
-                    : "All lines matched"}
+              {locked
+                ? "Read-only"
+                : over
+                  ? "Pick a line with enough left"
+                  : dirty
+                    ? "Ready to apply"
+                    : confirmed
+                      ? "No changes"
+                      : "Pick the PO line this invoice line belongs to"}
             </span>
-            <span className="flex shrink-0 gap-2">
+            <button type="button" className="btn ghost" onClick={close}>
+              {dirty && !locked ? "Discard" : "Close"}
+            </button>
+            {!locked ? (
               <button
                 type="button"
-                className="h-8 rounded-md border border-[#d4c9bc] bg-white px-3 text-[12px] font-medium text-[#5d422e] hover:bg-[#f0ece4]"
+                className="btn primary"
+                disabled={busy || !dirty || over}
                 onClick={() => {
-                  setPicks({});
-                  onOpenChange(false);
+                  if (!pick) return;
+                  onAllocate(line.index, { [pick]: amount });
+                  close();
                 }}
-                disabled={applying}
               >
-                {changes.length ? "Discard" : "Close"}
+                Apply
               </button>
-              {!locked ? (
-                <button
-                  type="button"
-                  className="h-8 rounded-md bg-[#2b1a10] px-3 text-[12px] font-medium text-white disabled:opacity-40"
-                  disabled={busy || applying || !changes.length || overdrawn}
-                  onClick={() => {
-                    setFailed(null);
-                    setQueue(
-                      changes.map((line) => [line.index, picks[line.index]]),
-                    );
-                    setPicks({});
-                  }}
-                >
-                  {changes.length > 1
-                    ? `Apply ${changes.length} lines`
-                    : "Apply"}
-                </button>
-              ) : null}
-            </span>
+            ) : null}
           </footer>
         </DialogContent>
       </DialogPortal>
