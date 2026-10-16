@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dbCheck } from "@/server/api/helpers";
 import { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { evaluateMatch } from "@/lib/sap-match/engine";
+import { reviewFlowOf } from "@/lib/sap-match/review-flow";
 import { computeCaseMatch, loadMatchState, type CaseMatch } from "./match-data";
 import { withTestServiceLayer } from "./service-layer";
 
@@ -117,6 +118,7 @@ export async function processSapMatchJob(caseId: string) {
       p_result: stripNul(result),
     });
     dbCheck(complete.error);
+    await saveCaseClassification(db, caseId, result);
     return { skipped: false as const, result };
   } catch (error) {
     const detail = jobErrorMessage(error);
@@ -137,6 +139,34 @@ export async function processSapMatchJob(caseId: string) {
 }
 
 /** A snapshot older than this is re-read from SAP instead of reused. */
+/**
+ * Stores how the case is reviewed (packet_cases.review_flow / supply_kind).
+ * Best effort: a failure here, or columns not migrated yet, never fails a match.
+ */
+async function saveCaseClassification(
+  db: Db,
+  caseId: string,
+  match: CaseMatch,
+) {
+  if (!match.available) return;
+  try {
+    const { error } = await db
+      .from("packet_cases")
+      .update({
+        review_flow: reviewFlowOf(match.result),
+        supply_kind: match.invoice.supplyNature ?? "unknown",
+      })
+      .eq("id", caseId);
+    if (error)
+      console.warn("Case classification not saved", {
+        caseId,
+        error: error.message,
+      });
+  } catch (error) {
+    console.warn("Case classification not saved", { caseId, error });
+  }
+}
+
 export const SNAPSHOT_MAX_AGE_MS = 15 * 60 * 1000;
 
 /**
@@ -180,5 +210,7 @@ export async function recomputeFromSnapshot(
     .eq("status", "succeeded")
     .select("case_id");
   dbCheck(error);
-  return (data ?? []).length === 1;
+  const saved = (data ?? []).length === 1;
+  if (saved) await saveCaseClassification(db, caseId, next);
+  return saved;
 }
