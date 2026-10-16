@@ -46,6 +46,7 @@ test("recorded evidence retains actual accounting lines and amounts without grou
         quantity: 3,
         unitPrice: 50,
         lineTotal: 150,
+        base: null,
       },
     ],
   });
@@ -89,4 +90,36 @@ test("recorded evidence carries the SAP posting date and tax total", () => {
   );
   assert.equal(evidence?.docDate, "2026-07-03");
   assert.equal(evidence?.taxTotal, 18);
+});
+
+test("a line keeps SAP's own PO or receipt reference and nothing else is inferred", () => {
+  const evidence = recordedInvoiceEvidence(
+    {
+      ...document,
+      DocumentLines: [
+        {
+          ...document.DocumentLines[0],
+          BaseType: 22,
+          BaseEntry: 57157,
+          BaseLine: 1,
+        },
+        {
+          ...document.DocumentLines[0],
+          BaseType: 20,
+          BaseEntry: 9,
+          BaseLine: 0,
+        },
+        { ...document.DocumentLines[0], BaseType: -1, BaseEntry: null },
+      ],
+    } as never,
+    expected,
+  );
+  assert.deepEqual(
+    evidence?.lines.map((line) => line.base),
+    [
+      { kind: "PO", docEntry: 57157, docNum: null, lineNum: 1 },
+      { kind: "GRPO", docEntry: 9, docNum: null, lineNum: 0 },
+      null,
+    ],
+  );
 });

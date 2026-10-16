@@ -261,6 +261,13 @@ export function RecordedInvoiceReview({
                         Quantity: {qty(line.quantity)} · Before tax:{" "}
                         {amount(line.lineTotal, evidence.currency)}
                       </p>
+                      <p
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${line.base ? "bg-[#e9f4ee] text-[#2c6a4f]" : "bg-[#f0ece4] text-[#6b5d50]"}`}
+                      >
+                        {line.base
+                          ? `Posted against ${line.base.kind} ${line.base.docNum ?? `(SAP entry ${line.base.docEntry})`}${line.base.lineNum !== null ? ` · line ${line.base.lineNum + 1}` : ""}`
+                          : "Posted without a PO or GRPO link"}
+                      </p>
                       {line.accountCode ? (
                         <p className="text-[10px] text-[#8a7f72]">
                           SAP account: {line.accountCode}

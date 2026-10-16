@@ -535,7 +535,34 @@ export async function computeCaseMatch(params: {
               invoiceReference: invoice.invoiceNumber,
             },
           );
-          if (evidence) existingInvoice.evidence = evidence;
+          if (evidence) {
+            existingInvoice.evidence = evidence;
+            // Best effort: show the PO or receipt number, not SAP's internal entry.
+            await Promise.all(
+              evidence.lines.flatMap((line) => {
+                const base = line.base;
+                if (!base) return [];
+                return [
+                  (async () => {
+                    try {
+                      const document =
+                        base.kind === "PO"
+                          ? await client.getPurchaseOrder(base.docEntry)
+                          : await client.getGrpo(base.docEntry);
+                      const docNum = (document as { DocNum?: unknown }).DocNum;
+                      if (
+                        typeof docNum === "number" ||
+                        typeof docNum === "string"
+                      )
+                        base.docNum = docNum;
+                    } catch {
+                      // The entry number is still shown.
+                    }
+                  })(),
+                ];
+              }),
+            );
+          }
         } catch {
           // Detail permissions / a transient read failure must never remove
           // the duplicate blocker or send this invoice through new matching.

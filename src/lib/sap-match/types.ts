@@ -205,6 +205,13 @@ export type RecordedInvoiceEvidence = {
     quantity: number | null;
     unitPrice: number | null;
     lineTotal: number | null;
+    /** The PO or receipt SAP itself recorded this line against, if any. */
+    base?: {
+      kind: "PO" | "GRPO";
+      docEntry: number;
+      docNum: string | number | null;
+      lineNum: number | null;
+    } | null;
   }>;
 };
 

@@ -49,6 +49,21 @@ export function recordedInvoiceEvidence(
       quantity: number(line.Quantity),
       unitPrice: number(line.UnitPrice),
       lineTotal: number(line.LineTotal),
+      base: baseOf(line),
     })),
   };
+}
+
+/** SAP's own record of the document a line was posted against. Nothing is inferred. */
+function baseOf(line: Record<string, unknown>) {
+  const entry = number(line.BaseEntry);
+  const kind =
+    line.BaseType === 22 ? "PO" : line.BaseType === 20 ? "GRPO" : null;
+  if (!kind || entry === null) return null;
+  return {
+    kind,
+    docEntry: entry,
+    docNum: null,
+    lineNum: number(line.BaseLine),
+  } as const;
 }
