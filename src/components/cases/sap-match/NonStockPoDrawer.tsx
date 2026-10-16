@@ -117,7 +117,7 @@ function CompareRow({
         {invoice}
       </span>
       <span className={`dt-v ${tone}`} role="cell">
-        <span className="st-i">{ok === null ? "–" : ok ? "✓" : "≠"}</span>
+        {ok === null ? null : <span className="st-i">{ok ? "✓" : "≠"}</span>}
         <span>
           {po}
           {children}
@@ -182,6 +182,9 @@ function Detail({
               invoice={<Marked text={invoiceText} shared={shared} />}
               po={<Marked text={poLineTitle(candidate)} shared={shared} />}
             >
+              {shared.length ? (
+                <small>Words in common: {shared.join(", ")}</small>
+              ) : null}
               {headerRemarks ? <small>{headerRemarks}</small> : null}
             </CompareRow>
             <CompareRow
@@ -326,6 +329,9 @@ export function NonStockPoDrawer({
     .map((group) => ({ ...group, shown: group.xs.filter(matches) }))
     .filter((group) => group.shown.length);
   const hasMain = groups.some((group) => !group.fold);
+  const fitRows = groups.find((group) => group.key === "fit")?.shown ?? [];
+  const indistinct =
+    fitRows.length > 1 && fitRows.every((entry) => !telling(entry).length);
 
   const chosen = pool.find((candidate) => candidate.key === pick);
   const over = chosen ? amount > leftOf(chosen) + EPSILON : false;
@@ -360,15 +366,25 @@ export function NonStockPoDrawer({
     const left = leftOf(candidate);
     const short = !na && amount > left + EPSILON;
     const tell = telling(candidate);
+    const priceDiffers =
+      line.invoiceRate != null &&
+      candidate.price != null &&
+      Math.abs(line.invoiceRate - candidate.price) > EPSILON;
+    const qtyDiffers =
+      line.invoiceQty != null &&
+      candidate.poEvidence?.openQuantity != null &&
+      Math.abs(line.invoiceQty - candidate.poEvidence.openQuantity) > EPSILON;
     const tag = na
       ? null
-      : short
-        ? { tone: "conflict", text: "Not enough left" }
-        : fitsInvoiceLine(line, candidate)
-          ? { tone: "strong", text: "Qty and price fit" }
-          : tell.length
-            ? { tone: "maybe", text: `Name has ${tell[0].toUpperCase()}` }
-            : { tone: "none", text: "Price or qty differs" };
+      : priceDiffers
+        ? { tone: "none", text: "Price differs" }
+        : qtyDiffers
+          ? { tone: "none", text: "Quantity differs" }
+          : short
+            ? { tone: "conflict", text: "Not enough left" }
+            : fitsInvoiceLine(line, candidate)
+              ? { tone: "strong", text: "Qty and price fit" }
+              : { tone: "none", text: "Check price and qty" };
     const note =
       short && !isPicked
         ? claimedBy(candidate.key)
@@ -572,6 +588,12 @@ export function NonStockPoDrawer({
                         <span className="grp-count">{group.shown.length}</span>
                       </button>
                     </div>
+                    {isOpen && group.key === "fit" && indistinct ? (
+                      <p className="mb-1 text-[11px] text-[#6b5d50]">
+                        These lines fit equally. Nothing on the invoice line
+                        tells them apart, so check the PO or the supplier.
+                      </p>
+                    ) : null}
                     {isOpen ? (
                       <ul className="gr-list">{group.shown.map(renderRow)}</ul>
                     ) : null}
