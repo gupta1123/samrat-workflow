@@ -82,7 +82,41 @@ export type CaseMatch =
       vendor: MatchContext["vendor"];
       branch: MatchContext["branch"];
       result: MatchResult;
+      /** Where the time went for this run, in milliseconds. */
+      timings?: Array<{ step: string; ms: number }>;
     };
+
+type Timings = Array<{ step: string; ms: number }>;
+
+/** Records how long every SAP client call takes, without changing what it does. */
+function timedClient<T extends object>(client: T, timings: Timings): T {
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function" || typeof property !== "string")
+        return value;
+      return (...args: unknown[]) => {
+        const started = Date.now();
+        const record = () =>
+          timings.push({ step: `sap.${property}`, ms: Date.now() - started });
+        const result = value.apply(target, args);
+        if (result && typeof result.then === "function")
+          return result.then(
+            (done: unknown) => {
+              record();
+              return done;
+            },
+            (error: unknown) => {
+              record();
+              throw error;
+            },
+          );
+        record();
+        return result;
+      };
+    },
+  });
+}
 
 export function sapFieldConfig(): SapFieldConfig {
   const field = (name: string, fallback: string) => {
@@ -268,7 +302,13 @@ export async function computeCaseMatch(params: {
     processing_meta?: unknown;
   };
 }): Promise<CaseMatch> {
-  const { db, client, caseRow } = params;
+  const { db, caseRow } = params;
+  const timings: Timings = [];
+  const runStarted = Date.now();
+  const client = timedClient(params.client, timings);
+  const mark = (step: string, since: number) =>
+    timings.push({ step, ms: Date.now() - since });
+  const packetStarted = Date.now();
   const [documents, mismatchAttributions] = await Promise.all([
     db
       .from("packet_documents")
@@ -319,6 +359,7 @@ export async function computeCaseMatch(params: {
     };
   }
 
+  mark("db.packet", packetStarted);
   const [rules, state] = await Promise.all([
     loadMatchRules(db),
     loadMatchState(db, caseRow.id),
@@ -499,6 +540,7 @@ export async function computeCaseMatch(params: {
           });
         }
       }
+      mark("total", runStarted);
       return {
         available: true,
         invoice,
@@ -506,6 +548,7 @@ export async function computeCaseMatch(params: {
         state,
         vendor,
         branch,
+        timings,
         result: evaluateMatch({
           invoice,
           rules,
@@ -741,6 +784,10 @@ export async function computeCaseMatch(params: {
     today: sapPostingDate(),
     closedBefore: null,
   };
+  const evaluateStarted = Date.now();
+  const result = evaluateMatch({ invoice, context, rules, state });
+  mark("evaluate", evaluateStarted);
+  mark("total", runStarted);
   return {
     available: true,
     invoice,
@@ -748,7 +795,8 @@ export async function computeCaseMatch(params: {
     state,
     vendor,
     branch,
-    result: evaluateMatch({ invoice, context, rules, state }),
+    result,
+    timings,
   };
 }
 
