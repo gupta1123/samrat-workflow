@@ -274,6 +274,15 @@ export function NonStockPoDrawer({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [folds, setFolds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  // One drawer stays mounted while you step through lines: only its picks reset.
+  const [shownLine, setShownLine] = useState(line.index);
+  if (shownLine !== line.index) {
+    setShownLine(line.index);
+    setEdit(null);
+    setExpanded(new Set());
+    setFolds(new Set());
+    setSearch("");
+  }
   const pick = locked
     ? (confirmed?.key ?? null)
     : (edit ?? confirmed?.key ?? null) || null;

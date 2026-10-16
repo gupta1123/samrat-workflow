@@ -263,7 +263,7 @@ export function NonStockPoTable({
                   .filter((line) => line.index === drawerLine)
                   .map((line) => (
                     <NonStockPoDrawer
-                      key={line.index}
+                      key="po-line-drawer"
                       open
                       onOpenChange={(next) => !next && setDrawerLine(null)}
                       invoice={invoice}
