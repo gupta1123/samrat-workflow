@@ -13,7 +13,11 @@ import {
   saveMatchState,
   saveVendorMapping,
 } from "@/server/sap/match-data";
-import { enqueueSapMatch, readSapMatchJob } from "@/server/sap/match-job";
+import {
+  enqueueSapMatch,
+  readSapMatchJob,
+  recomputeFromSnapshot,
+} from "@/server/sap/match-job";
 import { buildMatchInvoice, vendorKeys } from "@/server/sap/match-mapping";
 import { withTestServiceLayer } from "@/server/sap/service-layer";
 import { findPostedApInvoice } from "@/lib/sap-match-progress";
@@ -124,7 +128,12 @@ export async function GET(request: Request, context: Context) {
         finishedAt: job.finished_at,
       };
       if (job.status === "succeeded" && job.result) {
-        return { ...base, ...job.result, matchJob };
+        // The saved SAP read stays on the server.
+        const { context, ...visible } = job.result as typeof job.result & {
+          context?: unknown;
+        };
+        void context;
+        return { ...base, ...visible, matchJob };
       }
       if (job.status === "failed") {
         return {
@@ -193,6 +202,11 @@ export async function POST(request: Request, context: Context) {
         console.error("Could not record SAP match event:", event.error.message);
     };
     const requeue = () => enqueueSapMatch(db, user, id, true);
+    // A reviewer's choice changes no SAP data, so re-evaluate the saved SAP read
+    // instead of reading SAP again. Falls back to a full re-read when it is old.
+    const recheck = async () => {
+      if (!(await recomputeFromSnapshot(db, user, id))) await requeue();
+    };
 
     if (action === "decide" || action === "undo") {
       const checkId = typeof body.checkId === "string" ? body.checkId : "";
@@ -202,7 +216,8 @@ export async function POST(request: Request, context: Context) {
         delete state.decisions[checkId];
         await saveMatchState(db, id, user, state);
         await audit("sap_match_decision_undone", { checkId });
-        await requeue();
+        // Linking a supplier changes which SAP documents are read.
+        await (checkId === "vendor-link" ? requeue() : recheck());
         return { ok: true };
       }
       const choice = typeof body.choice === "string" ? body.choice.trim() : "";
@@ -220,7 +235,7 @@ export async function POST(request: Request, context: Context) {
         choice,
         reason: reason || null,
       });
-      await requeue();
+      await (checkId === "vendor-link" ? requeue() : recheck());
       return { ok: true };
     }
 
@@ -234,7 +249,7 @@ export async function POST(request: Request, context: Context) {
         delete state.allocations[String(lineIndex)];
         await saveMatchState(db, id, user, state);
         await audit("sap_match_allocation_reset", { lineIndex });
-        await requeue();
+        await recheck();
         return { ok: true };
       }
       const raw = record(body.allocations);
@@ -256,7 +271,7 @@ export async function POST(request: Request, context: Context) {
       state.allocations[String(lineIndex)] = allocations;
       await saveMatchState(db, id, user, state);
       await audit("sap_match_allocation_set", { lineIndex, allocations });
-      await requeue();
+      await recheck();
       return { ok: true };
     }
 

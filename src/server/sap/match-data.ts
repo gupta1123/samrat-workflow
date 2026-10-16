@@ -84,6 +84,11 @@ export type CaseMatch =
       result: MatchResult;
       /** Where the time went for this run, in milliseconds. */
       timings?: Array<{ step: string; ms: number }>;
+      /**
+       * What SAP said when it was read. Kept server-side so a reviewer's choice
+       * can be re-evaluated without reading SAP again; never sent to the browser.
+       */
+      context?: MatchContext;
     };
 
 type Timings = Array<{ step: string; ms: number }>;
@@ -797,6 +802,7 @@ export async function computeCaseMatch(params: {
     branch,
     result,
     timings,
+    context,
   };
 }
 
