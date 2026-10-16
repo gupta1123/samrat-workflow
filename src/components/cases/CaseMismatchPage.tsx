@@ -1604,7 +1604,17 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                     aria-hidden={reviewMode !== "sap"}
                   >
                     <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
-                      <SapMatchPanel caseId={caseId} />
+                      <SapMatchPanel
+                        caseId={caseId}
+                        approvalBlockedReason={
+                          pendingMismatchCount + rejectedMismatchCount > 0
+                            ? `Settle the open issues first (${pendingMismatchCount + rejectedMismatchCount} left).`
+                            : null
+                        }
+                        onCaseDecided={async () => {
+                          setDetail(await fetchCaseDetail(caseId));
+                        }}
+                      />
                     </div>
                   </div>
                 ) : null}

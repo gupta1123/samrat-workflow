@@ -109,7 +109,7 @@ const output = resolve("tmp/quiet-sap-ui.cjs");
 buildSync({
   stdin: {
     contents:
-      'export {MatchUpdateContext, MatchUpdateNotice} from "./src/components/cases/sap-match/MatchUpdateContext"; export {ServicePoCandidates} from "./src/components/cases/sap-match/ServicePoCandidates"; export {SapUpdateToast} from "./src/components/cases/sap-match/SapUpdateToast";',
+      'export {MatchUpdateContext, MatchUpdateNotice} from "./src/components/cases/sap-match/MatchUpdateContext"; export {ServicePoCandidates} from "./src/components/cases/sap-match/ServicePoCandidates"; export {SapUpdateToast} from "./src/components/cases/sap-match/SapUpdateToast"; export {CaseDecisionActions} from "./src/components/cases/sap-match/CaseDecisionActions";',
     resolveDir: process.cwd(),
     loader: "tsx",
   },
@@ -125,7 +125,24 @@ const {
   MatchUpdateNotice,
   ServicePoCandidates,
   SapUpdateToast,
+  CaseDecisionActions,
 } = createRequire(resolve("package.json"))(output);
+test("inline case approval respects known blockers and disables both decisions while busy", () => {
+  const render = (blockedReason: string | null, disabled = false) =>
+    renderToStaticMarkup(
+      createElement(CaseDecisionActions, {
+        caseId: "approval-test",
+        blockedReason,
+        disabled,
+        onDecided: () => {},
+      }),
+    );
+  const blocked = render("Settle the open issues first.");
+  assert.ok(blocked.includes("Settle the open issues first."));
+  assert.equal(blocked.split('disabled=""').length - 1, 1);
+  assert.equal(render(null, true).split('disabled=""').length - 1, 2);
+  assert.equal(render(null).split('disabled=""').length - 1, 0);
+});
 test("SAP progress toast exposes pending and failed checks without claiming premature success", () => {
   const render = (phase: string | null) =>
     renderToStaticMarkup(

@@ -54,6 +54,7 @@ import {
   type MatchUpdate,
 } from "./sap-match/MatchUpdateContext";
 import { SapUpdateToast } from "./sap-match/SapUpdateToast";
+import { CaseDecisionActions } from "./sap-match/CaseDecisionActions";
 import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 import { ReviewHeader } from "./sap-match/ReviewHeader";
@@ -121,9 +122,15 @@ function StatusPill({
 export function SapMatchPanel({
   caseId,
   variant = "full",
+  approvalBlockedReason = null,
+  onCaseDecided,
 }: {
   caseId: string;
   variant?: "full" | "sidebar";
+  /** Shown beside Approve when the page already knows approval is not possible yet. */
+  approvalBlockedReason?: string | null;
+  /** Lets the page refresh its own copy of the case after Approve or Reject. */
+  onCaseDecided?: () => void | Promise<void>;
 }) {
   const [data, setData] = useState<SapMatchResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -519,6 +526,11 @@ export function SapMatchPanel({
         variant={variant}
         data={data}
         ap={ap}
+        approvalBlockedReason={approvalBlockedReason}
+        onCaseDecided={async () => {
+          await load(true);
+          await onCaseDecided?.();
+        }}
         busy={busy || (needsSapMatchPolling(data) && !loadError)}
         validationRequired={
           validationRequired || needsSapMatchPolling(data) || Boolean(loadError)
@@ -581,6 +593,8 @@ function Matched({
   ap,
   busy,
   validationRequired = false,
+  approvalBlockedReason = null,
+  onCaseDecided,
   onRetry,
   actionError,
   confirmingDraft,
@@ -604,6 +618,8 @@ function Matched({
   ap: { status: string; sap_docnum: string | null } | undefined;
   busy: boolean;
   validationRequired?: boolean;
+  approvalBlockedReason?: string | null;
+  onCaseDecided?: () => void | Promise<void>;
   onRetry?: () => void;
   actionError: string | null;
   confirmingDraft: boolean;
@@ -759,15 +775,28 @@ function Matched({
         </div>
       ) : null}
       {!data.postable ? (
-        <p className="text-[11px] text-[#8a7f72]">
-          Approve this case before creating an A/P Invoice Draft.{" "}
-          <Link
-            href={`/cases/${caseId}`}
-            className="font-medium text-[#6b4a33] underline"
-          >
-            Go to approval
-          </Link>
-        </p>
+        data.caseStatus === "completed" ? (
+          <CaseDecisionActions
+            caseId={caseId}
+            blockedReason={approvalBlockedReason}
+            disabled={busy || creating}
+            onDecided={onCaseDecided ?? (() => {})}
+          />
+        ) : data.caseStatus === "rejected" ? (
+          <p className="text-[11px] text-[#8a7f72]">
+            This case was rejected, so no A/P Invoice Draft can be created.
+          </p>
+        ) : (
+          <p className="text-[11px] text-[#8a7f72]">
+            Approve this case before creating an A/P Invoice Draft.{" "}
+            <Link
+              href={`/cases/${caseId}`}
+              className="font-medium text-[#6b4a33] underline"
+            >
+              Go to approval
+            </Link>
+          </p>
+        )
       ) : result.status === "ready" ? (
         confirmingDraft ? (
           <DraftHeaderFields

@@ -3231,7 +3231,13 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
 
         {["completed", "accepted", "rejected"].includes(detail.case.status) ? (
           <div className="mx-auto w-full max-w-6xl px-6 pb-6">
-            <SapMatchPanel caseId={caseId} />
+            <SapMatchPanel
+              caseId={caseId}
+              approvalBlockedReason={approvalBlockedReason}
+              onCaseDecided={async () => {
+                setDetail(await fetchCaseDetail(caseId));
+              }}
+            />
           </div>
         ) : null}
 
