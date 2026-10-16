@@ -67,10 +67,7 @@ import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 import { ReviewHeader } from "./sap-match/ReviewHeader";
 import { reviewModel } from "@/lib/sap-match/review-model";
-import {
-  isNonStockPoReview,
-  isPoLineReviewLine,
-} from "@/lib/sap-match/non-stock-po-review";
+import { isPoLineReviewLine } from "@/lib/sap-match/non-stock-po-review";
 import { RecordedInvoiceReview } from "./sap-match/RecordedInvoiceReview";
 
 const STATUS: Record<
@@ -136,7 +133,7 @@ export function SapMatchPanel({
   variant = "full",
   approvalBlockedReason = null,
   onCaseDecided,
-  onNonStockReviewChange,
+  onReviewKindChange,
 }: {
   caseId: string;
   variant?: "full" | "sidebar";
@@ -144,7 +141,8 @@ export function SapMatchPanel({
   approvalBlockedReason?: string | null;
   /** Lets the page refresh its own copy of the case after Approve or Reject. */
   onCaseDecided?: () => void | Promise<void>;
-  onNonStockReviewChange?: (nonStock: boolean) => void;
+  /** Tells the page how this case is reviewed, for the sidebar subtitle. */
+  onReviewKindChange?: (kind: "po" | "grpo" | "recorded") => void;
 }) {
   const [data, setData] = useState<SapMatchResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -232,10 +230,15 @@ export function SapMatchPanel({
 
   const polling = needsSapMatchPolling(data) && !loadError;
   useEffect(() => {
-    onNonStockReviewChange?.(
-      Boolean(data?.available && isNonStockPoReview(data.invoice, data.result)),
+    if (!data?.available) return onReviewKindChange?.("grpo");
+    onReviewKindChange?.(
+      data.result.existingInvoice?.kind === "invoice"
+        ? "recorded"
+        : data.result.lines.some(isPoLineReviewLine)
+          ? "po"
+          : "grpo",
     );
-  }, [data, onNonStockReviewChange]);
+  }, [data, onReviewKindChange]);
   useEffect(() => {
     if (!polling) return;
     return pollSapMatch(

@@ -987,9 +987,10 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
     "mismatches",
   );
   const [sapOpened, setSapOpened] = useState(false);
-  const [nonStockReviewCase, setNonStockReviewCase] = useState<string | null>(
-    null,
-  );
+  const [sapReviewKind, setSapReviewKind] = useState<{
+    caseId: string;
+    kind: "po" | "grpo" | "recorded";
+  } | null>(null);
   // Deep link from the case page: "Post to SAP" opens the SAP tab directly.
   const [initialTab] = useState<"mismatches" | "sap" | null>(() => {
     if (typeof window === "undefined") return null;
@@ -1418,9 +1419,13 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                   </h3>
                   <p className="mt-0.5 text-xs font-normal text-[#8a7f72]">
                     {reviewMode === "sap"
-                      ? nonStockReviewCase === caseId
-                        ? "Confirm PO & prepare invoice"
-                        : "Match GRPO & prepare invoice"
+                      ? sapReviewKind?.caseId !== caseId
+                        ? "Prepare invoice"
+                        : sapReviewKind.kind === "recorded"
+                          ? "Already in SAP"
+                          : sapReviewKind.kind === "po"
+                            ? "Confirm PO & prepare invoice"
+                            : "Match GRPO & prepare invoice"
                       : visibleMismatches.length === 0
                         ? "No issues"
                         : `${acceptedMismatchCount + rejectedMismatchCount} of ${visibleMismatches.length} done · ${pendingMismatchCount} left`}
@@ -1611,8 +1616,8 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                     <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
                       <SapMatchPanel
                         caseId={caseId}
-                        onNonStockReviewChange={(nonStock) =>
-                          setNonStockReviewCase(nonStock ? caseId : null)
+                        onReviewKindChange={(kind) =>
+                          setSapReviewKind({ caseId, kind })
                         }
                         approvalBlockedReason={
                           pendingMismatchCount + rejectedMismatchCount > 0
@@ -1853,33 +1858,35 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               </div>
                             )}
 
-                            <div className="grid gap-2 border-y border-[#e0d8cc] px-3 py-2 text-[13px] sm:grid-cols-2">
-                              <div className="min-w-0">
-                                <span className="mr-2 text-xs font-semibold text-[#8a7f72]">
-                                  Document
-                                </span>
-                                <span className="font-medium text-[#111827]">
-                                  {getEvidenceDocumentRole(
-                                    activeEvidence[0]?.document,
-                                  )}
-                                </span>
+                            {activeEvidence[0]?.document ? (
+                              <div className="grid gap-2 border-y border-[#e0d8cc] px-3 py-2 text-[13px] sm:grid-cols-2">
+                                <div className="min-w-0">
+                                  <span className="mr-2 text-xs font-semibold text-[#8a7f72]">
+                                    Document
+                                  </span>
+                                  <span className="font-medium text-[#111827]">
+                                    {getEvidenceDocumentRole(
+                                      activeEvidence[0]?.document,
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="min-w-0">
+                                  <span className="mr-2 text-xs font-semibold text-[#8a7f72]">
+                                    Source
+                                  </span>
+                                  <span
+                                    className="inline-block max-w-full truncate align-bottom font-medium text-[#111827]"
+                                    title={getDocumentSourceLabel(
+                                      activeEvidence[0]?.document,
+                                    )}
+                                  >
+                                    {getCompactSourceLabel(
+                                      activeEvidence[0]?.document,
+                                    )}
+                                  </span>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <span className="mr-2 text-xs font-semibold text-[#8a7f72]">
-                                  Source
-                                </span>
-                                <span
-                                  className="inline-block max-w-full truncate align-bottom font-medium text-[#111827]"
-                                  title={getDocumentSourceLabel(
-                                    activeEvidence[0]?.document,
-                                  )}
-                                >
-                                  {getCompactSourceLabel(
-                                    activeEvidence[0]?.document,
-                                  )}
-                                </span>
-                              </div>
-                            </div>
+                            ) : null}
 
                             {!activeIsEWayValidity &&
                             activeSingleIssueRows.length > 0 ? (
@@ -2143,7 +2150,10 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               ) : (
                                 <X className="mr-2 h-4 w-4" />
                               )}
-                              Reject Issue
+                              {activeMismatch.fieldName ===
+                              DOCUMENT_REQUIREMENTS_FIELD
+                                ? "Documents needed"
+                                : "Reject Issue"}
                             </Button>
                             <Button
                               className="rounded-lg bg-[#2b1a10] text-xs font-medium text-white hover:bg-[#3b271a] shadow-sm"
@@ -2155,7 +2165,10 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                               ) : (
                                 <Check className="mr-2 h-4 w-4" />
                               )}
-                              Accept Issue
+                              {activeMismatch.fieldName ===
+                              DOCUMENT_REQUIREMENTS_FIELD
+                                ? "Not required"
+                                : "Accept Issue"}
                             </Button>
                           </>
                         ) : !isActiveMismatchPending && !isCaseFinal ? (
