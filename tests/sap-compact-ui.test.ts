@@ -331,17 +331,15 @@ test("recorded review shows separate invoice products and SAP accounting lines, 
     createElement(RecordedInvoiceReview, recordedProps()),
   );
   for (const text of [
-    "Already recorded in SAP",
+    "Already in SAP",
     "A/P Invoice 551",
     "Coffee machine",
     "Travel bags",
     "Promotion expense",
     "EXP-24",
-    "2 product / service lines",
-    "1 SAP lines",
+    "2 lines",
     "USD 500",
-    "Historical evidence only",
-    "no item links have been created",
+    "SAP keeps its own accounting description",
     "Close, already in SAP",
   ])
     assert.ok(html.includes(text), text);
@@ -382,7 +380,7 @@ test("closed duplicates retain the historical comparison and a reversible decisi
   const html = renderToStaticMarkup(
     createElement(RecordedInvoiceReview, { ...props, result }),
   );
-  assert.ok(html.includes("Closed as duplicate"));
+  assert.ok(html.includes("Closed, already in SAP"));
   assert.ok(html.includes("Promotion expense"));
   assert.ok(html.includes("Change"));
   assert.ok(!html.includes("Create A/P Invoice Draft"));

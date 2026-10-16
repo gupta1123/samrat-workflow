@@ -61,16 +61,13 @@ export function RecordedInvoiceReview({
       text: vendor ? `${vendor.cardName} (${vendor.cardCode})` : "Not matched",
     },
     {
-      label: "Invoice number",
-      ok: evidence ? evidence.invoiceReference === invoice.invoiceNumber : null,
-      text: invoice.invoiceNumber,
-    },
-    {
       label: "Total",
       ok: sameTotal,
       text:
         evidence?.total != null
-          ? `SAP ${amount(evidence.total, evidence.currency)} · invoice ${amount(invoice.total, invoice.currency)}`
+          ? sameTotal
+            ? amount(evidence.total, evidence.currency)
+            : `SAP ${amount(evidence.total, evidence.currency)} · invoice ${amount(invoice.total, invoice.currency)}`
           : "SAP total unavailable",
     },
     {
@@ -84,13 +81,13 @@ export function RecordedInvoiceReview({
       <header className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[16px] font-semibold text-[#111827]">
-            {closed ? "Closed as duplicate" : "Already recorded in SAP"}
+            {closed ? "Closed, already in SAP" : "Already in SAP"}
           </h2>
           <div className="flex items-center gap-3 text-[10px] text-[#8a7f72]">
             <span className="rounded-full bg-[#fdf1dc] px-2 py-1 font-semibold uppercase text-[#8a5207]">
               SAP {env}
             </span>
-            <span>{matchTimestamp(result.checkedAt)}</span>
+            <span>Checked {matchTimestamp(result.checkedAt)}</span>
             <Button
               size="sm"
               variant="outline"
@@ -103,14 +100,10 @@ export function RecordedInvoiceReview({
           </div>
         </div>
         <p className="text-[12px] leading-5 text-[#3d3530]">
-          Supplier invoice <b>{invoice.invoiceNumber}</b> already exists as{" "}
-          <b>A/P Invoice {recorded.docNum}</b>.{" "}
-          {postedByApp
-            ? "It was posted from this app."
-            : "It was already in SAP; it was not posted from this app."}{" "}
-          No new draft is needed.
+          <b>A/P Invoice {recorded.docNum}</b> ·{" "}
+          {postedByApp ? "posted from this app" : "not posted from this app"}
         </p>
-        <ul className="grid gap-1.5 sm:grid-cols-2">
+        <ul className="grid gap-1.5 sm:grid-cols-3">
           {facts.map((fact) => (
             <li
               key={fact.label}
@@ -166,8 +159,7 @@ export function RecordedInvoiceReview({
               Nothing more to post
             </p>
             <p className="text-[11px] text-[#6b5d50]">
-              Close this case so the same invoice is not posted twice. Documents
-              stay on file and nothing is sent to SAP.
+              Nothing is sent to SAP; documents stay on file.
             </p>
           </div>
           <Button
@@ -191,21 +183,21 @@ export function RecordedInvoiceReview({
       <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white">
         <div className="space-y-1 border-b border-[#ede7de] px-4 py-3">
           <h3 className="text-[13px] font-semibold text-[#111827]">
-            How this invoice was recorded
+            How SAP recorded it
           </h3>
           <p className="text-[11px] leading-5 text-[#6b5d50]">
-            Historical evidence only. SAP may group products into accounting
-            lines. These lists do not establish individual product matches, and
-            no item links have been created from this history.
+            SAP keeps its own accounting description, so names can differ from
+            the invoice.
           </p>
         </div>
         <div className="grid divide-y divide-[#ede7de] lg:grid-cols-2 lg:divide-x lg:divide-y-0">
           <div className="min-w-0 p-4">
             <h4 className="text-[12px] font-semibold text-[#111827]">
-              From the invoice
+              Invoice
             </h4>
             <p className="mt-1 text-[11px] text-[#8a7f72]">
-              {invoice.lines.length} product / service lines
+              {invoice.lines.length}{" "}
+              {invoice.lines.length === 1 ? "line" : "lines"}
             </p>
             <ol className="mt-3 divide-y divide-[#ede7de]">
               {invoice.lines.map((line) => (
@@ -213,12 +205,12 @@ export function RecordedInvoiceReview({
                   <p className="break-words text-[12px] font-medium text-[#3d3530]">
                     {line.description ?? "Description not recorded"}
                   </p>
-                  <p className="break-words text-[11px] text-[#6b5d50]">
-                    Code:{" "}
-                    <span className="font-mono">
-                      {line.vendorItemCode ?? "Not printed / extracted"}
-                    </span>
-                  </p>
+                  {line.vendorItemCode ? (
+                    <p className="break-words text-[11px] text-[#6b5d50]">
+                      Code:{" "}
+                      <span className="font-mono">{line.vendorItemCode}</span>
+                    </p>
+                  ) : null}
                   <p className="text-[11px] text-[#6b5d50]">
                     Quantity: {qty(line.quantity)} {line.unit ?? ""} · Before
                     tax: {amount(line.amount, invoice.currency)}
@@ -234,11 +226,12 @@ export function RecordedInvoiceReview({
           </div>
           <div className="min-w-0 p-4">
             <h4 className="text-[12px] font-semibold text-[#111827]">
-              From SAP — recorded accounting lines
+              A/P Invoice {recorded.docNum}
             </h4>
             <p className="mt-1 text-[11px] text-[#8a7f72]">
-              A/P Invoice {recorded.docNum}
-              {evidence ? ` · ${evidence.lines.length} SAP lines` : ""}
+              {evidence
+                ? `${evidence.lines.length} ${evidence.lines.length === 1 ? "line" : "lines"}`
+                : ""}
             </p>
             {evidence?.lines.length ? (
               <>
@@ -273,18 +266,9 @@ export function RecordedInvoiceReview({
                           SAP account: {line.accountCode}
                         </p>
                       ) : null}
-                      {line.lineNum !== null ? (
-                        <p className="text-[10px] text-[#8a7f72]">
-                          SAP line: {line.lineNum}
-                        </p>
-                      ) : null}
                     </li>
                   ))}
                 </ol>
-                <p className="mt-3 text-[11px] text-[#6b5d50]">
-                  SAP document total:{" "}
-                  {amount(evidence.total, evidence.currency)}
-                </p>
               </>
             ) : (
               <p className="mt-3 rounded-lg bg-[#f8f5ef] p-3 text-[11px] leading-5 text-[#6b5d50]">
@@ -296,10 +280,6 @@ export function RecordedInvoiceReview({
           </div>
         </div>
       </section>
-      <p className="text-[11px] leading-5 text-[#6b5d50]">
-        Nothing new will be sent to SAP. Product-by-product links are not
-        required to close an already-recorded invoice.
-      </p>
     </div>
   );
 }
