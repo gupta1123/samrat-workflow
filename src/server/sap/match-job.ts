@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { evaluateMatch } from "@/lib/sap-match/engine";
 import { reviewFlowOf } from "@/lib/sap-match/review-flow";
 import { computeCaseMatch, loadMatchState, type CaseMatch } from "./match-data";
+import { settleLogisticsForPoLineCase } from "./settle-logistics";
 import { withTestServiceLayer } from "./service-layer";
 
 export type SapMatchJobStatus =
@@ -150,10 +151,11 @@ async function saveCaseClassification(
 ) {
   if (!match.available) return;
   try {
+    const reviewFlow = reviewFlowOf(match.result);
     const { error } = await db
       .from("packet_cases")
       .update({
-        review_flow: reviewFlowOf(match.result),
+        review_flow: reviewFlow,
         supply_kind: match.invoice.supplyNature ?? "unknown",
       })
       .eq("id", caseId);
@@ -162,6 +164,7 @@ async function saveCaseClassification(
         caseId,
         error: error.message,
       });
+    else await settleLogisticsForPoLineCase(db, caseId, reviewFlow);
   } catch (error) {
     console.warn("Case classification not saved", { caseId, error });
   }
