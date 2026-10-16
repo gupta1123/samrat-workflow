@@ -94,7 +94,7 @@ function Marked({ text, shared }: { text: string; shared: string[] }) {
   );
 }
 
-function CompareRow({
+export function CompareRow({
   label,
   invoice,
   po,

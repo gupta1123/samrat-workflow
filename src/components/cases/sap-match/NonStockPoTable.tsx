@@ -22,6 +22,7 @@ import {
   poCandidatesOf as candidatesOf,
   poLineTitle,
 } from "./NonStockPoDrawer";
+import { NonStockPoPicker } from "./NonStockPoPicker";
 
 function Row({
   invoice,
@@ -103,7 +104,7 @@ export function NonStockPoTable({
   onLink: (line: LineResult, itemCode: string) => void;
 }) {
   const [drawerLine, setDrawerLine] = useState<number | null>(null);
-  const [changingPo, setChangingPo] = useState(false);
+  const [pickingPo, setPickingPo] = useState(false);
   const pending = lines.filter((line) =>
     needsNonStockPoConfirmation(invoice, line),
   );
@@ -171,40 +172,7 @@ export function NonStockPoTable({
         </p>
       </header>
       <div className="space-y-3 px-4 py-3 text-[11px]">
-        {pos.length > 1 && (changingPo || !currentPo) ? (
-          <label className="flex flex-wrap items-center gap-2 font-medium text-[#3d3530]">
-            SAP PO
-            <select
-              className="min-w-[18rem] max-w-full rounded-md border border-[#e0d8cc] bg-white p-1.5 font-normal"
-              value={poChoice}
-              disabled={confirmedCount > 0}
-              onChange={(event) => {
-                setPoChoice(event.target.value);
-                setChangingPo(false);
-              }}
-            >
-              <option value="">Choose a PO ({pos.length} supplier POs)</option>
-              {cited.length ? (
-                <optgroup label="Cited on the invoice">
-                  {cited.map((po) => (
-                    <option key={po.docEntry} value={String(po.docEntry)}>
-                      {poText(po)}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null}
-              <optgroup label={cited.length ? "Other open POs" : "Open POs"}>
-                {pos
-                  .filter((po) => !cited.includes(po))
-                  .map((po) => (
-                    <option key={po.docEntry} value={String(po.docEntry)}>
-                      {poText(po)}
-                    </option>
-                  ))}
-              </optgroup>
-            </select>
-          </label>
-        ) : currentPo ? (
+        {currentPo ? (
           <p className="text-[#3d3530]">
             <strong className="font-semibold text-[#111827]">
               {poText(currentPo)}
@@ -212,19 +180,47 @@ export function NonStockPoTable({
             {cited.some((po) => po.docEntry === currentPo.docEntry)
               ? " · cited on the invoice"
               : ""}
-            {pos.length > 1 && !confirmedCount ? (
+            {pos.length > 1 && !locked ? (
               <>
                 {" · "}
                 <button
                   type="button"
                   className="underline"
-                  onClick={() => setChangingPo(true)}
+                  onClick={() => setPickingPo(true)}
                 >
-                  Change PO
+                  {confirmedCount ? "View PO" : "Change PO"}
                 </button>
               </>
             ) : null}
           </p>
+        ) : (
+          <button
+            type="button"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#d4c9bc] bg-[#fcfbf9] px-3 text-[11px] font-medium text-[#5d422e] hover:bg-[#f0ece4]"
+            onClick={() => setPickingPo(true)}
+          >
+            Choose PO ({pos.length} supplier POs)
+            <ChevronRight className="h-3 w-3" />
+          </button>
+        )}
+        {pickingPo ? (
+          <NonStockPoPicker
+            key="po-picker"
+            open
+            onOpenChange={(next) => !next && setPickingPo(false)}
+            invoice={invoice}
+            lines={lines}
+            pos={pos}
+            citedDocEntries={cited.map((po) => po.docEntry)}
+            currentDocEntry={currentPo?.docEntry ?? null}
+            locked={locked || confirmedCount > 0}
+            onChoose={(docEntry) => {
+              setPoChoice(String(docEntry));
+              setPickingPo(false);
+              const first = lines.find((line) => !confirmedPoCandidate(line));
+              if (first) setDrawerLine(first.index);
+            }}
+          />
         ) : null}
 
         {poChoice ? (

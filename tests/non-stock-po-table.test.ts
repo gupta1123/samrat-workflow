@@ -120,3 +120,19 @@ test("drawer lists each PO line once and marks the words that tell lines apart",
   assert.match(source, /Previous invoice line/);
   assert.match(source, /Apply & next/);
 });
+
+test("PO picker drawer is wired in place of the PO select", () => {
+  const picker = readFileSync(
+    "src/components/cases/sap-match/NonStockPoPicker.tsx",
+    "utf8",
+  );
+  assert.match(picker, /Which PO is this invoice for\?/);
+  assert.match(picker, /Use this PO/);
+  assert.match(picker, /Cited on the invoice/);
+  const table = readFileSync(
+    "src/components/cases/sap-match/NonStockPoTable.tsx",
+    "utf8",
+  );
+  assert.match(table, /<NonStockPoPicker/);
+  assert.doesNotMatch(table, /<select/);
+});
