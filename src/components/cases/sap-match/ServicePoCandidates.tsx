@@ -32,6 +32,13 @@ const CHIP = {
 
 type Fact = { tone: keyof typeof CHIP; text: string };
 
+/** " (36% above)" or " (58% below)" relative to the SAP price; empty when SAP has no price. */
+function priceGap(invoicePrice: number, sapPrice: number) {
+  if (!sapPrice) return "";
+  const pct = Math.abs((invoicePrice - sapPrice) / sapPrice) * 100;
+  return ` (${pct.toFixed(pct < 10 ? 1 : 0)}% ${invoicePrice > sapPrice ? "above" : "below"} the PO)`;
+}
+
 /** Plain differences between the invoice line and one SAP PO line. Facts only: no score, no ranking. */
 function factsFor(
   candidate: CandidateView,
@@ -76,7 +83,7 @@ function factsFor(
     cells.price = "warn";
     facts.push({
       tone: "warn",
-      text: `Unit price ${inr(invoiceLine.rate)} on invoice · ${inr(candidate.price)} in SAP`,
+      text: `Unit price ${inr(invoiceLine.rate)} on invoice · ${inr(candidate.price)} in SAP${priceGap(invoiceLine.rate, candidate.price)}`,
     });
   }
   if (invoiceLine?.vendorItemCode && candidate.itemCode) {
@@ -163,6 +170,7 @@ export function ServicePoCandidates({
 }) {
   const [showUnavailable, setShowUnavailable] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
+  const [changingPo, setChangingPo] = useState(false);
   const update = useMatchUpdate(line.index);
   const pendingAllocations =
     update?.phase !== "failed" && update?.action?.action === "allocate"
@@ -285,7 +293,29 @@ export function ServicePoCandidates({
         {invoicePoReferences.join(", ") || "not printed"}
       </p>
 
-      {pos.length > 1 ? (
+      {pos.length > 1 &&
+      !changingPo &&
+      poFilter &&
+      cited.length === 1 &&
+      String(cited[0]) === poFilter ? (
+        <p className="flex flex-wrap items-center gap-2 text-[#3d3530]">
+          <span>
+            <strong className="font-semibold text-[#111827]">
+              {pos.find((po) => String(po.docEntry) === poFilter)
+                ? poLabel(pos.find((po) => String(po.docEntry) === poFilter)!)
+                : `PO ${poFilter}`}
+            </strong>{" "}
+            · cited on the invoice
+          </span>
+          <button
+            type="button"
+            className="underline"
+            onClick={() => setChangingPo(true)}
+          >
+            Change PO ({pos.length - 1} others)
+          </button>
+        </p>
+      ) : pos.length > 1 ? (
         <label className="flex flex-wrap items-center gap-2 font-medium text-[#3d3530]">
           Filter by SAP PO
           <select
@@ -368,6 +398,28 @@ export function ServicePoCandidates({
               </tr>
             </thead>
             <tbody>
+              {showQuantity ? (
+                <tr className="border-b border-[#ece6dc] bg-[#f6f1e8]">
+                  <td className="px-3 py-2" />
+                  <td className="px-3 py-2 font-semibold text-[#111827]">
+                    This invoice line
+                    <span className="block font-normal text-[#6b5d50]">
+                      {invoiceLine?.description ?? "Description not printed"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {invoiceLine?.quantity != null
+                      ? qty(invoiceLine.quantity)
+                      : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {invoiceLine?.rate != null ? inr(invoiceLine.rate) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                    {inr(invoiceAmount)}
+                  </td>
+                </tr>
+              ) : null}
               {groups.map((group) => {
                 const head = group[0];
                 return (

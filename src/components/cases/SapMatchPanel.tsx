@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -481,14 +487,21 @@ export function SapMatchPanel({
 
   if (!data.available) {
     const message = data.reason ?? "No SAP match is available for this case.";
+    // An extraction problem, not a missing SAP document: checking SAP again cannot fix it.
+    const needsReanalysis = message.includes("invoice assembly");
+    const title = needsReanalysis
+      ? "Invoice pages not assembled"
+      : "No SAP match";
+    const hint = needsReanalysis
+      ? "Checking SAP again will not fix this. Run the case analysis again from the case page."
+      : null;
     if (variant === "sidebar") {
       return (
         <div className="px-4 py-4">
-          <div className="text-[11px] font-medium text-[#3d3530]">
-            No SAP match
-          </div>
+          <div className="text-[11px] font-medium text-[#3d3530]">{title}</div>
           <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">
             {message}
+            {hint ? ` ${hint}` : ""}
           </div>
         </div>
       );
@@ -505,9 +518,12 @@ export function SapMatchPanel({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#b45309]" />
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold text-[#3d3530]">
-              No SAP match
+              {title}
             </div>
-            <div className="mt-0.5 text-[11px] text-[#8a7f72]">{message}</div>
+            <div className="mt-0.5 text-[11px] text-[#8a7f72]">
+              {message}
+              {hint ? ` ${hint}` : ""}
+            </div>
             {data.sapError ? (
               <div className="mt-1 break-words text-[10px] text-[#b3261e]">
                 {data.sapError}
@@ -520,7 +536,8 @@ export function SapMatchPanel({
             className="h-7 px-2.5 text-[11px]"
             onClick={() => void recheck()}
           >
-            <RefreshCw className="h-3 w-3" /> Try again
+            <RefreshCw className="h-3 w-3" />{" "}
+            {needsReanalysis ? "Check SAP again" : "Try again"}
           </Button>
         </div>
       </div>
@@ -761,6 +778,24 @@ function Matched({
       check.id !== "total" &&
       (check.open || check.decision),
   );
+  // An invoice already in SAP is closed as a duplicate; item matching is only
+  // needed if the reviewer decides not to close it, so keep it out of the way.
+  const duplicateOpen = generalOpen.some(
+    (check) => check.id === "dup" && check.open && !check.decision,
+  );
+  const wrapDuplicateLines = (cards: ReactNode[]) =>
+    duplicateOpen && cards.length ? (
+      <details className="rounded-xl border border-[#e0d8cc] bg-white px-4 py-2.5 text-[11px] text-[#6b5d50]">
+        <summary className="cursor-pointer font-medium text-[#6b4a33]">
+          Show the {cards.length} invoice line{cards.length === 1 ? "" : "s"}{" "}
+          (only needed if you do not close this invoice)
+        </summary>
+        <div className="mt-3 space-y-3">{cards}</div>
+      </details>
+    ) : (
+      cards
+    );
+
   const invoiceLevel = result.checks.filter(
     (check) =>
       (check.id === "freight" || check.id === "total") &&
@@ -936,32 +971,34 @@ function Matched({
           ),
         )}
 
-      {result.lines.map((line) => (
-        <MatchLineCard
-          key={line.index}
-          caseId={caseId}
-          invoice={invoice}
-          line={line}
-          checks={result.checks.filter(
-            (check) => check.lineIndex === line.index,
-          )}
-          locked={locked}
-          busy={busy}
-          vendorFound={Boolean(data.vendor)}
-          rateTolerancePct={data.rules.rateTolerancePct}
-          lineCount={result.lines.length}
-          searchNote={searchNote}
-          receiptsOpen={receiptsLine === line.index}
-          onReceiptsOpenChange={(open) =>
-            setReceiptsLine(open ? line.index : null)
-          }
-          onChoose={onChoose}
-          onUndo={onUndo}
-          onAllocate={onAllocate}
-          onResetAllocation={onResetAllocation}
-          onLink={onLink}
-        />
-      ))}
+      {wrapDuplicateLines(
+        result.lines.map((line) => (
+          <MatchLineCard
+            key={line.index}
+            caseId={caseId}
+            invoice={invoice}
+            line={line}
+            checks={result.checks.filter(
+              (check) => check.lineIndex === line.index,
+            )}
+            locked={locked}
+            busy={busy}
+            vendorFound={Boolean(data.vendor)}
+            rateTolerancePct={data.rules.rateTolerancePct}
+            lineCount={result.lines.length}
+            searchNote={searchNote}
+            receiptsOpen={receiptsLine === line.index}
+            onReceiptsOpenChange={(open) =>
+              setReceiptsLine(open ? line.index : null)
+            }
+            onChoose={onChoose}
+            onUndo={onUndo}
+            onAllocate={onAllocate}
+            onResetAllocation={onResetAllocation}
+            onLink={onLink}
+          />
+        )),
+      )}
 
       {invoiceLevel.map((check) => (
         <CheckBlock
