@@ -87,6 +87,7 @@ export function NonStockPoTable({
   onChoose,
   onUndo,
   onAllocate,
+  onResetAllocation,
   onLink,
 }: {
   caseId: string;
@@ -273,6 +274,42 @@ export function NonStockPoTable({
                       busy={busy}
                       locked={locked}
                       onAllocate={onAllocate}
+                      onReset={onResetAllocation}
+                      position={{
+                        number: lines.indexOf(line) + 1,
+                        count: lines.length,
+                      }}
+                      onPrev={
+                        lines.indexOf(line) > 0
+                          ? () =>
+                              setDrawerLine(
+                                lines[lines.indexOf(line) - 1].index,
+                              )
+                          : undefined
+                      }
+                      onNext={
+                        lines.indexOf(line) < lines.length - 1
+                          ? () =>
+                              setDrawerLine(
+                                lines[lines.indexOf(line) + 1].index,
+                              )
+                          : undefined
+                      }
+                      moreToDo={lines.some(
+                        (other) =>
+                          other.index !== line.index &&
+                          !confirmedPoCandidate(other),
+                      )}
+                      onApplied={() => {
+                        const order = [
+                          ...lines.slice(lines.indexOf(line) + 1),
+                          ...lines.slice(0, lines.indexOf(line)),
+                        ];
+                        const next = order.find(
+                          (other) => !confirmedPoCandidate(other),
+                        );
+                        setDrawerLine(next ? next.index : null);
+                      }}
                     />
                   ))
               : null}

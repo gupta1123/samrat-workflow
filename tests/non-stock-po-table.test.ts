@@ -116,4 +116,7 @@ test("drawer lists each PO line once and marks the words that tell lines apart",
   );
   assert.match(source, /Which PO line is this\?/);
   assert.match(source, /onAllocate\(line\.index, \{ \[pick\]: amount \}\)/);
+  assert.match(source, /Remove match/);
+  assert.match(source, /Previous invoice line/);
+  assert.match(source, /Apply & next/);
 });

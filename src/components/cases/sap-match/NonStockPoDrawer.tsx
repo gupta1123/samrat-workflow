@@ -2,7 +2,7 @@
 
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { Content as DialogContent } from "@radix-ui/react-dialog";
-import { Check, ChevronRight, Search, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import {
   Dialog,
   DialogClose,
@@ -238,6 +238,12 @@ export function NonStockPoDrawer({
   busy,
   locked,
   onAllocate,
+  onReset,
+  position,
+  onPrev,
+  onNext,
+  onApplied,
+  moreToDo,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -250,6 +256,15 @@ export function NonStockPoDrawer({
   busy: boolean;
   locked: boolean;
   onAllocate: (index: number, allocations: Record<string, number>) => void;
+  onReset: (index: number) => void;
+  /** Where this invoice line sits among all of them, for Previous and Next. */
+  position: { number: number; count: number };
+  onPrev?: () => void;
+  onNext?: () => void;
+  /** Called after Apply; the page moves on to the next open line or closes. */
+  onApplied: () => void;
+  /** Another invoice line still needs a choice, so Apply can move on to it. */
+  moreToDo: boolean;
 }) {
   const source = invoice.lines.find((entry) => entry.index === line.index);
   const invoiceText = source?.description || `Invoice line ${line.index + 1}`;
@@ -508,9 +523,42 @@ export function NonStockPoDrawer({
                   {poLabel}
                 </p>
               </div>
-              <DialogClose className="icon-btn" aria-label="Close">
-                <X size={16} />
-              </DialogClose>
+              <div className="flex items-center gap-1">
+                {position.count > 1 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ margin: 0 }}
+                      aria-label="Previous invoice line"
+                      disabled={!onPrev}
+                      onClick={onPrev}
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <span className="num text-[11px] text-[#6b5d50]">
+                      {position.number} of {position.count}
+                    </span>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      style={{ margin: 0 }}
+                      aria-label="Next invoice line"
+                      disabled={!onNext}
+                      onClick={onNext}
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </>
+                ) : null}
+                <DialogClose
+                  className="icon-btn"
+                  style={{ margin: 0 }}
+                  aria-label="Close"
+                >
+                  <X size={16} />
+                </DialogClose>
+              </div>
             </div>
             <div className="meter">
               <div className="m-row">
@@ -624,6 +672,20 @@ export function NonStockPoDrawer({
                       ? "No changes"
                       : "Pick the PO line this invoice line belongs to"}
             </span>
+            {confirmed && !locked ? (
+              <button
+                type="button"
+                className="btn ghost"
+                style={{ color: "#b3261e" }}
+                disabled={busy}
+                onClick={() => {
+                  onReset(line.index);
+                  close();
+                }}
+              >
+                Remove match
+              </button>
+            ) : null}
             <button type="button" className="btn ghost" onClick={close}>
               {dirty && !locked ? "Discard" : "Close"}
             </button>
@@ -635,10 +697,10 @@ export function NonStockPoDrawer({
                 onClick={() => {
                   if (!pick) return;
                   onAllocate(line.index, { [pick]: amount });
-                  close();
+                  onApplied();
                 }}
               >
-                Apply
+                {moreToDo ? "Apply & next" : "Apply"}
               </button>
             ) : null}
           </footer>
