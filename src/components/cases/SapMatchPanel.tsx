@@ -729,6 +729,7 @@ function Matched({
         vendor={data.vendor}
         result={result}
         env={data.sapEnv}
+        postedByApp={Boolean(findPostedApInvoice(data.postings, data.sapEnv))}
         busy={busy}
         error={actionError ? sapMessage(actionError) : null}
         onRefresh={onRefresh}

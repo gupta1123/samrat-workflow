@@ -283,7 +283,7 @@ function recordedProps(details = true) {
         options: [
           {
             choice: "close",
-            title: "Close as duplicate",
+            title: "Close, already in SAP",
             lines: ["Nothing is sent to SAP"],
             effect: "close" as const,
           },
@@ -342,7 +342,7 @@ test("recorded review shows separate invoice products and SAP accounting lines, 
     "USD 500",
     "Historical evidence only",
     "no item links have been created",
-    "Close as duplicate",
+    "Close, already in SAP",
   ])
     assert.ok(html.includes(text), text);
   for (const text of [
@@ -365,7 +365,7 @@ test("recorded review keeps duplicate protection visible when SAP detail reading
   );
   assert.ok(html.includes("its item details are unavailable"));
   assert.ok(html.includes("Duplicate protection remains active"));
-  assert.ok(html.includes("Close as duplicate"));
+  assert.ok(html.includes("Close, already in SAP"));
   assert.ok(!html.includes("0 SAP lines"));
 });
 

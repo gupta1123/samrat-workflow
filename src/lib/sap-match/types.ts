@@ -194,6 +194,9 @@ export type RecordedInvoiceEvidence = {
   invoiceReference: string;
   currency: string | null;
   total: number | null;
+  /** SAP posting date (DocDate), as returned by SAP. */
+  docDate?: string | null;
+  taxTotal?: number | null;
   lines: Array<{
     lineNum: number | null;
     itemCode: string | null;

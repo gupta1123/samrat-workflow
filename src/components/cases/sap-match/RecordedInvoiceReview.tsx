@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { Check, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { matchTimestamp } from "@/lib/sap-match/evidence";
 import type {
@@ -10,7 +10,7 @@ import type {
 } from "@/lib/sap-match/types";
 import { CheckBlock } from "./CheckBlock";
 import { SupplierEvidence } from "./MatchingEvidence";
-import { qty } from "./format";
+import { formatDate, qty } from "./format";
 
 const money = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
 function amount(value: number | null, currency: string | null) {
@@ -32,6 +32,7 @@ export function RecordedInvoiceReview({
   onRefresh,
   onChoose,
   onUndo,
+  postedByApp = false,
 }: {
   invoice: MatchInvoice;
   vendor: { cardCode: string; cardName: string } | null;
@@ -42,11 +43,42 @@ export function RecordedInvoiceReview({
   onRefresh: () => void;
   onChoose: (check: MatchCheck, choice: string, reason: string) => void;
   onUndo: (check: MatchCheck) => void;
+  /** True when this app created the A/P invoice; false when SAP already had it. */
+  postedByApp?: boolean;
 }) {
   const recorded = result.existingInvoice!;
   const evidence = recorded.evidence;
   const duplicate = result.checks.find((check) => check.id === "dup");
   const closed = result.status === "closed";
+  const sameTotal =
+    evidence?.total != null && invoice.total != null
+      ? Math.abs(evidence.total - invoice.total) < 0.5
+      : null;
+  const facts: Array<{ label: string; ok: boolean | null; text: string }> = [
+    {
+      label: "Supplier",
+      ok: evidence && vendor ? evidence.cardCode === vendor.cardCode : null,
+      text: vendor ? `${vendor.cardName} (${vendor.cardCode})` : "Not matched",
+    },
+    {
+      label: "Invoice number",
+      ok: evidence ? evidence.invoiceReference === invoice.invoiceNumber : null,
+      text: invoice.invoiceNumber,
+    },
+    {
+      label: "Total",
+      ok: sameTotal,
+      text:
+        evidence?.total != null
+          ? `SAP ${amount(evidence.total, evidence.currency)} · invoice ${amount(invoice.total, invoice.currency)}`
+          : "SAP total unavailable",
+    },
+    {
+      label: "Posted on",
+      ok: null,
+      text: evidence?.docDate ? formatDate(evidence.docDate) : "Not available",
+    },
+  ];
   return (
     <div className="space-y-4 px-4 py-3">
       <header className="space-y-2">
@@ -72,8 +104,39 @@ export function RecordedInvoiceReview({
         </div>
         <p className="text-[12px] leading-5 text-[#3d3530]">
           Supplier invoice <b>{invoice.invoiceNumber}</b> already exists as{" "}
-          <b>A/P Invoice {recorded.docNum}</b>. No new draft is needed.
+          <b>A/P Invoice {recorded.docNum}</b>.{" "}
+          {postedByApp
+            ? "It was posted from this app."
+            : "It was already in SAP; it was not posted from this app."}{" "}
+          No new draft is needed.
         </p>
+        <ul className="grid gap-1.5 sm:grid-cols-2">
+          {facts.map((fact) => (
+            <li
+              key={fact.label}
+              className="flex items-start gap-2 rounded-lg border border-[#ede7de] bg-white px-3 py-2 text-[11px] text-[#3d3530]"
+            >
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full ${fact.ok === true ? "bg-[#e9f4ee] text-[#2c6a4f]" : fact.ok === false ? "bg-[#fdecea] text-[#b91c1c]" : "bg-[#f0ece4] text-[#8a7f72]"}`}
+              >
+                {fact.ok === true ? (
+                  <Check className="h-3 w-3" />
+                ) : fact.ok === false ? (
+                  <X className="h-3 w-3" />
+                ) : (
+                  "·"
+                )}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[10px] uppercase tracking-wide text-[#8a7f72]">
+                  {fact.label}
+                </span>
+                <span className="break-words">{fact.text}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
         <details className="text-[11px] text-[#6b5d50]">
           <summary className="cursor-pointer font-medium">
             Supplier identification
@@ -96,7 +159,26 @@ export function RecordedInvoiceReview({
           {error}
         </p>
       ) : null}
-      {duplicate ? (
+      {duplicate && !duplicate.decision && !closed ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e0d8cc] bg-[#faf8f4] px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-[12px] font-semibold text-[#111827]">
+              Nothing more to post
+            </p>
+            <p className="text-[11px] text-[#6b5d50]">
+              Close this case so the same invoice is not posted twice. Documents
+              stay on file and nothing is sent to SAP.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={() => onChoose(duplicate, "close", "")}
+          >
+            Close, already in SAP
+          </Button>
+        </div>
+      ) : duplicate ? (
         <CheckBlock
           check={duplicate}
           locked={false}

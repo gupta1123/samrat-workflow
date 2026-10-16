@@ -480,7 +480,7 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
       options: [
         {
           choice: "close",
-          title: "Close as duplicate",
+          title: "Close, already in SAP",
           lines: ["Nothing is sent to SAP", "Documents stay on file"],
           effect: "close",
           recommended: true,

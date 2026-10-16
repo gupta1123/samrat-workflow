@@ -39,6 +39,8 @@ export function recordedInvoiceEvidence(
     ...expected,
     currency: text(document.DocCurrency),
     total: number(document.DocTotal),
+    docDate: text(document.DocDate),
+    taxTotal: number(document.VatSum),
     lines: lines.map((line: Record<string, unknown>) => ({
       lineNum: number(line.LineNum),
       itemCode: text(line.ItemCode),

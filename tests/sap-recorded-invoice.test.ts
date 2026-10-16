@@ -35,6 +35,8 @@ test("recorded evidence retains actual accounting lines and amounts without grou
     ...expected,
     currency: "USD",
     total: 150,
+    docDate: null,
+    taxTotal: null,
     lines: [
       {
         lineNum: 4,
@@ -78,4 +80,13 @@ test("account-based documents retain their account and do not invent an item or 
   assert.equal(evidence.lines[0].itemCode, null);
   assert.equal(evidence.lines[0].quantity, null);
   assert.equal(evidence.lines[0].lineTotal, 0);
+});
+
+test("recorded evidence carries the SAP posting date and tax total", () => {
+  const evidence = recordedInvoiceEvidence(
+    { ...document, DocDate: "2026-07-03", VatSum: 18 } as never,
+    expected,
+  );
+  assert.equal(evidence?.docDate, "2026-07-03");
+  assert.equal(evidence?.taxTotal, 18);
 });
