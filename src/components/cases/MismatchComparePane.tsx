@@ -35,6 +35,7 @@ import { EXTRACTION_VERIFICATION_FIELD } from "@/lib/extraction-verification";
 import { INVOICE_NUMBER_REQUIRED_FIELD } from "@/lib/invoice-approval";
 import {
   MISSING_DOCUMENTS_FIELD,
+  DOCUMENT_REQUIREMENTS_FIELD,
   readMissingDocumentGroups,
 } from "@/lib/missing-documents";
 import { DUPLICATE_INVOICE_FIELD } from "@/lib/duplicate-invoice";
@@ -210,9 +211,7 @@ export function MismatchComparePane({
         <div className={styles.compareToolbar}>
           <div className={styles.compareToolbarTitle}>
             <strong>Duplicate invoice</strong>
-            <span>
-              The same vendor invoice was uploaded more than once
-            </span>
+            <span>The same vendor invoice was uploaded more than once</span>
           </div>
         </div>
         <div className={`${styles.compareStage} ${styles.compareStageSingle}`}>
@@ -227,6 +226,30 @@ export function MismatchComparePane({
                 "This invoice number appears more than once in this packet."}
             </span>
             {mismatch.fixPlan ? <span>{mismatch.fixPlan}</span> : null}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (mismatch.fieldName === DOCUMENT_REQUIREMENTS_FIELD) {
+    return (
+      <section
+        className={styles.comparePane}
+        aria-label="Confirm document requirements"
+      >
+        <div className={styles.compareToolbar}>
+          <div className={styles.compareToolbarTitle}>
+            <strong>Confirm what this purchase needs</strong>
+            <span>This is not a missing-document finding</span>
+          </div>
+        </div>
+        <div className={`${styles.compareStage} ${styles.compareStageSingle}`}>
+          <div className={styles.compareEmpty}>
+            <FilePlus2 />
+            <strong>Check the delivery or measurement requirements</strong>
+            <span>{mismatch.analysis}</span>
+            <span>{mismatch.fixPlan}</span>
           </div>
         </div>
       </section>

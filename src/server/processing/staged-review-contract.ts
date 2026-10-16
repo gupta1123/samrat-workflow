@@ -13,7 +13,10 @@ import { STAGED_REVIEW_CONTRACT_VERSION } from "./checkpoint-contract";
 import { LOGISTICS_ROW_FIELDS } from "@/lib/extracted-source-rows";
 import type { LogisticsRow } from "@/types/pipeline";
 import { SOURCE_LINE_ITEM_KEYS } from "@/lib/source-line-items";
-import { readSupplyNature } from "@/lib/supply-nature";
+import {
+  readSupplyNature,
+  LOGISTICS_REQUIREMENT_KEYS,
+} from "@/lib/supply-nature";
 import {
   sourceQuoteContainsValue,
   sourceFieldQuoteContainsValue,
@@ -167,8 +170,31 @@ export function buildSourceAuditSchema(
             enum: ["goods", "services", "mixed", "unknown"],
           },
           evidence: { type: "array", items: ownEvidence },
+          logisticsRequirements: {
+            type: "object",
+            properties: Object.fromEntries(
+              LOGISTICS_REQUIREMENT_KEYS.map((key) => [
+                key,
+                {
+                  type: "object",
+                  properties: {
+                    status: {
+                      type: "string",
+                      enum: ["required", "not_applicable", "unknown"],
+                    },
+                    reason: text,
+                    evidence: { type: "array", items: ownEvidence },
+                  },
+                  required: ["status", "reason", "evidence"],
+                  additionalProperties: false,
+                },
+              ]),
+            ),
+            required: [...LOGISTICS_REQUIREMENT_KEYS],
+            additionalProperties: false,
+          },
         },
-        required: ["kind", "evidence"],
+        required: ["kind", "evidence", "logisticsRequirements"],
         additionalProperties: false,
       },
       fieldChecks: supportSchema(checklist.fieldSupport),
@@ -1142,7 +1168,9 @@ export function parseCompactSourceAudit(
   if (payload.supplyNature !== undefined) {
     const assessment = object(payload.supplyNature);
     if (
-      Object.keys(assessment).some((key) => !["kind", "evidence"].includes(key))
+      Object.keys(assessment).some(
+        (key) => !["kind", "evidence", "logisticsRequirements"].includes(key),
+      )
     )
       throw new SourceReviewValidationError(
         "source-audit",
@@ -1154,11 +1182,38 @@ export function parseCompactSourceAudit(
         const bound = bindEvidence(proof, "Supply nature");
         return { sourcePage: bound.pageNumber, quote: bound.quote };
       }),
+      ...(assessment.logisticsRequirements === undefined
+        ? {}
+        : {
+            logisticsRequirements: Object.fromEntries(
+              Object.entries(object(assessment.logisticsRequirements)).map(
+                ([key, raw]) => {
+                  const requirement = object(raw);
+                  return [
+                    key,
+                    {
+                      ...requirement,
+                      evidence: array(requirement.evidence).map((proof) => {
+                        const bound = bindEvidence(
+                          proof,
+                          "Logistics requirement",
+                        );
+                        return {
+                          sourcePage: bound.pageNumber,
+                          quote: bound.quote,
+                        };
+                      }),
+                    },
+                  ];
+                },
+              ),
+            ),
+          }),
     });
     if (!nature)
       throw new SourceReviewValidationError(
         "source-audit",
-        "Supply classification needs own-page evidence; do not classify by missing attachments.",
+        "Supply classification and logistics requirements need valid own-page evidence; do not decide by missing attachments.",
       );
     result.document = { ...result.document, supplyNature: nature };
   }

@@ -24,7 +24,10 @@ import {
 import { ACTIVE_FIELD_DEFINITIONS } from "@/lib/document-schema";
 import { DUPLICATE_INVOICE_FIELD } from "@/lib/duplicate-invoice";
 import { isLineItemMismatchField } from "@/lib/line-items";
-import { MISSING_DOCUMENTS_FIELD } from "@/lib/missing-documents";
+import {
+  MISSING_DOCUMENTS_FIELD,
+  DOCUMENT_REQUIREMENTS_FIELD,
+} from "@/lib/missing-documents";
 import { UNRELATED_DOCUMENT_FIELD } from "@/lib/unrelated-document";
 import { WEIGHT_CALCULATION_FIELD } from "@/lib/weight-calculation";
 import { EWAY_BILL_VALIDITY_FIELD } from "@/lib/eway-bill-validity";
@@ -74,6 +77,9 @@ export function getFieldLabel(fieldName: string) {
   }
   if (fieldName === MISSING_DOCUMENTS_FIELD) {
     return "Missing required documents";
+  }
+  if (fieldName === DOCUMENT_REQUIREMENTS_FIELD) {
+    return "Confirm document requirements";
   }
   if (fieldName === DUPLICATE_INVOICE_FIELD) {
     return "Duplicate invoice number";
@@ -153,6 +159,8 @@ function getIssueDescription(fieldName: string) {
       return "A visible terms and conditions clause was assessed against the packet and needs correction or review.";
     case MISSING_DOCUMENTS_FIELD:
       return "One or more required document groups are absent from this case.";
+    case DOCUMENT_REQUIREMENTS_FIELD:
+      return "Confirm which delivery or measurement documents apply to this purchase.";
     case DUPLICATE_INVOICE_FIELD:
       return "The same vendor invoice appears more than once. Confirm only one booking will be made before approving.";
     case WEIGHT_CALCULATION_FIELD:
@@ -597,6 +605,7 @@ export function isCorrectionSensitiveMismatch(mismatch: MismatchRecord) {
     isLineItemMismatchField(mismatch.fieldName) ||
     mismatch.fieldName === TERMS_COMPLIANCE_FIELD ||
     mismatch.fieldName === MISSING_DOCUMENTS_FIELD ||
+    mismatch.fieldName === DOCUMENT_REQUIREMENTS_FIELD ||
     mismatch.fieldName === DOCUMENT_READABILITY_FIELD ||
     mismatch.fieldName === EXTRACTION_VERIFICATION_FIELD ||
     mismatch.fieldName === INVOICE_NUMBER_REQUIRED_FIELD ||
@@ -615,6 +624,9 @@ function getIssueModeLabel(
   }
   if (mismatch.fieldName === MISSING_DOCUMENTS_FIELD) {
     return "Required documents missing";
+  }
+  if (mismatch.fieldName === DOCUMENT_REQUIREMENTS_FIELD) {
+    return "Requirements need confirmation";
   }
   if (isSingleDocumentIssue(mismatch, evidence)) {
     return isLineItemMismatchField(mismatch.fieldName)
@@ -644,6 +656,9 @@ function getReviewerHint(
   }
   if (mismatch.fieldName === MISSING_DOCUMENTS_FIELD) {
     return "Upload every listed required document, then run analysis again so the packet can be checked as a complete case.";
+  }
+  if (mismatch.fieldName === DOCUMENT_REQUIREMENTS_FIELD) {
+    return "The source does not establish whether these documents apply. Confirm the delivery or measurement requirements with the purchase owner; do not add unrelated documents just to clear this warning.";
   }
   if (mismatch.fieldName === DUPLICATE_INVOICE_FIELD) {
     return "Remove the duplicate upload and analyze again, or accept this issue to confirm the invoice will be booked only once. Approval stays blocked while this warning is unresolved.";

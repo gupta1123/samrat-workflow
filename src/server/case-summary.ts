@@ -9,10 +9,7 @@ import {
 } from "@/lib/missing-documents";
 import { isInternalCompanyName } from "@/server/workspace-parties";
 import type { CaseDoc, DocType, FieldKey, Mismatch } from "@/types/pipeline";
-import {
-  isServiceOnlyPacket,
-  GOODS_ONLY_DOCUMENT_TYPES,
-} from "@/lib/supply-nature";
+import { packetLogisticsRequirement } from "@/lib/supply-nature";
 
 export type CaseSummary = {
   slug: string;
@@ -692,13 +689,40 @@ export function getMissingCorePacketDocumentGroups(
   return getEnabledCorePacketGroups(fieldConfiguration)
     .filter(
       (group) =>
-        !(
-          isServiceOnlyPacket(documents) &&
-          group.types.every((type) => GOODS_ONLY_DOCUMENT_TYPES.includes(type))
-        ) &&
         isRequiredMissingDocumentGroup(group.label) &&
+        (group.label !== "Transport Document" ||
+          packetLogisticsRequirement(documents, "transport") === "required") &&
+        (group.label !== "Weight Proof" ||
+          packetLogisticsRequirement(documents, "weightProof") ===
+            "required") &&
         !isCorePacketGroupCovered(group, documents, presentTypes),
     )
+    .map((group) => group.label);
+}
+
+export function getUnverifiedLogisticsDocumentGroups(
+  documents: CaseDoc[],
+  fieldConfiguration?: PacketFieldConfiguration,
+) {
+  const presentTypes = new Set(
+    documents
+      .filter((doc) => isDocTypeEnabled(doc.type, fieldConfiguration))
+      .map((doc) => doc.type),
+  );
+  return getEnabledCorePacketGroups(fieldConfiguration)
+    .filter((group) => {
+      const key =
+        group.label === "Transport Document"
+          ? "transport"
+          : group.label === "Weight Proof"
+            ? "weightProof"
+            : null;
+      return (
+        key &&
+        !isCorePacketGroupCovered(group, documents, presentTypes) &&
+        packetLogisticsRequirement(documents, key) === "unknown"
+      );
+    })
     .map((group) => group.label);
 }
 

@@ -13,10 +13,14 @@ import {
 import { FIELD_DEFINITIONS } from "./document-schema";
 import {
   getMissingCorePacketDocumentGroups,
+  getUnverifiedLogisticsDocumentGroups,
   selectCaseSummaryDocuments,
   summarizeCase,
 } from "./case-summary";
-import { buildMissingDocumentIssues } from "../lib/missing-documents";
+import {
+  buildMissingDocumentIssues,
+  buildDocumentRequirementReviewIssues,
+} from "../lib/missing-documents";
 import { buildEWayBillValidityIssues } from "../lib/eway-bill-validity";
 import {
   getPersistedPacketFieldConfiguration,
@@ -602,6 +606,9 @@ async function processJob(jobId: string) {
           filterIssues(reviewed.reviewIssues, x.docs),
           filterIssues(terms.mismatches, x.docs),
           buildMissingDocumentIssues(missingDocumentGroups),
+          buildDocumentRequirementReviewIssues(
+            getUnverifiedLogisticsDocumentGroups(x.docs, config),
+          ),
           buildEWayBillValidityIssues(x.docs),
           verifyWeightCalculationIntegrity(x.docs),
           duplicateInvoiceIssues,

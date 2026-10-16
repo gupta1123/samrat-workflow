@@ -1,6 +1,24 @@
 import type { Mismatch } from "@/types/pipeline";
 
 export const MISSING_DOCUMENTS_FIELD = "missingDocuments";
+export const DOCUMENT_REQUIREMENTS_FIELD = "documentRequirements";
+
+export function buildDocumentRequirementReviewIssues(
+  groups: string[],
+): Mismatch[] {
+  if (!groups.length) return [];
+  const list = uniqueLabels(groups).join(", ");
+  return [
+    {
+      id: "document-requirements-unverified",
+      field: DOCUMENT_REQUIREMENTS_FIELD,
+      values: [{ docId: "packet", value: `Confirm whether required: ${list}` }],
+      analysis: `The source documents do not establish whether ${list} is required for this purchase. These documents have not been declared missing.`,
+      fixPlan:
+        "Confirm the delivery or measurement requirements with the purchase owner. Add the relevant PO scope or supporting evidence and analyse again; do not upload unrelated transport or weight documents.",
+    },
+  ];
+}
 
 // These documents are checked when supplied, but absence is not a packet issue.
 const OPTIONAL_DOCUMENT_GROUPS = new Set(["Purchase Order", "E-Way Bill"]);

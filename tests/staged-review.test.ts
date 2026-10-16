@@ -172,6 +172,67 @@ test("supply nature requires evidence on the document's own original page", asyn
   }
 });
 
+test("source review binds separate logistics applicability decisions to original pages", async () => {
+  const { parseCompactSourceAudit, buildSourceAuditSchema } =
+    await import("../src/server/processing/staged-review-contract");
+  const doc = { ...documents[0], md: "Replacement component 1 NOS" };
+  const raw = await compact(doc);
+  const assessment = (status: string, pageNumber = "p1") => ({
+    status,
+    reason: "Count-based receipt does not use measured weight.",
+    evidence: [{ pageNumber, quote: doc.md }],
+  });
+  const payload = {
+    ...raw,
+    supplyNature: {
+      kind: "goods",
+      evidence: [{ pageNumber: "p1", quote: doc.md }],
+      logisticsRequirements: {
+        transport: assessment("unknown"),
+        weightProof: assessment("not_applicable"),
+      },
+    },
+  };
+  const result = parseCompactSourceAudit(JSON.stringify(payload), doc, [
+    pages[0],
+  ]);
+  assert.equal(
+    result.document.supplyNature?.logisticsRequirements?.weightProof.status,
+    "not_applicable",
+  );
+  assert.equal(
+    result.document.supplyNature?.logisticsRequirements?.weightProof.evidence[0]
+      .sourcePage,
+    1,
+  );
+  const schema = buildSourceAuditSchema(doc, [pages[0]]);
+  assert.ok(
+    schema.properties.supplyNature.required.includes("logisticsRequirements"),
+  );
+  for (const weightProof of [
+    assessment("not_applicable", "p999"),
+    { ...assessment("not_applicable"), evidence: [] },
+    assessment("guess"),
+  ]) {
+    assert.throws(() =>
+      parseCompactSourceAudit(
+        JSON.stringify({
+          ...payload,
+          supplyNature: {
+            ...payload.supplyNature,
+            logisticsRequirements: {
+              ...payload.supplyNature.logisticsRequirements,
+              weightProof,
+            },
+          },
+        }),
+        doc,
+        [pages[0]],
+      ),
+    );
+  }
+});
+
 test("review retains every transport/weight row only with individual own-page cell evidence", async () => {
   const { parseCompactSourceAudit } =
     await import("../src/server/processing/staged-review-contract");
