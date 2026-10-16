@@ -418,6 +418,9 @@ export function NonStockPoDrawer({
               <small>
                 {qty(candidate.poEvidence?.openQuantity)} ×{" "}
                 {inr(candidate.price)}
+                {tell.length && fitsInvoiceLine(line, candidate)
+                  ? ` · name has ${tell[0].toUpperCase()}`
+                  : ""}
               </small>
             </span>
             {na ? (
