@@ -87,7 +87,13 @@ export function NonStockPoPicker({
       return next;
     });
   const cited = pos.filter((po) => citedDocEntries.includes(po.docEntry));
-  const others = pos.filter((po) => !citedDocEntries.includes(po.docEntry));
+  const others = pos
+    .filter((po) => !citedDocEntries.includes(po.docEntry))
+    .sort(
+      (a, b) =>
+        Number(facts(b).enough) - Number(facts(a).enough) ||
+        facts(b).fitting - facts(a).fitting,
+    );
   const chosen = pos.find((po) => po.docEntry === pick);
   const chosenFacts = chosen ? facts(chosen) : null;
   const dirty = pick !== null && pick !== currentDocEntry;
@@ -135,6 +141,7 @@ export function NonStockPoPicker({
           <button
             type="button"
             className="gr-body"
+            style={{ gridTemplateColumns: "minmax(0,1fr) auto 16px" }}
             aria-expanded={isOpen}
             onClick={() => toggle(po.docEntry)}
           >
@@ -175,9 +182,13 @@ export function NonStockPoPicker({
                 label="PO number"
                 ok={info.cited}
                 invoice={invoice.poReferences.join(", ") || "None printed"}
-                po={[po.docNum, ...(po.references?.po ?? [])]
-                  .filter(Boolean)
-                  .join(", ")}
+                po={[
+                  ...new Set(
+                    [po.docNum, ...(po.references?.po ?? [])]
+                      .filter(Boolean)
+                      .map(String),
+                  ),
+                ].join(", ")}
               />
               <CompareRow
                 label="Amount"
