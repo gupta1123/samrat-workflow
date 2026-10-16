@@ -73,3 +73,17 @@ export function isNonStockPoReview(
     )
   );
 }
+
+/** A line that is matched to a supplier PO line (not to a goods receipt): a
+ * non-stock or service item, or an unlinked line whose supplier has open
+ * non-stock PO lines. Confirmed or not, these are reviewed in the PO-line table.
+ */
+export function isPoLineReviewLine(line: LineResult) {
+  const pool =
+    line.kind === "unmapped"
+      ? (line.nonStockPoCandidates ?? [])
+      : line.kind === "non-stock" || line.kind === "service"
+        ? line.candidates
+        : [];
+  return pool.some((candidate) => candidate.kind === "PO");
+}

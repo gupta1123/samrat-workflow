@@ -136,3 +136,36 @@ test("PO picker drawer is wired in place of the PO select", () => {
   assert.match(table, /<NonStockPoPicker/);
   assert.doesNotMatch(table, /<select/);
 });
+
+test("a matched PO line stays in the table with a Change button", () => {
+  const matched = {
+    ...(line(0, 8.25) as object),
+    kind: "non-stock",
+    candidates: [{ ...(pool[0] as object), allocated: 2887.5 }],
+  } as never;
+  const html = renderToStaticMarkup(
+    createElement(NonStockPoTable, {
+      caseId: "c",
+      invoice: {
+        poReferences: [],
+        lines: [{ index: 0, description: "Trophies" }],
+        servicePeriod: "Oct 2026",
+      } as never,
+      lines: [matched],
+      checks: [],
+      busy: false,
+      locked: false,
+      onChoose: () => {},
+      onUndo: () => {},
+      onAllocate: () => {},
+      onResetAllocation: () => {},
+      onLink: () => {},
+    }),
+  );
+  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  assert.match(text, /PO lines matched/);
+  assert.match(text, /Service period: Oct 2026/);
+  assert.match(text, /✓ PO 475 · Line 1/);
+  assert.match(text, /all lines confirmed/);
+  assert.equal((text.match(/Change/g) ?? []).length, 1);
+});

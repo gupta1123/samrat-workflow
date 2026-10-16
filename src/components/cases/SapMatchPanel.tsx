@@ -69,7 +69,7 @@ import { ReviewHeader } from "./sap-match/ReviewHeader";
 import { reviewModel } from "@/lib/sap-match/review-model";
 import {
   isNonStockPoReview,
-  needsNonStockPoConfirmation,
+  isPoLineReviewLine,
 } from "@/lib/sap-match/non-stock-po-review";
 import { RecordedInvoiceReview } from "./sap-match/RecordedInvoiceReview";
 
@@ -702,6 +702,8 @@ function Matched({
     : null;
   const [receiptsLine, setReceiptsLine] = useState<number | null>(null);
   const review = reviewModel(result, { approved: data.postable, invoice });
+  const poLines = result.lines.filter(isPoLineReviewLine);
+  const otherLines = result.lines.filter((line) => !isPoLineReviewLine(line));
   const nonStockPoReview = isNonStockPoReview(invoice, result);
   const openCount = result.open.length;
 
@@ -977,15 +979,14 @@ function Matched({
           ),
         )}
 
-      {nonStockPoReview &&
-      result.lines.some((line) =>
-        needsNonStockPoConfirmation(invoice, line),
-      ) ? (
+      {poLines.length ? (
         <NonStockPoTable
           caseId={caseId}
           invoice={invoice}
-          lines={result.lines}
-          checks={result.checks.filter((check) => check.lineIndex !== null)}
+          lines={poLines}
+          checks={result.checks.filter((check) =>
+            poLines.some((line) => line.index === check.lineIndex),
+          )}
           locked={locked}
           busy={busy}
           onChoose={onChoose}
@@ -995,11 +996,9 @@ function Matched({
           onLink={onLink}
         />
       ) : null}
-      {nonStockPoReview &&
-      result.lines.some((line) => needsNonStockPoConfirmation(invoice, line))
-        ? null
-        : wrapDuplicateLines(
-            result.lines.map((line) => (
+      {otherLines.length
+        ? wrapDuplicateLines(
+            otherLines.map((line) => (
               <MatchLineCard
                 key={line.index}
                 caseId={caseId}
@@ -1025,7 +1024,8 @@ function Matched({
                 onLink={onLink}
               />
             )),
-          )}
+          )
+        : null}
 
       {invoiceLevel.map((check) => (
         <CheckBlock

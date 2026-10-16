@@ -2,10 +2,7 @@
 
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import {
-  needsNonStockPoConfirmation,
-  nonStockPoReferenceMatches,
-} from "@/lib/sap-match/non-stock-po-review";
+import { nonStockPoReferenceMatches } from "@/lib/sap-match/non-stock-po-review";
 import type {
   CandidateView,
   LineResult,
@@ -105,9 +102,7 @@ export function NonStockPoTable({
 }) {
   const [drawerLine, setDrawerLine] = useState<number | null>(null);
   const [pickingPo, setPickingPo] = useState(false);
-  const pending = lines.filter((line) =>
-    needsNonStockPoConfirmation(invoice, line),
-  );
+  const pending = lines.filter((line) => !confirmedPoCandidate(line));
   const allPool = [
     ...new Map(
       lines
@@ -143,6 +138,13 @@ export function NonStockPoTable({
   const poText = (po: CandidateView) =>
     `PO ${po.docNum} · ${formatDate(po.date)} · ${inr(poLeft(po.docEntry))} left`;
   const currentPo = pos.find((po) => String(po.docEntry) === poChoice);
+  /** A matched line opens on the PO it is matched to; others on the chosen PO. */
+  const drawerPo = (line: LineResult) => {
+    const matched = confirmedPoCandidate(line);
+    return (
+      pos.find((po) => po.docEntry === matched?.docEntry) ?? currentPo ?? pos[0]
+    );
+  };
   const confirmedCount = lines.length - pending.length;
   const total = lines.reduce((sum, line) => sum + (line.invoiceAmount ?? 0), 0);
   const confirmedTotal = lines
@@ -165,10 +167,17 @@ export function NonStockPoTable({
     >
       <header className="space-y-0.5 border-b border-[#ece6dc] px-4 py-3">
         <h3 className="text-[13px] font-semibold text-[#111827]">
-          Choose the PO line for each invoice line
+          {pending.length
+            ? "Choose the PO line for each invoice line"
+            : "PO lines matched"}
         </h3>
         <p className="text-[11px] text-[#6b5d50]">
-          SAP lists these PO items as non-stock. Nothing is chosen for you.
+          {pending.length
+            ? "Nothing is chosen for you."
+            : "Open a line to review or change its PO line."}
+          {invoice.servicePeriod
+            ? ` Service period: ${invoice.servicePeriod}.`
+            : ""}
         </p>
       </header>
       <div className="space-y-3 px-4 py-3 text-[11px]">
@@ -265,8 +274,8 @@ export function NonStockPoTable({
                       invoice={invoice}
                       line={line}
                       lines={lines}
-                      poDocEntry={currentPo.docEntry}
-                      poLabel={poText(currentPo)}
+                      poDocEntry={drawerPo(line).docEntry}
+                      poLabel={poText(drawerPo(line))}
                       busy={busy}
                       locked={locked}
                       onAllocate={onAllocate}

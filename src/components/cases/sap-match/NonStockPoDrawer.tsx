@@ -25,10 +25,7 @@ export function poCandidatesOf(line: LineResult) {
     line.kind === "unmapped"
       ? (line.nonStockPoCandidates ?? [])
       : line.candidates
-  ).filter(
-    (candidate) =>
-      candidate.kind === "PO" && candidate.documentType === "dDocument_Items",
-  );
+  ).filter((candidate) => candidate.kind === "PO");
 }
 
 export function poLineTitle(candidate: CandidateView) {
