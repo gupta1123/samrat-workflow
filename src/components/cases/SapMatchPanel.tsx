@@ -133,6 +133,7 @@ export function SapMatchPanel({
   variant = "full",
   approvalBlockedReason = null,
   onCaseDecided,
+  onOpenIssues,
   onReviewKindChange,
 }: {
   caseId: string;
@@ -141,6 +142,8 @@ export function SapMatchPanel({
   approvalBlockedReason?: string | null;
   /** Lets the page refresh its own copy of the case after Approve or Reject. */
   onCaseDecided?: () => void | Promise<void>;
+  /** Switches the page to its Issues tab. */
+  onOpenIssues?: () => void;
   /** Tells the page how this case is reviewed, for the sidebar subtitle. */
   onReviewKindChange?: (kind: "po" | "grpo" | "recorded") => void;
 }) {
@@ -560,6 +563,7 @@ export function SapMatchPanel({
         data={data}
         ap={ap}
         approvalBlockedReason={approvalBlockedReason}
+        onOpenIssues={onOpenIssues}
         onCaseDecided={async () => {
           await load(true);
           await onCaseDecided?.();
@@ -627,6 +631,7 @@ function Matched({
   busy,
   validationRequired = false,
   approvalBlockedReason = null,
+  onOpenIssues,
   onCaseDecided,
   onRetry,
   actionError,
@@ -652,6 +657,7 @@ function Matched({
   busy: boolean;
   validationRequired?: boolean;
   approvalBlockedReason?: string | null;
+  onOpenIssues?: () => void;
   onCaseDecided?: () => void | Promise<void>;
   onRetry?: () => void;
   actionError: string | null;
@@ -705,6 +711,15 @@ function Matched({
     : null;
   const [receiptsLine, setReceiptsLine] = useState<number | null>(null);
   const review = reviewModel(result, { approved: data.postable, invoice });
+  // Everything on this tab is done and only the Issues tab is holding approval.
+  const heldByIssues =
+    Boolean(approvalBlockedReason) &&
+    review.tone === "todo" &&
+    !review.terminal &&
+    review.pending.length === 0 &&
+    review.waiting.length === 1 &&
+    review.waiting[0] === "case approval";
+  const heldTitle = (approvalBlockedReason ?? "").replace(/.$/, "");
   const poLines = result.lines.filter(isPoLineReviewLine);
   const otherLines = result.lines.filter((line) => !isPoLineReviewLine(line));
   const poLinePending = poLines.some(
@@ -751,7 +766,7 @@ function Matched({
       <div className="space-y-1 px-4 py-3">
         <div className="flex items-center gap-2">
           <StatusPill
-            status={locked ? "ready" : result.status}
+            status={locked ? "ready" : heldByIssues ? "review" : result.status}
             label={
               ap
                 ? ap.status === "posted"
@@ -759,7 +774,9 @@ function Matched({
                   : "Draft saved"
                 : poLinePending && review.tone === "todo"
                   ? "Confirm PO lines"
-                  : undefined
+                  : heldByIssues
+                    ? "Issues open"
+                    : undefined
             }
           />
           <span className="truncate text-[11px] text-[#8a7f72]">
@@ -773,7 +790,9 @@ function Matched({
               : `Completed - Draft Entry No. ${ap.sap_docnum} saved in SAP`
             : poLinePending && review.tone === "todo"
               ? review.title
-              : result.summary}
+              : heldByIssues
+                ? heldTitle
+                : result.summary}
         </div>
         {!ap && openCount > 1 ? (
           <div className="text-[10px] text-[#8a7f72]">
@@ -897,7 +916,9 @@ function Matched({
             ? ap.status === "posted"
               ? `Posted as A/P Invoice ${ap.sap_docnum}`
               : "Draft saved in SAP"
-            : review.title
+            : heldByIssues
+              ? heldTitle
+              : review.title
         }
         tone={ap ? "ok" : review.tone}
         env={data.sapEnv}
@@ -936,6 +957,16 @@ function Matched({
         busy={busy}
         onRefresh={onRefresh}
       />
+
+      {heldByIssues && onOpenIssues ? (
+        <button
+          type="button"
+          className="text-[11px] font-medium text-[#6b4a33] underline"
+          onClick={onOpenIssues}
+        >
+          Go to Issues
+        </button>
+      ) : null}
 
       {locked ? (
         <p className="text-[11px] leading-4 text-[#6b5d50]">

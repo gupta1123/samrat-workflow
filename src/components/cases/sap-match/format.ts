@@ -8,12 +8,18 @@ export const inr = (value: number | null | undefined) =>
 export const qty = (value: number | null | undefined) =>
   value === null || value === undefined || !Number.isFinite(value)
     ? "—"
-    : new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 }).format(value);
+    : new Intl.NumberFormat("en-IN", { maximumFractionDigits: 3 }).format(
+        value,
+      );
 
 export function formatDate(value: string | null | undefined) {
   if (!value) return "—";
   const date = new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    : date.toLocaleDateString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
 }

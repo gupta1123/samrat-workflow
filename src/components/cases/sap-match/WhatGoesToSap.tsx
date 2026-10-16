@@ -178,7 +178,7 @@ export function WhatGoesToSap({
                           <td className="py-2 pr-3 text-right">
                             {line.lineTotal !== null ? "—" : inr(rate)}
                             {line.unitPrice !== null ? (
-                              <div className="text-[10px] text-[#9a5a0a]">
+                              <div className="text-[10px] text-[#8a7f72]">
                                 Vendor Invoice Unit Price
                               </div>
                             ) : null}
@@ -227,7 +227,7 @@ export function WhatGoesToSap({
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-[#8a7f72]">Tax</dt>
-                  <dd className="text-[#8a7f72]">Added by SAP</dd>
+                  <dd className="text-[#8a7f72]">Calculated by SAP</dd>
                 </div>
               </dl>
             </footer>
@@ -252,11 +252,7 @@ export function WhatGoesToSap({
               {inr(plan.difference)}
             </span>
           )
-        ) : (
-          <span className="text-[11px] text-[#24583e]">
-            ✓ Matches invoice {inr(plan.invoiceTaxable)}
-          </span>
-        )}
+        ) : null}
         <div className="ml-auto min-w-0">{actions}</div>
       </div>
     </section>

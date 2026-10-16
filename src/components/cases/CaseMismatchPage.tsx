@@ -1175,6 +1175,10 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
   const rejectedMismatchCount = visibleMismatches.filter(
     (mismatch) => mismatch.resolutionStatus === "rejected",
   ).length;
+  const issuesBlockReason =
+    pendingMismatchCount + rejectedMismatchCount > 0
+      ? `Settle the open issues first (${pendingMismatchCount + rejectedMismatchCount} left).`
+      : null;
   const pendingVisibleMismatchIds = useMemo(
     () =>
       visibleMismatches
@@ -1458,7 +1462,11 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
 
                 {reviewMode === "sap" ? (
                   <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-                    <SapMatchPanel caseId={caseId} variant="sidebar" />
+                    <SapMatchPanel
+                      caseId={caseId}
+                      variant="sidebar"
+                      approvalBlockedReason={issuesBlockReason}
+                    />
                   </div>
                 ) : visibleMismatches.length === 0 ? (
                   <div className="p-5 text-xs font-normal text-[#8a7f72]">
@@ -1619,11 +1627,8 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                         onReviewKindChange={(kind) =>
                           setSapReviewKind({ caseId, kind })
                         }
-                        approvalBlockedReason={
-                          pendingMismatchCount + rejectedMismatchCount > 0
-                            ? `Settle the open issues first (${pendingMismatchCount + rejectedMismatchCount} left).`
-                            : null
-                        }
+                        approvalBlockedReason={issuesBlockReason}
+                        onOpenIssues={() => setReviewMode("mismatches")}
                         onCaseDecided={async () => {
                           setDetail(await fetchCaseDetail(caseId));
                         }}

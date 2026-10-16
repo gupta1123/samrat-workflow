@@ -136,7 +136,9 @@ export function NonStockPoTable({
       .filter((candidate) => candidate.docEntry === docEntry)
       .reduce((sum, candidate) => sum + (candidate.open ?? 0), 0);
   const poText = (po: CandidateView) =>
-    `PO ${po.docNum} · ${formatDate(po.date)} · ${inr(poLeft(po.docEntry))} left`;
+    `PO ${po.docNum} · ${formatDate(po.date)}${
+      pending.length ? ` · ${inr(poLeft(po.docEntry))} left` : ""
+    }`;
   const currentPo = pos.find((po) => String(po.docEntry) === poChoice);
   /** A matched line opens on the PO it is matched to; others on the chosen PO. */
   const drawerPo = (line: LineResult) => {
@@ -172,9 +174,7 @@ export function NonStockPoTable({
             : "PO lines matched"}
         </h3>
         <p className="text-[11px] text-[#6b5d50]">
-          {pending.length
-            ? "Nothing is chosen for you."
-            : "Open a line to review or change its PO line."}
+          {pending.length ? "Nothing is chosen for you." : ""}
           {invoice.servicePeriod
             ? ` Service period: ${invoice.servicePeriod}.`
             : ""}
@@ -323,12 +323,12 @@ export function NonStockPoTable({
           <p className="text-[#6b5d50]">Choose the SAP PO to see its lines.</p>
         )}
 
-        <p className="tabular-nums text-[#6b5d50]">
-          Invoice {inr(total)} · confirmed {inr(confirmedTotal)} ·{" "}
-          {pending.length
-            ? `${pending.length} of ${lines.length} lines left`
-            : "all lines confirmed"}
-        </p>
+        {pending.length ? (
+          <p className="tabular-nums text-[#6b5d50]">
+            Invoice {inr(total)} · confirmed {inr(confirmedTotal)} ·{" "}
+            {pending.length} of {lines.length} lines left
+          </p>
+        ) : null}
 
         {openChecks.map((check) => (
           <CheckBlock

@@ -670,8 +670,8 @@ test("draft sheet opens with the invoice layout and ends with the match line and
   assert.match(html, /Base document/);
   assert.match(html, /GRPO.*718/);
   assert.match(html, /Total before tax/);
-  assert.match(html, /Added by SAP/);
+  assert.match(html, /Calculated by SAP/);
   const afterSheet = html.slice(html.lastIndexOf("</details>"));
-  assert.match(afterSheet, /Matches invoice.*₹200/);
+  assert.doesNotMatch(afterSheet, /Matches invoice/);
   assert.match(afterSheet, /Create draft/);
 });

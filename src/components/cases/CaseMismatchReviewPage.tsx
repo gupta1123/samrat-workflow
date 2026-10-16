@@ -1278,8 +1278,8 @@ export function CaseMismatchReviewPage({ caseId }: { caseId: string }) {
                         <div className={styles.mismatchMissingAction}>
                           <strong>Remove the extra copy.</strong>
                           <span>
-                            Deleting a duplicate upload removes this warning
-                            and re-analyzes the remaining files automatically.
+                            Deleting a duplicate upload removes this warning and
+                            re-analyzes the remaining files automatically.
                           </span>
                           {duplicateInvoiceFiles.map((file) => (
                             <div
@@ -1303,9 +1303,7 @@ export function CaseMismatchReviewPage({ caseId }: { caseId: string }) {
                                     }
                                   >
                                     {deletingFile ? (
-                                      <Loader2
-                                        className={styles.spinner}
-                                      />
+                                      <Loader2 className={styles.spinner} />
                                     ) : (
                                       <Trash2 />
                                     )}

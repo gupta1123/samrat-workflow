@@ -535,13 +535,11 @@ export function PdfEvidencePreview({
         matchedTextBoxes.length > 0
           ? "[data-pdf-focus]"
           : `[data-pdf-highlight="${highlightBoxes[0].id}"]`;
-      scroller
-        ?.querySelector<HTMLElement>(focusSelector)
-        ?.scrollIntoView({
-          behavior: "smooth",
-          block: "center",
-          inline: "center",
-        });
+      scroller?.querySelector<HTMLElement>(focusSelector)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "center",
+      });
     }, 60);
     return () => window.clearTimeout(timer);
   }, [highlightBoxes, matchedTextBoxes]);

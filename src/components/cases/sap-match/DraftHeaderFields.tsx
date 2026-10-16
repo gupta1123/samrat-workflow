@@ -110,7 +110,7 @@ export function DraftHeaderFields({
             ) : null}
             <h3 className="text-[11px] font-semibold text-[#111827]">
               {preview.service
-                ? "Service invoice — matched directly to the PO"
+                ? "Matched directly to the PO"
                 : "Transport & weights"}
             </h3>
             <PostingFieldGrid

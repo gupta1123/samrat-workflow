@@ -166,6 +166,6 @@ test("a matched PO line stays in the table with a Change button", () => {
   assert.match(text, /PO lines matched/);
   assert.match(text, /Service period: Oct 2026/);
   assert.match(text, /✓ PO 475 · Line 1/);
-  assert.match(text, /all lines confirmed/);
+  assert.doesNotMatch(text, /lines left/);
   assert.equal((text.match(/Change/g) ?? []).length, 1);
 });
