@@ -84,7 +84,7 @@ test("account-based documents retain their account and do not invent an item or 
 
 test("recorded evidence carries the SAP posting date and tax total", () => {
   const evidence = recordedInvoiceEvidence(
-    { ...document, DocDate: "2026-07-03", VatSum: 18 } as never,
+    { ...document, DocDate: "2026-07-03T00:00:00", VatSum: 18 } as never,
     expected,
   );
   assert.equal(evidence?.docDate, "2026-07-03");
