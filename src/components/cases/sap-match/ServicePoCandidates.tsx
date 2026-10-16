@@ -85,25 +85,48 @@ function factsFor(
         : { tone: "warn", text: "Item code differs" },
     );
   }
+  // A row already wrong on amount or quantity does not also need a price warning.
+  if (cells.amount === "bad" || cells.quantity === "bad") cells.price = "ok";
   return { facts, cells };
+}
+
+function citedPos(invoicePoReferences: string[], candidates: CandidateView[]) {
+  const printed = new Set(invoicePoReferences.filter(Boolean).map(refKey));
+  if (!printed.size) return [];
+  return [
+    ...new Set(
+      candidates
+        .filter(
+          (candidate) =>
+            printed.has(refKey(candidate.docNum)) ||
+            (candidate.references?.po ?? []).some((ref) =>
+              printed.has(refKey(ref)),
+            ),
+        )
+        .map((candidate) => candidate.docEntry),
+    ),
+  ];
 }
 
 function whyChoosing(
   invoicePoReferences: string[],
   candidates: CandidateView[],
   poCount: number,
+  cited: number[],
 ) {
   const printed = invoicePoReferences.filter(Boolean);
   if (!printed.length)
     return "The invoice does not print a PO number. Choose the SAP line it belongs to.";
-  const known = new Set(
-    candidates.flatMap((candidate) => [
-      refKey(candidate.docNum),
-      ...(candidate.references?.po ?? []).map(refKey),
-    ]),
-  );
-  if (printed.some((reference) => known.has(refKey(reference))))
-    return "The invoice cites one of the available SAP POs. Confirm the correct line before continuing.";
+  if (cited.length) {
+    const numbers = [
+      ...new Set(
+        candidates
+          .filter((candidate) => cited.includes(candidate.docEntry))
+          .map((candidate) => candidate.docNum),
+      ),
+    ];
+    return `The invoice cites PO ${printed.join(", ")}, which is in SAP (PO ${numbers.join(", ")}). Confirm the correct line before continuing.`;
+  }
   return `The invoice cites PO ${printed.join(", ")}. None of the available PO candidates has that reference, so ${
     poCount === 1
       ? "this supplier's open PO is"
@@ -145,14 +168,25 @@ export function ServicePoCandidates({
       )?.[0] ?? null)
     : (selectedCandidate?.key ?? null);
   const checkedKey = picked ?? selectedKey;
+  const cited = citedPos(invoicePoReferences, line.candidates);
   const [poFilter, setPoFilter] = useState(
-    selectedCandidate == null ? "" : String(selectedCandidate.docEntry),
+    selectedCandidate != null
+      ? String(selectedCandidate.docEntry)
+      : cited.length === 1
+        ? String(cited[0])
+        : "",
   );
   const pos = [
     ...new Map(
       line.candidates.map((candidate) => [candidate.docEntry, candidate]),
     ).values(),
   ];
+  const leftOnPo = (docEntry: number) =>
+    line.candidates
+      .filter((candidate) => candidate.docEntry === docEntry)
+      .reduce((sum, candidate) => sum + (candidate.open ?? 0), 0);
+  const poLabel = (po: CandidateView) =>
+    `PO ${po.docNum} · ${formatDate(po.date)} · ${inr(leftOnPo(po.docEntry))} left`;
   const needsPoChoice = nonStock && pos.length > 1 && !poFilter;
   const inPo = poFilter
     ? line.candidates.filter(
@@ -212,82 +246,73 @@ export function ServicePoCandidates({
           Choose the PO line for this invoice line
         </h4>
         <p className="mt-0.5 text-[#6b5d50]">
-          {whyChoosing(invoicePoReferences, line.candidates, pos.length)}
+          {whyChoosing(invoicePoReferences, line.candidates, pos.length, cited)}
         </p>
       </div>
 
-      <dl className="grid gap-x-6 gap-y-1 rounded-lg border border-[#e0d8cc] bg-[#faf8f4] px-3 py-2 sm:grid-cols-[auto_1fr]">
-        <dt className="text-[10px] font-medium uppercase tracking-wider text-[#8a7f72]">
-          This invoice line
-        </dt>
-        <dd className="min-w-0 break-words font-medium text-[#111827]">
-          {invoiceLine?.description || "Description not recorded"}
-        </dd>
-        <dt className="sr-only">Details</dt>
-        <dd className="text-[#6b5d50] sm:col-start-2">
-          {[
-            invoiceLine?.vendorItemCode
-              ? `Code ${invoiceLine.vendorItemCode}`
-              : null,
-            invoiceLine?.quantity != null
-              ? `${qty(invoiceLine.quantity)} ${invoiceLine.unit ?? ""}`.trim()
-              : null,
-            invoiceLine?.rate != null
-              ? `Unit price ${inr(invoiceLine.rate)}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-          {" · "}
-          <strong className="tabular-nums text-[#111827]">
-            {inr(invoiceAmount)}
-          </strong>
-          {" · PO reference "}
-          {invoicePoReferences.join(", ") || "not printed"}
-        </dd>
-      </dl>
+      <p className="rounded-lg border border-[#e0d8cc] bg-[#faf8f4] px-3 py-2 text-[#6b5d50]">
+        <span className="text-[10px] font-medium uppercase tracking-wider text-[#8a7f72]">
+          Invoice line{" "}
+        </span>
+        {[
+          invoiceLine?.vendorItemCode
+            ? `Code ${invoiceLine.vendorItemCode}`
+            : null,
+          invoiceLine?.quantity != null
+            ? `${qty(invoiceLine.quantity)} ${invoiceLine.unit ?? ""}`.trim()
+            : null,
+          invoiceLine?.rate != null
+            ? `Unit price ${inr(invoiceLine.rate)}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+        {" · "}
+        <strong className="tabular-nums text-[#111827]">
+          {inr(invoiceAmount)}
+        </strong>
+        {" · PO reference "}
+        {invoicePoReferences.join(", ") || "not printed"}
+      </p>
 
       {pos.length > 1 ? (
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          role="group"
-          aria-label="Filter by SAP PO"
-        >
-          <span className="font-medium text-[#3d3530]">Filter by SAP PO</span>
-          {!nonStock ? (
-            <button
-              type="button"
-              aria-pressed={!poFilter}
-              className={`rounded-full border px-2.5 py-1 ${!poFilter ? "border-[#6b4a33] bg-[#f4ece2] font-semibold" : "border-[#e0d8cc] bg-white"}`}
-              onClick={() => {
-                setPoFilter("");
-                setPicked(null);
-              }}
-            >
-              All {pos.length} POs
-            </button>
-          ) : null}
-          {pos.map((po) => {
-            const active = poFilter === String(po.docEntry);
-            const left = line.candidates
-              .filter((candidate) => candidate.docEntry === po.docEntry)
-              .reduce((sum, candidate) => sum + (candidate.open ?? 0), 0);
-            return (
-              <button
-                key={po.docEntry}
-                type="button"
-                aria-pressed={active}
-                className={`rounded-full border px-2.5 py-1 ${active ? "border-[#6b4a33] bg-[#f4ece2] font-semibold" : "border-[#e0d8cc] bg-white"}`}
-                onClick={() => {
-                  setPoFilter(String(po.docEntry));
-                  setPicked(null);
-                }}
-              >
-                PO {po.docNum} · {formatDate(po.date)} · {inr(left)} left
-              </button>
-            );
-          })}
-        </div>
+        <label className="flex flex-wrap items-center gap-2 font-medium text-[#3d3530]">
+          Filter by SAP PO
+          <select
+            className="min-w-[18rem] max-w-full rounded-md border border-[#e0d8cc] bg-white p-2 font-normal"
+            value={poFilter}
+            onChange={(event) => {
+              setPoFilter(event.target.value);
+              setPicked(null);
+            }}
+          >
+            <option value="">
+              {nonStock
+                ? `Choose a PO (${pos.length} supplier POs)`
+                : `All ${pos.length} supplier POs`}
+            </option>
+            {cited.length ? (
+              <optgroup label="Cited on the invoice">
+                {pos
+                  .filter((po) => cited.includes(po.docEntry))
+                  .map((po) => (
+                    <option key={po.docEntry} value={String(po.docEntry)}>
+                      {poLabel(po)}
+                    </option>
+                  ))}
+              </optgroup>
+            ) : null}
+            <optgroup label={cited.length ? "Other open POs" : "Open POs"}>
+              {pos
+                .filter((po) => !cited.includes(po.docEntry))
+                .map((po) => (
+                  <option key={po.docEntry} value={String(po.docEntry)}>
+                    {poLabel(po)}
+                  </option>
+                ))}
+            </optgroup>
+          </select>
+        </label>
       ) : null}
 
       {needsPoChoice ? (
@@ -306,19 +331,28 @@ export function ServicePoCandidates({
                   <span className="sr-only">Select</span>
                 </th>
                 <th scope="col" className="px-3 py-1.5">
-                  SAP PO line
+                  SAP PO line{showQuantity ? " · Non-stock items" : ""}
                 </th>
                 {showQuantity ? (
                   <>
-                    <th scope="col" className="w-24 px-3 py-1.5 text-right">
+                    <th
+                      scope="col"
+                      className="w-32 whitespace-nowrap px-3 py-1.5 text-right"
+                    >
                       Open quantity
                     </th>
-                    <th scope="col" className="w-24 px-3 py-1.5 text-right">
+                    <th
+                      scope="col"
+                      className="w-24 whitespace-nowrap px-3 py-1.5 text-right"
+                    >
                       Unit price
                     </th>
                   </>
                 ) : null}
-                <th scope="col" className="w-28 px-3 py-1.5 text-right">
+                <th
+                  scope="col"
+                  className="w-28 whitespace-nowrap px-3 py-1.5 text-right"
+                >
                   Open value
                 </th>
               </tr>
@@ -390,15 +424,24 @@ export function ServicePoCandidates({
                                 : ""}
                             </span>
                             <span className="block text-[#6b5d50]">
-                              {description ?? "Description not recorded"}
-                              {items && candidate.itemCode
-                                ? ` · ${candidate.itemCode}${candidate.itemName ? ` ${candidate.itemName}` : ""} · Non-stock item`
-                                : null}
-                              {!items
-                                ? ` · Service account ${candidate.accountCode || "not recorded"}`
-                                : null}
+                              {[
+                                items && candidate.itemCode
+                                  ? `${candidate.itemCode}${candidate.itemName ? ` · ${candidate.itemName}` : ""}`
+                                  : null,
+                                !items
+                                  ? `Service account ${candidate.accountCode || "not recorded"}`
+                                  : null,
+                                description &&
+                                refKey(description) !==
+                                  refKey(candidate.itemName)
+                                  ? description
+                                  : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ") || "Description not recorded"}
                             </span>
-                            {facts.length ? (
+                            {(checked || visible.length <= 4) &&
+                            facts.length ? (
                               <span className="mt-1 flex flex-wrap gap-1">
                                 {facts.map((fact) => (
                                   <span
