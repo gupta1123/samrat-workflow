@@ -279,7 +279,7 @@ export function SapMatchPanel({
     if (!saved) {
       return variant === "sidebar" ? (
         <div className="px-4 py-3 text-[11px]">
-          Draft Entry No. {ap.sap_docnum} saved, not posted
+          Completed - Draft Entry No. {ap.sap_docnum} saved in SAP
         </div>
       ) : (
         <div className="space-y-3 px-4 py-3">
@@ -300,12 +300,7 @@ export function SapMatchPanel({
             </p>
           ) : null}
           <SavedPostingCard caseId={caseId} details={data.draftDetails} />
-          <FinalPostSection
-            caseId={caseId}
-            status="prepared"
-            documentNumber={ap.sap_docnum!}
-            onChanged={() => void load(true)}
-          />
+          <FinalPostSection status="prepared" documentNumber={ap.sap_docnum!} />
         </div>
       );
     }
@@ -387,10 +382,8 @@ export function SapMatchPanel({
       <div className="space-y-3 px-4 py-6">
         {ap ? (
           <FinalPostSection
-            caseId={caseId}
             status={ap.status as "prepared" | "posted"}
             documentNumber={ap.sap_docnum!}
-            onChanged={() => void load(true)}
           />
         ) : null}
         <div className="flex items-start gap-2.5 rounded-lg border border-[#e0d8cc] bg-[#fbfaf8] px-4 py-3">
@@ -582,7 +575,7 @@ function Matched({
               ap
                 ? ap.status === "posted"
                   ? "Posted"
-                  : "A/P Invoice Draft"
+                  : "Draft saved"
                 : undefined
             }
           />
@@ -594,7 +587,7 @@ function Matched({
           {ap
             ? ap.status === "posted"
               ? `Posted as A/P Invoice ${ap.sap_docnum}`
-              : `Draft Entry No. ${ap.sap_docnum} saved, not posted`
+              : `Completed - Draft Entry No. ${ap.sap_docnum} saved in SAP`
             : result.summary}
         </div>
         {!ap && openCount > 1 ? (
@@ -814,10 +807,8 @@ function Matched({
 
       {ap ? (
         <FinalPostSection
-          caseId={caseId}
           status={ap.status as "prepared" | "posted"}
           documentNumber={ap.sap_docnum!}
-          onChanged={onRefresh}
         />
       ) : !result.payload ? (
         draftActions

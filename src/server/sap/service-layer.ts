@@ -241,7 +241,6 @@ export async function withTestServiceLayer<T>(
       docEntry: number,
       payload: Record<string, unknown>,
     ) => Promise<void>;
-    finalizeDraft: (docEntry: number) => Promise<Record<string, unknown>>;
     getUserField: (
       tableName: string,
       description: string,
@@ -989,13 +988,6 @@ export async function withTestServiceLayer<T>(
           method: "PATCH",
           body: JSON.stringify(payload),
         });
-      },
-      async finalizeDraft(docEntry) {
-        const { body } = await request("/DraftsService_SaveDraftToDocument", {
-          method: "POST",
-          body: JSON.stringify({ Document: { DocEntry: docEntry } }),
-        });
-        return body;
       },
       async getUserField(tableName, description) {
         const filter = encodeURIComponent(
