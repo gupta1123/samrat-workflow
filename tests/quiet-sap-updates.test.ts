@@ -177,6 +177,52 @@ test("pending PO choice is shown immediately without claiming validated matching
   assert.ok(notice.includes("last verified values"));
   assert.ok(notice.includes('role="status"'));
 });
+test("PO table keeps distinct references and item codes distinct without claiming a complete SAP search", () => {
+  const line = {
+    ...verified.result.lines[0],
+    kind: "service",
+    index: 0,
+    invoiceAmount: 100,
+    candidates: [
+      {
+        key: "88:0",
+        docEntry: 88,
+        docNum: 475,
+        lineNum: 0,
+        allocated: 0,
+        open: 100,
+        good: [],
+        bad: [],
+        itemCode: "I01",
+        references: { po: ["REGION/475"] },
+        poEvidence: {},
+      },
+    ],
+  };
+  const render = (reference: string) =>
+    renderToStaticMarkup(
+      createElement(ServicePoCandidates, {
+        line,
+        invoiceLine: { ...verified.invoice.lines[0], vendorItemCode: "I-01" },
+        invoicePoReferences: [reference],
+        disabled: false,
+        onAllocate: () => {},
+        onReset: () => {},
+      }),
+    );
+  const different = render("REGION-475");
+  assert.ok(
+    different.includes(
+      "None of the available PO candidates has that reference",
+    ),
+  );
+  assert.ok(different.includes("Item code differs"));
+  assert.ok(!different.includes("SAP has no PO with that number"));
+  const exact = render("REGION/475");
+  assert.ok(exact.includes("Confirm the correct line before continuing"));
+  assert.ok(!exact.includes("more than one line could fit"));
+});
+
 test("draft guards and stable loading states are wired into the real panels", () => {
   const sap = readFileSync("src/components/cases/SapMatchPanel.tsx", "utf8");
   assert.ok(sap.includes("retainSapMatchDuringUpdate(previous, response)"));

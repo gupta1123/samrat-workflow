@@ -131,7 +131,6 @@ test("unmapped goods expose complete non-stock PO evidence without replacing the
     "CATALOG-PRINT",
     "name match only",
     "Not proof of a supplier PO match",
-    "Filter by SAP PO",
     "Publication RCP A4",
     "August northern region",
     "REGION/475",

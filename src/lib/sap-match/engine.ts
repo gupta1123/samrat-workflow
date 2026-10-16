@@ -1739,7 +1739,7 @@ function evaluateServiceLine(args: {
           ? "Confirm the correct service PO line"
           : "No eligible open PO line for this service",
       help: nonStock
-        ? "Review the original SAP PO remarks, quantity, unit price and amount. Confirm this PO line explicitly; no product identity is inferred from a matching amount or name."
+        ? "Compare the invoice with the SAP PO line, including its remarks, and confirm it yourself. Nothing is chosen by matching amount or name."
         : eligible.length
           ? "Compare the invoice service with the SAP item or account and explicitly select the correct PO line. No PO or item is selected by amount or description similarity."
           : "No usable service-type or SAP-confirmed non-stock item PO line was found for this supplier. Check the PO type, item status and remaining balance in SAP.",
