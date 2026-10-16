@@ -1265,10 +1265,7 @@
 
 .topDocumentGrid {
   display: grid;
-  grid-template-columns: repeat(
-    var(--top-document-columns, 10),
-    minmax(110px, 1fr)
-  );
+  grid-template-columns: repeat(var(--top-document-columns, 10), minmax(110px, 1fr));
   gap: 8px;
   min-width: 0;
 }
@@ -1630,9 +1627,7 @@
   border-bottom: 1px solid var(--cd-line-soft);
   border-radius: 0;
   cursor: pointer;
-  transition:
-    background 120ms ease,
-    box-shadow 120ms ease;
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
 
 .splitFieldItem:focus-visible {

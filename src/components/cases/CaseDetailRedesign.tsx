@@ -160,9 +160,7 @@ export function CaseDetailRedesign({
         ? caseName.split(" / ")[0]
         : caseName;
 
-  const hasSellerChain = documents.some(
-    (document) => document.chainRole === "supporting",
-  );
+  const hasSellerChain = documents.some((document) => document.chainRole === "supporting");
   const approvalDocuments = hasSellerChain
     ? documents.filter((document) => document.chainRole !== "supporting")
     : documents;
@@ -170,10 +168,7 @@ export function CaseDetailRedesign({
     ? documents.filter((document) => document.chainRole === "supporting")
     : [];
 
-  const renderDocumentCard = (
-    document: RedesignedDocumentCard,
-    index: number,
-  ) => {
+  const renderDocumentCard = (document: RedesignedDocumentCard, index: number) => {
     const isSelected = activeDocumentId === document.id;
     const comparisonClass =
       document.comparisonState === "matched"
@@ -215,20 +210,15 @@ export function CaseDetailRedesign({
             className={`${styles.topDocDot} ${
               document.comparisonState === "absent"
                 ? styles.topDocDotMuted
-                : document.comparisonState === "mismatch" ||
-                    (!document.comparisonState && document.hasIssue)
+                : document.comparisonState === "mismatch" || (!document.comparisonState && document.hasIssue)
                   ? styles.topDocDotBad
                   : styles.topDocDotGood
             }`}
           />
         </div>
-        <div className={styles.topDocTitle} title={document.type}>
-          {document.type}
-        </div>
+        <div className={styles.topDocTitle} title={document.type}>{document.type}</div>
         <div
-          className={
-            comparisonFieldLabel ? styles.topDocValue : styles.topDocSub
-          }
+          className={comparisonFieldLabel ? styles.topDocValue : styles.topDocSub}
           title={comparisonFieldLabel ? comparisonValue : undefined}
         >
           {comparisonFieldLabel
@@ -245,46 +235,19 @@ export function CaseDetailRedesign({
     <div className={styles.redesignPage}>
       <header className={styles.compactHeader}>
         <div className={styles.compactHeaderLeft}>
-          <Link
-            href="/cases"
-            className={styles.compactBack}
-            aria-label="Back to cases"
-            title="Back to All Cases"
-          >
+          <Link href="/cases" className={styles.compactBack} aria-label="Back to cases" title="Back to All Cases">
             <ArrowLeft />
           </Link>
           <div className={styles.compactInfo}>
             <div className={styles.compactTitleRow}>
               <h1 title={caseName}>{cleanTitle}</h1>
-              <span
-                className={`${styles.redesignStatus} ${getStatusClass(status)}`}
-              >
-                {statusLabel}
-              </span>
+              <span className={`${styles.redesignStatus} ${getStatusClass(status)}`}>{statusLabel}</span>
             </div>
             <div className={styles.compactMetaRow}>
-              {poNumber ? (
-                <span>
-                  PO <strong>{poNumber}</strong>
-                </span>
-              ) : null}
+              {poNumber ? <span>PO <strong>{poNumber}</strong></span> : null}
               {poNumber && invoiceNumber ? <i>·</i> : null}
-              {invoiceNumber ? (
-                <span>
-                  Invoice <strong>{invoiceNumber}</strong>
-                </span>
-              ) : null}
-              {amountLabel ? (
-                <>
-                  <i>·</i>
-                  <span>
-                    Amount{" "}
-                    <strong className={styles.compactAmount}>
-                      {amountLabel}
-                    </strong>
-                  </span>
-                </>
-              ) : null}
+              {invoiceNumber ? <span>Invoice <strong>{invoiceNumber}</strong></span> : null}
+              {amountLabel ? <><i>·</i><span>Amount <strong className={styles.compactAmount}>{amountLabel}</strong></span></> : null}
             </div>
           </div>
         </div>
@@ -293,38 +256,21 @@ export function CaseDetailRedesign({
           <nav className={styles.compactTabs} aria-label="Case detail sections">
             <button
               type="button"
-              className={
-                section === "documents"
-                  ? styles.compactTabActive
-                  : styles.compactTab
-              }
+              className={section === "documents" ? styles.compactTabActive : styles.compactTab}
               onClick={() => setSection("documents")}
             >
               Documents
             </button>
             <button
               type="button"
-              className={
-                section === "compliance"
-                  ? styles.compactTabActive
-                  : styles.compactTab
-              }
+              className={section === "compliance" ? styles.compactTabActive : styles.compactTab}
               onClick={() => setSection("compliance")}
             >
-              Compliance{" "}
-              {complianceCount > 0 && (
-                <span className={styles.compactTabBadge}>
-                  {complianceCount}
-                </span>
-              )}
+              Compliance {complianceCount > 0 && <span className={styles.compactTabBadge}>{complianceCount}</span>}
             </button>
             <button
               type="button"
-              className={
-                section === "activity"
-                  ? styles.compactTabActive
-                  : styles.compactTab
-              }
+              className={section === "activity" ? styles.compactTabActive : styles.compactTab}
               onClick={() => setSection("activity")}
             >
               Activity
@@ -333,27 +279,14 @@ export function CaseDetailRedesign({
 
           <div className={styles.redesignHeaderActions}>
             <Link
-              href={
-                mismatchCount > 0
-                  ? `/cases/${caseId}/mismatches`
-                  : `/cases/${caseId}/mismatches?tab=sap`
-              }
+              href={mismatchCount > 0 ? `/cases/${caseId}/mismatches` : `/cases/${caseId}/mismatches?tab=sap`}
               className={`${styles.redesignButtonOutline} ${styles.compactMismatchAction}`}
-              aria-label={
-                mismatchCount > 0
-                  ? `Review ${mismatchCount} ${mismatchCount === 1 ? "mismatch" : "mismatches"}`
-                  : "SAP Draft"
-              }
+              aria-label={mismatchCount > 0 ? `Review ${mismatchCount} ${mismatchCount === 1 ? "mismatch" : "mismatches"}` : "SAP Draft"}
             >
               {mismatchCount > 0 ? (
-                <>
-                  <TriangleAlert /> {mismatchCount}{" "}
-                  {mismatchCount === 1 ? "mismatch" : "mismatches"}
-                </>
+                <><TriangleAlert /> {mismatchCount} {mismatchCount === 1 ? "mismatch" : "mismatches"}</>
               ) : (
-                <>
-                  <Database /> SAP Draft
-                </>
+                <><Database /> SAP Draft</>
               )}
             </Link>
             {showActions ? (
@@ -370,17 +303,10 @@ export function CaseDetailRedesign({
                   type="button"
                   className={styles.redesignButtonPrimary}
                   disabled={decisionUpdating || !canApprove}
-                  title={
-                    canApprove ? undefined : approvalBlockedReason || undefined
-                  }
+                  title={canApprove ? undefined : approvalBlockedReason || undefined}
                   onClick={() => onDecision("accepted")}
                 >
-                  {decisionUpdating ? (
-                    <Loader2 className={styles.redesignSpinner} />
-                  ) : (
-                    <Check />
-                  )}{" "}
-                  Approve
+                  {decisionUpdating ? <Loader2 className={styles.redesignSpinner} /> : <Check />} Approve
                 </button>
               </>
             ) : null}
@@ -388,9 +314,7 @@ export function CaseDetailRedesign({
         </div>
       </header>
 
-      {decisionError ? (
-        <div className={styles.redesignDecisionError}>{decisionError}</div>
-      ) : null}
+      {decisionError ? <div className={styles.redesignDecisionError}>{decisionError}</div> : null}
 
       {section === "documents" ? (
         <>
@@ -409,71 +333,36 @@ export function CaseDetailRedesign({
             {hasSellerChain ? (
               <div className={styles.topDocumentGroup}>
                 <div className={styles.topDocumentGroupHeader}>
-                  <span className={styles.topDocumentGroupTitle}>
-                    Approval documents
-                  </span>
-                  <span className={styles.topDocumentGroupHint}>
-                    Used for reconciliation
-                  </span>
+                  <span className={styles.topDocumentGroupTitle}>Approval documents</span>
+                  <span className={styles.topDocumentGroupHint}>Used for reconciliation</span>
                 </div>
                 <div
                   className={styles.topDocumentGrid}
-                  style={
-                    {
-                      "--top-document-columns": Math.max(
-                        4,
-                        Math.min(approvalDocuments.length, 10),
-                      ),
-                    } as CSSProperties
-                  }
+                  style={{ "--top-document-columns": Math.max(4, Math.min(approvalDocuments.length, 10)) } as CSSProperties}
                 >
-                  {approvalDocuments.map((document) =>
-                    renderDocumentCard(document, documents.indexOf(document)),
-                  )}
+                  {approvalDocuments.map((document) => renderDocumentCard(document, documents.indexOf(document)))}
                 </div>
               </div>
             ) : (
               <div
                 className={styles.topDocumentGrid}
-                style={
-                  {
-                    "--top-document-columns": Math.max(
-                      7,
-                      Math.min(documents.length, 10),
-                    ),
-                  } as CSSProperties
-                }
+                style={{ "--top-document-columns": Math.max(7, Math.min(documents.length, 10)) } as CSSProperties}
               >
                 {documents.map(renderDocumentCard)}
               </div>
             )}
 
             {supportingDocuments.length ? (
-              <div
-                className={`${styles.topDocumentGroup} ${styles.topDocumentGroupSupporting}`}
-              >
+              <div className={`${styles.topDocumentGroup} ${styles.topDocumentGroupSupporting}`}>
                 <div className={styles.topDocumentGroupHeader}>
-                  <span className={styles.topDocumentGroupTitle}>
-                    Source chain
-                  </span>
-                  <span className={styles.topDocumentSupportingBadge}>
-                    Supporting only
-                  </span>
+                  <span className={styles.topDocumentGroupTitle}>Source chain</span>
+                  <span className={styles.topDocumentSupportingBadge}>Supporting only</span>
                 </div>
                 <div
                   className={styles.topDocumentGrid}
-                  style={
-                    {
-                      "--top-document-columns": Math.max(
-                        3,
-                        Math.min(supportingDocuments.length, 10),
-                      ),
-                    } as CSSProperties
-                  }
+                  style={{ "--top-document-columns": Math.max(3, Math.min(supportingDocuments.length, 10)) } as CSSProperties}
                 >
-                  {supportingDocuments.map((document) =>
-                    renderDocumentCard(document, documents.indexOf(document)),
-                  )}
+                  {supportingDocuments.map((document) => renderDocumentCard(document, documents.indexOf(document)))}
                 </div>
               </div>
             ) : null}
@@ -483,32 +372,28 @@ export function CaseDetailRedesign({
             <div className={styles.splitPreviewPane}>
               <div className={styles.splitPreviewHeader}>
                 <div className={styles.splitDocTitleBlock}>
-                  <span className={styles.splitDocRef} title={sourceReference}>
-                    {sourceReference}
-                  </span>
+                  <span className={styles.splitDocRef} title={sourceReference}>{sourceReference}</span>
                 </div>
                 <div className={styles.splitPreviewControls}>
-                  {showPageControls ? (
-                    <div className={styles.redesignPageControls}>
-                      <button
-                        type="button"
-                        disabled={!canPreviousPage}
-                        onClick={onPreviousPage}
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft />
-                      </button>
-                      <span>{pageLabel}</span>
-                      <button
-                        type="button"
-                        disabled={!canNextPage}
-                        onClick={onNextPage}
-                        aria-label="Next page"
-                      >
-                        <ChevronRight />
-                      </button>
-                    </div>
-                  ) : null}
+                  {showPageControls ? <div className={styles.redesignPageControls}>
+                    <button
+                      type="button"
+                      disabled={!canPreviousPage}
+                      onClick={onPreviousPage}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft />
+                    </button>
+                    <span>{pageLabel}</span>
+                    <button
+                      type="button"
+                      disabled={!canNextPage}
+                      onClick={onNextPage}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight />
+                    </button>
+                  </div> : null}
                   <div className={styles.redesignZoomControls}>
                     <button
                       type="button"
@@ -539,10 +424,14 @@ export function CaseDetailRedesign({
                 </div>
               </div>
 
-              <div className={styles.splitPreviewStage}>{previewNode}</div>
+              <div className={styles.splitPreviewStage}>
+                {previewNode}
+              </div>
             </div>
 
-            <div className={styles.splitDataPane}>{dataNode}</div>
+            <div className={styles.splitDataPane}>
+              {dataNode}
+            </div>
           </section>
         </>
       ) : section === "compliance" ? (
@@ -567,8 +456,7 @@ export function CaseDetailRedesign({
           </div>
           {activityContent}
           <div className={styles.redesignAuditNote}>
-            <TriangleAlert /> Every extracted value, mismatch and decision
-            remains on record after the case is approved or rejected.
+            <TriangleAlert /> Every extracted value, mismatch and decision remains on record after the case is approved or rejected.
           </div>
         </main>
       )}
