@@ -16,6 +16,11 @@ import { ItemMatchingEvidence } from "./MatchingEvidence";
 import { receiptProblems } from "@/lib/sap-match/receipt-problems";
 import { ServicePoCandidates } from "./ServicePoCandidates";
 import { ServiceLineReview } from "./ServiceLineReview";
+import { NonStockPoReview } from "./NonStockPoReview";
+import {
+  citedNonStockPoCandidates,
+  needsNonStockPoConfirmation,
+} from "@/lib/sap-match/non-stock-po-review";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -173,6 +178,25 @@ export function MatchLineCard({
   const grpoLabel = grpoNumbers.length
     ? `${grpoNumbers.length} GRPO${grpoNumbers.length === 1 ? "" : "s"}`
     : "No GRPO";
+
+  if (needsNonStockPoConfirmation(invoice, line))
+    return (
+      <NonStockPoReview
+        caseId={caseId}
+        invoice={invoice}
+        line={line}
+        cited={citedNonStockPoCandidates(invoice, line)}
+        checks={checks}
+        lineCount={lineCount}
+        busy={busy}
+        locked={locked}
+        onChoose={onChoose}
+        onUndo={onUndo}
+        onAllocate={onAllocate}
+        onResetAllocation={onResetAllocation}
+        onLink={onLink}
+      />
+    );
 
   if (
     line.kind === "service" ||

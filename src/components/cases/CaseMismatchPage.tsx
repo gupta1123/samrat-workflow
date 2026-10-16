@@ -987,6 +987,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
     "mismatches",
   );
   const [sapOpened, setSapOpened] = useState(false);
+  const [nonStockReviewCase, setNonStockReviewCase] = useState<string | null>(
+    null,
+  );
   // Deep link from the case page: "Post to SAP" opens the SAP tab directly.
   const [initialTab] = useState<"mismatches" | "sap" | null>(() => {
     if (typeof window === "undefined") return null;
@@ -1415,7 +1418,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                   </h3>
                   <p className="mt-0.5 text-xs font-normal text-[#8a7f72]">
                     {reviewMode === "sap"
-                      ? "Match GRPO & prepare invoice"
+                      ? nonStockReviewCase === caseId
+                        ? "Confirm PO & prepare invoice"
+                        : "Match GRPO & prepare invoice"
                       : visibleMismatches.length === 0
                         ? "No issues"
                         : `${acceptedMismatchCount + rejectedMismatchCount} of ${visibleMismatches.length} done · ${pendingMismatchCount} left`}
@@ -1606,6 +1611,9 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                     <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
                       <SapMatchPanel
                         caseId={caseId}
+                        onNonStockReviewChange={(nonStock) =>
+                          setNonStockReviewCase(nonStock ? caseId : null)
+                        }
                         approvalBlockedReason={
                           pendingMismatchCount + rejectedMismatchCount > 0
                             ? `Settle the open issues first (${pendingMismatchCount + rejectedMismatchCount} left).`

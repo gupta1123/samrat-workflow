@@ -12,6 +12,10 @@ import type {
   MatchResult,
 } from "@/lib/sap-match/types";
 import { inr } from "./format";
+import {
+  citedNonStockPoCandidates,
+  needsNonStockPoConfirmation,
+} from "@/lib/sap-match/non-stock-po-review";
 
 // The top of the SAP tab: one status line and four tiles. Opening a tile shows
 // what the invoice says next to what SAP has, side by side.
@@ -51,6 +55,12 @@ function buildTiles(
 ): Tile[] {
   const lines = result.lines;
   const unmapped = lines.filter((line) => line.kind === "unmapped");
+  const pendingNonStock = unmapped.filter((line) =>
+    needsNonStockPoConfirmation(invoice, line),
+  );
+  const unlinked = unmapped.filter(
+    (line) => !needsNonStockPoConfirmation(invoice, line),
+  );
   const material = lines.filter((line) => line.kind === "material");
   const services = lines.filter(
     (line) => line.kind === "service" || line.kind === "non-stock",
@@ -94,7 +104,7 @@ function buildTiles(
     label: lines.length > 1 ? "Items" : "Item",
     value:
       lines.length === 1
-        ? pendingServiceItems.length
+        ? pendingServiceItems.length || pendingNonStock.length
           ? "Confirm PO item"
           : services.length && !lines[0].itemCode
             ? "No stock item needed"
@@ -104,14 +114,18 @@ function buildTiles(
         : `${lines.length} items`,
     sub:
       lines.length === 1
-        ? pendingServiceItems.length
-          ? "Select the service's SAP item with its PO line"
+        ? pendingNonStock.length
+          ? "Confirm the non-stock PO line"
+          : pendingServiceItems.length
+            ? "Select the service's SAP item with its PO line"
+            : unmapped.length
+              ? (invoice.lines[0]?.description ?? "")
+              : (lines[0].itemName ?? "")
+        : pendingNonStock.length && !unlinked.length
+          ? `${pendingNonStock.length} PO lines to confirm`
           : unmapped.length
-            ? (invoice.lines[0]?.description ?? "")
-            : (lines[0].itemName ?? "")
-        : unmapped.length
-          ? `${unmapped.length} not linked`
-          : [...new Set(lines.map((line) => line.itemCode))].join(", "),
+            ? `${unmapped.length} not linked`
+            : [...new Set(lines.map((line) => line.itemCode))].join(", "),
     mode: unmapped.length || pendingServiceItems.length ? "warn" : "ok",
     detail: {
       invoice: {
@@ -123,7 +137,11 @@ function buildTiles(
         )),
       },
       sap: {
-        main: itemNames((i) => lines[i].itemName ?? "Not linked"),
+        main: itemNames((i) =>
+          needsNonStockPoConfirmation(invoice, lines[i])
+            ? "Non-stock PO item · confirmation required"
+            : (lines[i].itemName ?? "Not linked"),
+        ),
         sub: itemNames((i) => <>Code {mono(lines[i].itemCode)}</>),
       },
     },
@@ -153,7 +171,27 @@ function buildTiles(
       };
 
   let receipts: Tile;
-  if (!material.length && services.length) {
+  if (!material.length && !unlinked.length && pendingNonStock.length) {
+    const numbers = [
+      ...new Set([
+        ...pendingNonStock.flatMap((line) =>
+          citedNonStockPoCandidates(invoice, line).map(
+            (candidate) => candidate.docNum,
+          ),
+        ),
+        ...services.flatMap((line) =>
+          line.po?.docNum != null ? [line.po.docNum] : [],
+        ),
+      ]),
+    ];
+    receipts = {
+      key: "receipts",
+      label: "Purchase Order",
+      value: numbers.length === 1 ? `PO ${numbers[0]}` : "Confirm PO lines",
+      sub: `${pendingNonStock.length} non-stock lines to confirm`,
+      mode: "warn",
+    };
+  } else if (!material.length && services.length) {
     const po = services[0].po;
     const linkedCount = services.filter(
       (line) => line.po?.docNum != null,

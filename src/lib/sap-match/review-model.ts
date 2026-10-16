@@ -1,6 +1,12 @@
 // What the SAP tab says about a case, worked out from the saved match result.
 // Pure functions so the same wording is used by the header, the sidebar and the tests.
-import type { CheckEffect, MatchCheck, MatchResult } from "./types";
+import type {
+  CheckEffect,
+  MatchCheck,
+  MatchInvoice,
+  MatchResult,
+} from "./types";
+import { needsNonStockPoConfirmation } from "./non-stock-po-review";
 
 export type ReviewTone = "ok" | "todo" | "bad" | "off";
 
@@ -75,7 +81,7 @@ const listFor = (items: string[]) =>
 
 export function reviewModel(
   result: MatchResult,
-  options: { approved: boolean },
+  options: { approved: boolean; invoice?: Pick<MatchInvoice, "poReferences"> },
 ): ReviewModel {
   const pending = pendingChecks(result);
   const ended = result.checks.find(
@@ -88,10 +94,27 @@ export function reviewModel(
   const hasBlock = pending.some((check) => check.sev === "block");
   const hasWait = pending.some((check) => check.sev === "wait");
   const needsRecheck = !result.payload && pending.length === 0 && !terminal;
+  const pendingNonStockLines = new Set(
+    options.invoice
+      ? result.lines
+          .filter((line) => needsNonStockPoConfirmation(options.invoice!, line))
+          .map((line) => line.index)
+      : [],
+  );
+  const needsPoLine = (check: MatchCheck) =>
+    check.lineIndex != null &&
+    check.id === `map-${check.lineIndex}` &&
+    pendingNonStockLines.has(check.lineIndex);
+  const onlyNonStockConfirmations =
+    pending.length > 0 && pending.every(needsPoLine);
 
   const steps = [
     ...new Set(
-      pending.map((check) => STEP_NAME[checkRule(check.id)] ?? check.title),
+      pending.map((check) =>
+        needsPoLine(check)
+          ? "PO line confirmation"
+          : (STEP_NAME[checkRule(check.id)] ?? check.title),
+      ),
     ),
   ];
   const waiting = terminal
@@ -113,6 +136,9 @@ export function reviewModel(
   } else if (result.existingInvoice?.kind === "invoice") {
     tone = "bad";
     title = "Already recorded in SAP";
+  } else if (onlyNonStockConfirmations) {
+    tone = "todo";
+    title = "PO found · Confirm invoice lines";
   } else if (hasBlock) {
     tone = "bad";
     title = "Can't send yet";

@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { matchFixture } from "./sap-posted-fixture";
 import { receiptProblems } from "../src/lib/sap-match/receipt-problems";
 import { evaluateMatch } from "../src/lib/sap-match/engine";
+import { reviewModel } from "../src/lib/sap-match/review-model";
 
 const outputDir = resolve("tmp/compact-ui-test");
 mkdirSync(outputDir, { recursive: true });
@@ -157,6 +158,85 @@ test("unmapped goods expose complete non-stock PO evidence without replacing the
   assert.ok(selected.includes("no reusable item mapping was saved"));
   assert.ok(!selected.includes("stock item, 3-way check"));
   assert.ok(!selected.includes("service, 2-way check"));
+
+  // The known buyer prefix may narrow the view, but must not allocate a line.
+  const prefixedInvoice = { ...invoice, poReferences: ["SIPL/475"] };
+  const referenced = evaluateMatch({
+    invoice: prefixedInvoice,
+    context: {
+      ...context,
+      poLines: [
+        ...context.poLines,
+        { ...context.poLines[0], docNum: 476, docEntry: 89, poRefs: ["476"] },
+      ],
+    },
+  });
+  const pendingHtml = renderToStaticMarkup(
+    createElement(MatchLineCard, {
+      ...props,
+      invoice: prefixedInvoice,
+      line: referenced.lines[0],
+      checks: referenced.checks,
+    }),
+  );
+  const primary = pendingHtml.slice(0, pendingHtml.indexOf("<details"));
+  assert.match(primary, /PO 475 found/);
+  assert.match(primary, /SAP confirms these PO items are non-stock/);
+  assert.match(primary, /Publication RCP A4/);
+  assert.match(primary, /Open quantity/);
+  assert.doesNotMatch(
+    primary,
+    /Search SAP items|Item not linked|None of the available PO candidates/,
+  );
+  assert.doesNotMatch(primary, /checked=""/);
+  assert.doesNotMatch(primary, /Confirm PO line<\/button>/);
+  const comparison = primary.slice(primary.indexOf("<table"));
+  assert.match(comparison, /PO 475/);
+  assert.doesNotMatch(comparison, /PO 476/);
+  assert.equal(referenced.payload, null);
+  assert.equal(referenced.lines[0].itemCode, null);
+  const review = reviewModel(referenced, {
+    invoice: prefixedInvoice,
+    approved: false,
+  });
+  assert.equal(review.title, "PO found · Confirm invoice lines");
+  assert.equal(review.ready, false);
+  assert.deepEqual(review.waiting, ["PO line confirmation", "case approval"]);
+  const withOtherBlock = {
+    ...referenced,
+    checks: [
+      ...referenced.checks,
+      {
+        id: "extra",
+        lineIndex: null,
+        sev: "block" as const,
+        open: true,
+        title: "Another prerequisite",
+      },
+    ],
+  };
+  assert.equal(
+    reviewModel(withOtherBlock, { invoice: prefixedInvoice, approved: false })
+      .title,
+    "Can't send yet",
+  );
+  const headerHtml = renderToStaticMarkup(
+    createElement(ReviewHeader, {
+      invoice: prefixedInvoice,
+      vendor: context.vendor,
+      result: referenced,
+      unchecked: [],
+      title: review.title,
+      tone: review.tone,
+      env: "test",
+      busy: false,
+      onRefresh() {},
+    }),
+  );
+  assert.match(headerHtml, /Confirm PO item/);
+  assert.match(headerHtml, /Purchase Order/);
+  assert.match(headerHtml, /PO 475/);
+  assert.doesNotMatch(headerHtml, /Needs items linked/);
 });
 
 function recordedProps(details = true) {

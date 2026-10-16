@@ -8,6 +8,7 @@ import type {
 } from "@/lib/sap-match/types";
 import { formatDate, inr, qty } from "./format";
 import { useMatchUpdate } from "./MatchUpdateContext";
+import { nonStockPoReferenceMatches } from "@/lib/sap-match/non-stock-po-review";
 
 const EPSILON = 0.005;
 
@@ -90,7 +91,11 @@ function factsFor(
   return { facts, cells };
 }
 
-function citedPos(invoicePoReferences: string[], candidates: CandidateView[]) {
+function citedPos(
+  invoicePoReferences: string[],
+  candidates: CandidateView[],
+  nonStock: boolean,
+) {
   const printed = new Set(invoicePoReferences.filter(Boolean).map(refKey));
   if (!printed.size) return [];
   return [
@@ -98,6 +103,11 @@ function citedPos(invoicePoReferences: string[], candidates: CandidateView[]) {
       candidates
         .filter(
           (candidate) =>
+            (nonStock &&
+              nonStockPoReferenceMatches(invoicePoReferences, [
+                candidate.docNum,
+                ...(candidate.references?.po ?? []),
+              ])) ||
             printed.has(refKey(candidate.docNum)) ||
             (candidate.references?.po ?? []).some((ref) =>
               printed.has(refKey(ref)),
@@ -168,7 +178,7 @@ export function ServicePoCandidates({
       )?.[0] ?? null)
     : (selectedCandidate?.key ?? null);
   const checkedKey = picked ?? selectedKey;
-  const cited = citedPos(invoicePoReferences, line.candidates);
+  const cited = citedPos(invoicePoReferences, line.candidates, nonStock);
   const [poFilter, setPoFilter] = useState(
     selectedCandidate != null
       ? String(selectedCandidate.docEntry)

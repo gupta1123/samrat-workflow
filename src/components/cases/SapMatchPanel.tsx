@@ -59,6 +59,7 @@ import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 import { ReviewHeader } from "./sap-match/ReviewHeader";
 import { reviewModel } from "@/lib/sap-match/review-model";
+import { isNonStockPoReview } from "@/lib/sap-match/non-stock-po-review";
 import { RecordedInvoiceReview } from "./sap-match/RecordedInvoiceReview";
 
 const STATUS: Record<
@@ -124,6 +125,7 @@ export function SapMatchPanel({
   variant = "full",
   approvalBlockedReason = null,
   onCaseDecided,
+  onNonStockReviewChange,
 }: {
   caseId: string;
   variant?: "full" | "sidebar";
@@ -131,6 +133,7 @@ export function SapMatchPanel({
   approvalBlockedReason?: string | null;
   /** Lets the page refresh its own copy of the case after Approve or Reject. */
   onCaseDecided?: () => void | Promise<void>;
+  onNonStockReviewChange?: (nonStock: boolean) => void;
 }) {
   const [data, setData] = useState<SapMatchResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -217,6 +220,11 @@ export function SapMatchPanel({
   }, [load]);
 
   const polling = needsSapMatchPolling(data) && !loadError;
+  useEffect(() => {
+    onNonStockReviewChange?.(
+      Boolean(data?.available && isNonStockPoReview(data.invoice, data.result)),
+    );
+  }, [data, onNonStockReviewChange]);
   useEffect(() => {
     if (!polling) return;
     return pollSapMatch(
@@ -671,7 +679,8 @@ function Matched({
       }`
     : null;
   const [receiptsLine, setReceiptsLine] = useState<number | null>(null);
-  const review = reviewModel(result, { approved: data.postable });
+  const review = reviewModel(result, { approved: data.postable, invoice });
+  const nonStockPoReview = isNonStockPoReview(invoice, result);
   const openCount = result.open.length;
 
   if (!locked && result.existingInvoice?.kind === "invoice") {
@@ -718,7 +727,9 @@ function Matched({
                 ? ap.status === "posted"
                   ? "Posted"
                   : "Draft saved"
-                : undefined
+                : nonStockPoReview && review.tone === "todo"
+                  ? "Confirm PO lines"
+                  : undefined
             }
           />
           <span className="truncate text-[11px] text-[#8a7f72]">
@@ -730,7 +741,9 @@ function Matched({
             ? ap.status === "posted"
               ? `Posted as A/P Invoice ${ap.sap_docnum}`
               : `Completed - Draft Entry No. ${ap.sap_docnum} saved in SAP`
-            : result.summary}
+            : nonStockPoReview && review.tone === "todo"
+              ? review.title
+              : result.summary}
         </div>
         {!ap && openCount > 1 ? (
           <div className="text-[10px] text-[#8a7f72]">

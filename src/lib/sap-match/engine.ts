@@ -1,4 +1,5 @@
 import { sapMatchPresentation } from "./terminology";
+import { nonStockPoReferenceMatches } from "./non-stock-po-review";
 import {
   DEFAULT_MATCH_RULES,
   EMPTY_MATCH_STATE,
@@ -403,14 +404,15 @@ function nonStockPoCandidates(
       view.good.push(
         "SAP Item Master confirms a non-stock item; PO-line confirmation required",
       );
-      const exact = (left: string, right: string) =>
-        left.trim().toUpperCase() === right.trim().toUpperCase();
       if (
-        invoice.poReferences.some((ref) =>
-          po.poRefs.some((sapRef) => exact(ref, sapRef)),
-        )
+        nonStockPoReferenceMatches(invoice.poReferences, [
+          po.docNum,
+          ...po.poRefs,
+        ])
       )
-        view.good.push("Exact PO reference recorded");
+        view.good.push(
+          "Invoice PO reference identifies this SAP PO; confirm its line",
+        );
       else
         view.bad.push(
           "Printed PO reference not confirmed; explicitly confirm this PO and line",

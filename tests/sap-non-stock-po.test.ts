@@ -130,6 +130,51 @@ test("equal amounts/quantities and a prefixed PO number never automatically esta
   assert.deepEqual(context.itemMap, {});
 });
 
+test("a SIPL PO reference identifies non-stock PO evidence but still requires every line to be confirmed", () => {
+  const { invoice, context } = fixture();
+  invoice.poReferences = ["SIPL/475"];
+  const result = evaluateMatch({ invoice, context });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.payload, null);
+  for (const line of result.lines) {
+    assert.equal(line.kind, "unmapped");
+    assert.equal(line.itemCode, null);
+    assert.equal(line.allocatedQty, 0);
+    assert.equal(line.nonStockPoCandidates?.length, 4);
+    assert.ok(
+      line.nonStockPoCandidates!.every(
+        (candidate) => candidate.allocated === 0,
+      ),
+    );
+    assert.ok(
+      line.nonStockPoCandidates!.every((candidate) =>
+        candidate.good.includes(
+          "Invoice PO reference identifies this SAP PO; confirm its line",
+        ),
+      ),
+    );
+    assert.ok(
+      line.nonStockPoCandidates!.every(
+        (candidate) =>
+          !candidate.bad.some((message) =>
+            message.startsWith("Printed PO reference not confirmed"),
+          ),
+      ),
+    );
+  }
+  assert.deepEqual(context.itemMap, {});
+  assert.equal(invoice.supplyNature, "goods");
+  for (const inventory of [true, null]) {
+    const next = structuredClone(context);
+    next.items["EXP-PRINT"].inventory = inventory;
+    const blocked = evaluateMatch({ invoice, context: next });
+    assert.equal(blocked.payload, null);
+    assert.ok(
+      blocked.lines.every((line) => !line.nonStockPoCandidates?.length),
+    );
+  }
+});
+
 test("explicit confirmation of all four non-stock PO lines builds a quantity-based PO draft, not service quantities or a GRPO", () => {
   const { invoice, context, state, document } = fixture();
   const result = evaluateMatch({ invoice, context, state });
