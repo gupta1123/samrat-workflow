@@ -52,10 +52,22 @@ export async function readSapMatchJob(db: Db, userId: string, caseId: string) {
   return data as unknown as SapMatchJobRow | null;
 }
 
-function message(error: unknown) {
-  return error instanceof Error
-    ? error.message
-    : String(error ?? "SAP matching failed.");
+/** Supabase errors are plain objects, so `String(error)` would be "[object Object]". */
+export function jobErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const { message, code, details, hint } = error as Record<string, unknown>;
+    const text = [message, details, hint]
+      .filter((part): part is string => typeof part === "string" && !!part)
+      .join(" · ");
+    if (text) return code ? `${text} (${String(code)})` : text;
+    try {
+      return JSON.stringify(error).slice(0, 500);
+    } catch {
+      return "SAP matching failed.";
+    }
+  }
+  return String(error ?? "SAP matching failed.");
 }
 
 /** Claims and executes one durable SAP match job. Called only by the Heroku worker. */
@@ -95,7 +107,7 @@ export async function processSapMatchJob(caseId: string) {
     dbCheck(complete.error);
     return { skipped: false as const, result };
   } catch (error) {
-    const detail = message(error);
+    const detail = jobErrorMessage(error);
     const terminal =
       /not configured|no numbered vendor invoice|no invoice line items/i.test(
         detail,
