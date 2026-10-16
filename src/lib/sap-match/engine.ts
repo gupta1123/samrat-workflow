@@ -1583,7 +1583,7 @@ function evaluateServiceLine(args: {
 }) {
   const {
     ln,
-    itemCode,
+    itemCode: mappedItemCode,
     result,
     invoice,
     context,
@@ -1609,6 +1609,17 @@ function evaluateServiceLine(args: {
   const invoicePos = invoice.poReferences.map(normalizeRef).filter(Boolean);
 
   const nonStock = result.kind === "non-stock";
+  // A saved item link can name a SAP item that none of this supplier's PO lines
+  // use (the PO was raised under a generic expense item). Hiding every PO then
+  // leaves the reviewer with no way forward, so review all of the supplier's
+  // non-stock PO lines and take the item from the PO line that is confirmed.
+  const itemOnNoPoLine =
+    nonStock &&
+    Boolean(mappedItemCode) &&
+    !context.poLines.some(
+      (po) => po.cardCode === vendor.cardCode && po.itemCode === mappedItemCode,
+    );
+  const itemCode = itemOnNoPoLine ? null : mappedItemCode;
   const candidates = nonStock
     ? nonStockPoCandidates(invoice, ln, context, remainingServiceAmount).filter(
         ({ po }) => !itemCode || po.itemCode === itemCode,
@@ -1679,6 +1690,12 @@ function evaluateServiceLine(args: {
               .join(" · ") || null;
           return { view, po };
         });
+
+  if (itemOnNoPoLine)
+    for (const { view } of candidates)
+      view.bad.push(
+        `Saved item link ${mappedItemCode} is not on any PO line; confirming this line uses its SAP item ${view.itemCode ?? ""}`.trim(),
+      );
 
   const manual = state.allocations[String(i)];
   const eligible = candidates.filter((candidate) => !candidate.view.rejected);

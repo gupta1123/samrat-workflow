@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateMatch } from "../src/lib/sap-match/engine";
+import { evaluateMatch, itemMappingKey } from "../src/lib/sap-match/engine";
 import type {
   MatchContext,
   MatchInvoice,
@@ -365,4 +365,26 @@ test("non-stock price explanations use invoice units, not the allocated monetary
   const review = priceReviewDetails(invoice, result.lines[0], 0.5)!;
   assert.equal(review.valueDifference, 350);
   assert.equal(review.partialAllocation, false);
+});
+
+test("a saved item link that no PO line uses still lets the reviewer pick a PO line", () => {
+  const { invoice, context } = fixture();
+  invoice.lines = [invoice.lines[0]];
+  invoice.poReferences = ["SIPL/475"];
+  context.items["NINV1"] = { name: "Visiting Cards", inventory: false };
+  context.itemMap[itemMappingKey(invoice.lines[0])!] = "NINV1";
+  const open = evaluateMatch({ invoice, context });
+  assert.equal(open.lines[0].kind, "non-stock");
+  assert.equal(open.lines[0].candidates.length, 4);
+  assert.ok(open.lines[0].candidates.every((entry) => entry.allocated === 0));
+  const picked = evaluateMatch({
+    invoice,
+    context,
+    state: {
+      decisions: {},
+      allocations: { "0": { "880:0": invoice.lines[0].amount! } },
+    },
+  });
+  assert.equal(picked.lines[0].itemCode, "EXP-PRINT");
+  assert.equal(picked.lines[0].po?.docNum, 475);
 });
