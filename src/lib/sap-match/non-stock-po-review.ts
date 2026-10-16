@@ -53,10 +53,12 @@ export function needsNonStockPoConfirmation(
   invoice: Pick<MatchInvoice, "poReferences">,
   line: LineResult,
 ) {
-  return (
-    line.kind === "unmapped" &&
-    citedNonStockPoCandidates(invoice, line).length > 0
-  );
+  // A linked non-stock line is reviewed the same way until a PO line is confirmed.
+  const unconfirmed =
+    line.kind === "unmapped" ||
+    (line.kind === "non-stock" &&
+      !line.candidates.some((candidate) => candidate.allocated > 0));
+  return unconfirmed && citedNonStockPoCandidates(invoice, line).length > 0;
 }
 
 export function isNonStockPoReview(
