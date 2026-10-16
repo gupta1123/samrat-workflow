@@ -42,7 +42,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 type LoadState = "loading" | "ready" | "error";
 export type MismatchRecord = SavedCaseDetail["mismatches"][number];
 const FIELD_LABEL_LOOKUP = ACTIVE_FIELD_DEFINITIONS.reduce(
@@ -1175,6 +1175,17 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
   const rejectedMismatchCount = visibleMismatches.filter(
     (mismatch) => mismatch.resolutionStatus === "rejected",
   ).length;
+  // Stable and a no-op when nothing changed: the panel reports from an effect, so a new
+  // callback or a new object every render would loop.
+  const handleReviewKind = useCallback(
+    (kind: "po" | "grpo" | "recorded") =>
+      setSapReviewKind((current) =>
+        current?.caseId === caseId && current.kind === kind
+          ? current
+          : { caseId, kind },
+      ),
+    [caseId],
+  );
   const issuesBlockReason =
     pendingMismatchCount + rejectedMismatchCount > 0
       ? `Settle the open issues first (${pendingMismatchCount + rejectedMismatchCount} left).`
@@ -1624,9 +1635,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                     <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6 sm:py-4 lg:px-8">
                       <SapMatchPanel
                         caseId={caseId}
-                        onReviewKindChange={(kind) =>
-                          setSapReviewKind({ caseId, kind })
-                        }
+                        onReviewKindChange={handleReviewKind}
                         approvalBlockedReason={issuesBlockReason}
                         onOpenIssues={() => setReviewMode("mismatches")}
                         onCaseDecided={async () => {
