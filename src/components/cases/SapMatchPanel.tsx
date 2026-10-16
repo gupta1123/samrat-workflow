@@ -134,6 +134,7 @@ export function SapMatchPanel({
   approvalBlockedReason = null,
   onCaseDecided,
   onOpenIssues,
+  onMatchFinished,
   onReviewKindChange,
 }: {
   caseId: string;
@@ -144,6 +145,8 @@ export function SapMatchPanel({
   onCaseDecided?: () => void | Promise<void>;
   /** Switches the page to its Issues tab. */
   onOpenIssues?: () => void;
+  /** Called when a queued or running match ends, so the page can re-read issues the worker settled. */
+  onMatchFinished?: () => void;
   /** Tells the page how this case is reviewed, for the sidebar subtitle. */
   onReviewKindChange?: (kind: "po" | "grpo" | "recorded") => void;
 }) {
@@ -166,6 +169,9 @@ export function SapMatchPanel({
   const actionInFlight = useRef(false);
   const activeCase = useRef(caseId);
   activeCase.current = caseId;
+  const sawRunningMatch = useRef(false);
+  const matchFinished = useRef(onMatchFinished);
+  matchFinished.current = onMatchFinished;
 
   const load = useCallback(
     async (quiet = false, refresh = false) => {
@@ -177,6 +183,11 @@ export function SapMatchPanel({
         if (activeCase.current !== caseId || version !== requestVersion.current)
           return null;
         setData((previous) => retainSapMatchDuringUpdate(previous, response));
+        if (needsSapMatchPolling(response)) sawRunningMatch.current = true;
+        else if (sawRunningMatch.current) {
+          sawRunningMatch.current = false;
+          matchFinished.current?.();
+        }
         if (
           response.matchJob?.status === "failed" ||
           response.matchJob?.status === "cancelled"

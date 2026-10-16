@@ -1176,6 +1176,13 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
   const rejectedMismatchCount = visibleMismatches.filter(
     (mismatch) => mismatch.resolutionStatus === "rejected",
   ).length;
+  // The SAP worker can settle issues on its own (e.g. logistics documents on a
+  // PO-line case), so re-read the case when a match finishes.
+  const refreshDetail = useCallback(() => {
+    void fetchCaseDetail(caseId)
+      .then(setDetail)
+      .catch(() => undefined);
+  }, [caseId]);
   // Stable and a no-op when nothing changed: the panel reports from an effect, so a new
   // callback or a new object every render would loop.
   const handleReviewKind = useCallback(
@@ -1645,6 +1652,7 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                         onReviewKindChange={handleReviewKind}
                         approvalBlockedReason={issuesBlockReason}
                         onOpenIssues={() => setReviewMode("mismatches")}
+                        onMatchFinished={refreshDetail}
                         onCaseDecided={async () => {
                           setDetail(await fetchCaseDetail(caseId));
                         }}
