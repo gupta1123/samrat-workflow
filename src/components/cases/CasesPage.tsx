@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CaseConfirmDialog } from "@/components/cases/CaseConfirmDialog";
 import { AppShell } from "@/components/dashboard/AppShell";
@@ -283,9 +283,11 @@ function CasesTableSkeleton({ rows }: { rows: number }) {
 function CasesMobileCards({
   cases,
   onDelete,
+  disabled = false,
 }: {
   cases: SavedCaseRecord[];
   onDelete: (item: SavedCaseRecord) => void;
+  disabled?: boolean;
 }) {
   const router = useRouter();
 
@@ -318,6 +320,7 @@ function CasesMobileCards({
               type="button"
               className="rounded-lg p-1.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
               aria-label="Move to recycle bin"
+              disabled={disabled}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -357,6 +360,10 @@ export function CasesPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [pendingCase, setPendingCase] = useState<SavedCaseRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [shownPage, setShownPage] = useState(1);
+  const [retryVersion, setRetryVersion] = useState(0);
+  const visibleCases = useRef<SavedCaseRecord[] | null>(null);
 
   const listQuery = useMemo<CaseListQuery>(
     () => ({
@@ -392,29 +399,31 @@ export function CasesPage() {
   useEffect(() => {
     const cached = caseListLoader.peek(listQuery);
     let active = true;
-    let latest = cached?.cases ?? [];
+    let latest = cached?.cases ?? visibleCases.current ?? [];
     let inFlight = false;
     if (cached) {
+      visibleCases.current = cached.cases;
       setCases(cached.cases);
+      setShownPage(listQuery.page);
       setTotalCount(cached.totalCount);
       setTotalPages(cached.totalPages);
       setStatus("ready");
-    } else {
-      setCases([]);
-      setTotalCount(0);
-      setTotalPages(1);
+    } else if (visibleCases.current === null) {
       setStatus("loading");
     }
     setError(null);
     const refresh = async () => {
       if (inFlight || !active) return;
       inFlight = true;
+      setRefreshing(true);
       const revision = caseListLoader.revision;
       try {
         const payload = await caseListLoader.read(listQuery);
         if (!active || revision !== caseListLoader.revision) return;
         latest = payload.cases;
+        visibleCases.current = latest;
         setCases(latest);
+        setShownPage(listQuery.page);
         setTotalCount(payload.totalCount);
         setTotalPages(payload.totalPages);
         setStatus("ready");
@@ -426,9 +435,10 @@ export function CasesPage() {
             ? loadError.message
             : "Failed to load cases.",
         );
-        if (!latest.length) setStatus("error");
+        if (visibleCases.current === null) setStatus("error");
       } finally {
         inFlight = false;
+        if (active) setRefreshing(false);
       }
     };
     // Cached rows provide an immediate view, but returning from a review always refreshes decisions.
@@ -449,7 +459,7 @@ export function CasesPage() {
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
-  }, [cacheKey, listQuery]);
+  }, [cacheKey, listQuery, retryVersion]);
 
   async function handleConfirmDelete() {
     if (!pendingCase || isDeleting) return;
@@ -471,7 +481,9 @@ export function CasesPage() {
       // Re-read the same filtered page so the next case fills the gap. If the
       // last page disappeared, the loader returns the new last page instead.
       const payload = await caseListLoader.refillAfterRemoval(listQuery);
+      visibleCases.current = payload.cases;
       setCases(payload.cases);
+      setShownPage(payload.page);
       setTotalCount(payload.totalCount);
       setTotalPages(payload.totalPages);
       setCurrentPage(payload.page);
@@ -569,7 +581,28 @@ export function CasesPage() {
             </div>
           )}
 
-          <section className="mt-4">
+          <section className="mt-4" aria-busy={refreshing}>
+            <div
+              className="min-h-6 text-xs text-[#667085]"
+              role="status"
+              aria-live="polite"
+            >
+              {refreshing && status === "ready"
+                ? "Updating results… Previous results stay visible until the new list is ready."
+                : null}
+              {error && status === "ready" ? (
+                <span className="text-rose-700">
+                  Could not update results. Previous results are still shown.{" "}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => setRetryVersion((version) => version + 1)}
+                  >
+                    Retry
+                  </button>
+                </span>
+              ) : null}
+            </div>
             {status === "loading" && (
               <div className="overflow-x-auto">
                 <CasesTableSkeleton rows={pageSize} />
@@ -582,7 +615,7 @@ export function CasesPage() {
               </div>
             )}
 
-            {status === "ready" && cases.length === 0 && (
+            {status === "ready" && cases.length === 0 && !refreshing && (
               <div className="flex min-h-[340px] flex-col items-center justify-center px-6 text-center">
                 <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-[#e6ded2] bg-white text-[#9c8f80]">
                   <FolderOpen className="h-7 w-7" />
@@ -609,7 +642,11 @@ export function CasesPage() {
             {status === "ready" && cases.length > 0 && (
               <>
                 <div className="md:hidden">
-                  <CasesMobileCards cases={cases} onDelete={setPendingCase} />
+                  <CasesMobileCards
+                    cases={cases}
+                    onDelete={setPendingCase}
+                    disabled={refreshing || isDeleting}
+                  />
                 </div>
                 <div className="hidden overflow-x-auto md:block">
                   <Table className="min-w-[900px]">
@@ -660,6 +697,7 @@ export function CasesPage() {
                                 type="button"
                                 className="rounded-md p-1.5 text-[#8a8f98] transition hover:bg-rose-50 hover:text-rose-700"
                                 aria-label="Move to recycle bin"
+                                disabled={refreshing || isDeleting}
                                 onClick={() => setPendingCase(item)}
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -701,7 +739,7 @@ export function CasesPage() {
                     type="button"
                     variant="outline"
                     className="h-8 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm text-[#1f2937] hover:bg-[#fbfaf8]"
-                    disabled={currentPage <= 1}
+                    disabled={refreshing || Boolean(error) || shownPage <= 1}
                     onClick={() =>
                       setCurrentPage((page) => Math.max(1, page - 1))
                     }
@@ -710,13 +748,15 @@ export function CasesPage() {
                     Previous
                   </Button>
                   <span className="whitespace-nowrap">
-                    Page {currentPage} of {totalPages}
+                    Page {shownPage} of {totalPages}
                   </span>
                   <Button
                     type="button"
                     variant="outline"
                     className="h-8 rounded-lg border-[#e2dbd1] bg-white px-3 text-sm text-[#1f2937] hover:bg-[#fbfaf8]"
-                    disabled={currentPage >= totalPages}
+                    disabled={
+                      refreshing || Boolean(error) || shownPage >= totalPages
+                    }
                     onClick={() =>
                       setCurrentPage((page) => Math.min(totalPages, page + 1))
                     }

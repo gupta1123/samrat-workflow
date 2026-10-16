@@ -1,5 +1,33 @@
 import type { SapMatchResponse } from "./sap-match-client";
 
+/** Keep the last verified comparison mounted while a replacement is pending. */
+export function retainSapMatchDuringUpdate(
+  previous: SapMatchResponse | null,
+  incoming: SapMatchResponse,
+): SapMatchResponse {
+  const status = incoming.matchJob?.status;
+  if (
+    previous?.available &&
+    !incoming.available &&
+    (status === "queued" ||
+      status === "running" ||
+      status === "failed" ||
+      status === "cancelled") &&
+    previous.sapEnv === incoming.sapEnv &&
+    !incoming.draftDetails &&
+    !findPostedApInvoice(incoming.postings, incoming.sapEnv)
+  ) {
+    return {
+      ...previous,
+      caseStatus: incoming.caseStatus,
+      postable: incoming.postable,
+      postings: incoming.postings,
+      matchJob: incoming.matchJob,
+    };
+  }
+  return incoming;
+}
+
 type Posting = {
   kind: string;
   status: string;

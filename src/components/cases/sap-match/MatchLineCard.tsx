@@ -7,6 +7,7 @@ import type {
 } from "@/lib/sap-match/types";
 import { CheckBlock } from "./CheckBlock";
 import { inr, qty } from "./format";
+import { MatchUpdateNotice } from "./MatchUpdateContext";
 import { ItemLinker } from "./ItemLinker";
 import { ReceiptCandidatesPanel } from "./ReceiptCandidatesPanel";
 import { priceReviewDetails } from "@/lib/sap-match/price-review";
@@ -194,6 +195,9 @@ export function MatchLineCard({
 
   return (
     <section className="overflow-hidden rounded-xl border border-[#e0d8cc] bg-white shadow-[0_1px_2px_rgba(43,26,16,0.04)]">
+      <div className="px-4">
+        <MatchUpdateNotice lineIndex={line.index} />
+      </div>
       <header className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-[#ece6dc] px-4 py-2.5">
         <div className="min-w-0">
           <div

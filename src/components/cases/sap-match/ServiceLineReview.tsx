@@ -9,6 +9,7 @@ import type {
 import { inr, qty } from "./format";
 import { CheckBlock } from "./CheckBlock";
 import { ServicePoCandidates } from "./ServicePoCandidates";
+import { MatchUpdateNotice } from "./MatchUpdateContext";
 
 /** Service presentation only. Allocation, validation and matching remain in the engine. */
 export function ServiceLineReview({
@@ -67,6 +68,7 @@ export function ServiceLineReview({
         </span>
       </header>
       <div className="space-y-3 px-4 py-3">
+        <MatchUpdateNotice lineIndex={line.index} />
         <table className="w-full table-fixed text-[11px]">
           <thead>
             <tr className="border-b border-[#ece6dc] text-[#6b5d50]">
@@ -244,10 +246,7 @@ export function ServiceLineReview({
               invoiceLine={source}
               invoicePoReferences={invoice.poReferences}
               disabled={busy}
-              onAllocate={(index, allocations) => {
-                onAllocate(index, allocations);
-                setEditing(false);
-              }}
+              onAllocate={onAllocate}
               onReset={onResetAllocation}
             />
           </div>

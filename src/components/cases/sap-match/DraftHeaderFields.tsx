@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fetchDraftHeaderPreview } from "@/lib/sap-match-client";
@@ -32,21 +32,31 @@ export function DraftHeaderFields({
   const [error, setError] = useState<string | null>(null);
   const [choices, setChoices] = useState<DraftFieldChoices>({});
   const [showSeries, setShowSeries] = useState(numberingSeriesRetry);
+  const [fetching, setFetching] = useState(true);
+  const [retryVersion, setRetryVersion] = useState(0);
+  const initializedCase = useRef<string | null>(null);
   useEffect(() => {
     if (numberingSeriesRetry) setShowSeries(true);
   }, [numberingSeriesRetry]);
   useEffect(() => {
     let active = true;
     setError(null);
-    setPreview(null);
+    setFetching(true);
+    if (initializedCase.current !== caseId) {
+      setPreview(null);
+      setChoices({});
+    }
     fetchDraftHeaderPreview(caseId, showSeries)
       .then((value) => {
         if (!active) return;
         setPreview(value);
-        setChoices({
-          materialForm: value.materialForm.selectedValue,
-          transporter: value.transporter.selectedValue,
-        });
+        if (initializedCase.current !== caseId) {
+          setChoices({
+            materialForm: value.materialForm.selectedValue,
+            transporter: value.transporter.selectedValue,
+          });
+          initializedCase.current = caseId;
+        }
       })
       .catch((error) => {
         if (active)
@@ -55,16 +65,33 @@ export function DraftHeaderFields({
               ? error.message
               : "Could not load draft fields.",
           );
+      })
+      .finally(() => {
+        if (active) setFetching(false);
       });
     return () => {
       active = false;
     };
-  }, [caseId, showSeries]);
+  }, [caseId, showSeries, retryVersion]);
   return (
     <div className="space-y-2 text-[11px] text-[#3d3530]">
       {error ? (
-        <p className="text-[#b91c1c]">{error}</p>
-      ) : !preview ? (
+        <p role="alert" className="text-[#b91c1c]">
+          {error}{" "}
+          <button
+            type="button"
+            disabled={busy || fetching}
+            className="underline"
+            onClick={() => setRetryVersion((value) => value + 1)}
+          >
+            Retry
+          </button>
+        </p>
+      ) : null}
+      {fetching && preview ? (
+        <p role="status">Updating SAP draft fields…</p>
+      ) : null}
+      {!preview ? (
         <p className="flex items-center gap-1.5 text-[#8a7f72]">
           <Loader2 className="h-3 w-3 animate-spin" />
           Loading SAP draft fields…
@@ -201,6 +228,7 @@ export function DraftHeaderFields({
             className="h-7 text-[11px]"
             disabled={
               busy ||
+              fetching ||
               !preview ||
               !!error ||
               (showSeries && !choices.numberingSeries) ||

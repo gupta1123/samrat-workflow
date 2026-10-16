@@ -2,6 +2,7 @@
 import { useState } from "react";
 import type { LineResult, MatchInvoiceLine } from "@/lib/sap-match/types";
 import { inr, qty } from "./format";
+import { useMatchUpdate } from "./MatchUpdateContext";
 
 export function ServicePoCandidates({
   line,
@@ -21,6 +22,11 @@ export function ServicePoCandidates({
   compact?: boolean;
 }) {
   const [showUnavailable, setShowUnavailable] = useState(false);
+  const update = useMatchUpdate(line.index);
+  const pendingAllocations =
+    update?.phase !== "failed" && update?.action?.action === "allocate"
+      ? update.action.allocations
+      : null;
   const nonStock = line.kind === "non-stock";
   const selectedPo = line.candidates.find(
     (candidate) => candidate.allocated > 0,
@@ -102,7 +108,11 @@ export function ServicePoCandidates({
             <input
               type="radio"
               name={`service-po-${line.index}`}
-              checked={candidate.allocated > 0}
+              checked={
+                pendingAllocations
+                  ? (pendingAllocations[candidate.key] ?? 0) > 0
+                  : candidate.allocated > 0
+              }
               disabled={
                 disabled || Boolean(candidate.rejected) || !line.invoiceAmount
               }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -27,6 +27,7 @@ import {
   findPostedApInvoice,
   needsSapMatchPolling,
   pollSapMatch,
+  retainSapMatchDuringUpdate,
 } from "@/lib/sap-match-progress";
 import type {
   LineResult,
@@ -47,6 +48,11 @@ import { MatchLineCard } from "./sap-match/MatchLineCard";
 import { VendorLinker } from "./sap-match/VendorLinker";
 import { WhatGoesToSap } from "./sap-match/WhatGoesToSap";
 import { DraftHeaderFields } from "./sap-match/DraftHeaderFields";
+import {
+  MatchUpdateContext,
+  MatchUpdateNotice,
+  type MatchUpdate,
+} from "./sap-match/MatchUpdateContext";
 import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 import { ReviewHeader } from "./sap-match/ReviewHeader";
@@ -131,34 +137,75 @@ export function SapMatchPanel({
     numberingSeriesRequired?: boolean;
   } | null>(null);
   const [showPassed, setShowPassed] = useState(false);
+  const [pendingUpdate, setPendingUpdate] = useState<MatchUpdate | null>(null);
+  const [validationRequired, setValidationRequired] = useState(false);
+  const requestVersion = useRef(0);
+  const actionInFlight = useRef(false);
+  const activeCase = useRef(caseId);
+  activeCase.current = caseId;
 
   const load = useCallback(
     async (quiet = false, refresh = false) => {
+      const version = ++requestVersion.current;
       if (!quiet) setLoading(true);
       setLoadError(null);
       try {
         const response = await fetchSapMatch(caseId, refresh);
-        setData(response);
+        if (activeCase.current !== caseId || version !== requestVersion.current)
+          return null;
+        setData((previous) => retainSapMatchDuringUpdate(previous, response));
+        if (
+          response.matchJob?.status === "failed" ||
+          response.matchJob?.status === "cancelled"
+        ) {
+          setActionError(
+            response.matchJob.error ??
+              "The change could not be verified. Retry the check.",
+          );
+          setPendingUpdate((previous) =>
+            previous ? { ...previous, phase: "failed" } : previous,
+          );
+          setValidationRequired(true);
+        } else if (!needsSapMatchPolling(response)) {
+          setPendingUpdate(null);
+          setValidationRequired(false);
+        }
         return response;
       } catch (error) {
+        if (activeCase.current !== caseId || version !== requestVersion.current)
+          return null;
         setLoadError(
           error instanceof Error
             ? error.message
             : "Could not load the SAP match.",
         );
+        setPendingUpdate((previous) =>
+          previous ? { ...previous, phase: "failed" } : previous,
+        );
+        setValidationRequired(true);
         return null;
       } finally {
-        setLoading(false);
+        if (activeCase.current === caseId && version === requestVersion.current)
+          setLoading(false);
       }
     },
     [caseId],
   );
 
   useEffect(() => {
+    const requests = requestVersion;
+    setData(null);
+    setPendingUpdate(null);
+    setValidationRequired(false);
+    setBusy(false);
+    setCreating(false);
     setConfirmingDraft(false);
     setDraftMessage(null);
     setActionError(null);
     void load();
+    return () => {
+      requests.current++;
+    };
   }, [load]);
 
   const polling = needsSapMatchPolling(data) && !loadError;
@@ -176,12 +223,44 @@ export function SapMatchPanel({
   }, [polling, load]);
 
   async function act(action: SapMatchAction) {
+    if (actionInFlight.current || (needsSapMatchPolling(data) && !loadError))
+      return;
+    actionInFlight.current = true;
+    requestVersion.current++;
     setBusy(true);
     setActionError(null);
-    const result = await postSapMatchAction(caseId, action);
-    if (!result.ok) setActionError(result.error);
-    await load(true);
-    setBusy(false);
+    setValidationRequired(true);
+    const lineIndex =
+      "lineIndex" in action
+        ? action.lineIndex
+        : "checkId" in action && data?.available
+          ? (data.result.checks.find((check) => check.id === action.checkId)
+              ?.lineIndex ?? null)
+          : action.action === "map-item" && data?.available
+            ? (data.invoice.lines.find(
+                (line) => itemMappingKey(line) === action.mappingKey,
+              )?.index ?? null)
+            : null;
+    setPendingUpdate({ action, lineIndex, phase: "saving" });
+    try {
+      const result = await postSapMatchAction(caseId, action);
+      if (activeCase.current !== caseId) return;
+      if (!result.ok)
+        throw new Error(result.error ?? "Could not save this selection.");
+      setPendingUpdate({ action, lineIndex, phase: "validating" });
+      await load(true);
+    } catch (error) {
+      if (activeCase.current !== caseId) return;
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Could not save this selection.",
+      );
+      setPendingUpdate({ action, lineIndex, phase: "failed" });
+    } finally {
+      actionInFlight.current = false;
+      if (activeCase.current === caseId) setBusy(false);
+    }
   }
 
   function choose(check: MatchCheck, choice: string, reason: string) {
@@ -198,27 +277,47 @@ export function SapMatchPanel({
   }
 
   async function createDraft(choices: DraftFieldChoices) {
+    if (busy || creating || validationRequired || needsSapMatchPolling(data))
+      return;
     setCreating(true);
     setDraftMessage(null);
-    const result = await createMatchedSapDraft(caseId, choices);
-    setDraftMessage({
-      text: result.message,
-      failed: !result.ok,
-      numberingSeriesRequired: result.numberingSeriesRequired,
-    });
-    setCreating(false);
-    setConfirmingDraft(!result.ok && result.numberingSeriesRequired);
-    await load(true);
+    try {
+      const result = await createMatchedSapDraft(caseId, choices);
+      if (activeCase.current !== caseId) return;
+      setDraftMessage({
+        text: result.message,
+        failed: !result.ok,
+        numberingSeriesRequired: result.numberingSeriesRequired,
+      });
+      setConfirmingDraft(!result.ok);
+      await load(true);
+    } catch (error) {
+      if (activeCase.current !== caseId) return;
+      setDraftMessage({
+        text:
+          error instanceof Error
+            ? error.message
+            : "Could not confirm whether the draft was saved. Retry the SAP check before trying again.",
+        failed: true,
+      });
+      setConfirmingDraft(true);
+      await load(true);
+    } finally {
+      if (activeCase.current === caseId) setCreating(false);
+    }
   }
 
   async function recheck() {
+    if (actionInFlight.current || busy) return;
     setBusy(true);
+    setValidationRequired(true);
+    setPendingUpdate({ action: null, lineIndex: null, phase: "validating" });
     setActionError(null);
     await load(true, true);
-    setBusy(false);
+    if (activeCase.current === caseId) setBusy(false);
   }
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="flex items-center gap-2 px-4 py-6 text-xs text-[#8a7f72]">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -227,7 +326,7 @@ export function SapMatchPanel({
     );
   }
 
-  if (loadError || !data) {
+  if (!data) {
     return (
       <div className="px-4 py-4">
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-[11px] text-[#b91c1c]">
@@ -337,8 +436,8 @@ export function SapMatchPanel({
   }
 
   if (
-    data.matchJob?.status === "queued" ||
-    data.matchJob?.status === "running"
+    !data.available &&
+    (data.matchJob?.status === "queued" || data.matchJob?.status === "running")
   ) {
     const stage = data.matchJob.stage || "Matching with SAP";
     return (
@@ -413,42 +512,54 @@ export function SapMatchPanel({
   }
 
   return (
-    <Matched
-      caseId={caseId}
-      variant={variant}
-      data={data}
-      ap={ap}
-      busy={busy}
-      actionError={actionError}
-      confirmingDraft={confirmingDraft}
-      creating={creating}
-      draftMessage={draftMessage}
-      showPassed={showPassed}
-      onTogglePassed={() => setShowPassed((current) => !current)}
-      onConfirmDraft={(value) => setConfirmingDraft(value)}
-      onCreateDraft={(choices) => void createDraft(choices)}
-      onRefresh={() => void recheck()}
-      onChoose={choose}
-      onUndo={(check) => void act({ action: "undo", checkId: check.id })}
-      onAllocate={(lineIndex, allocations) =>
-        void act({ action: "allocate", lineIndex, allocations })
-      }
-      onResetAllocation={(lineIndex) =>
-        void act({ action: "reset-allocation", lineIndex })
-      }
-      onLinkVendor={(cardCode) => void act({ action: "map-vendor", cardCode })}
-      onLink={(line: LineResult, itemCode: string) => {
-        const invoiceLine = data.invoice.lines[line.index];
-        const key = invoiceLine ? itemMappingKey(invoiceLine) : null;
-        if (!data.vendor || !key) return;
-        void act({
-          action: "map-item",
-          vendorCardCode: data.vendor.cardCode,
-          mappingKey: key,
-          sapItemCode: itemCode,
-        });
-      }}
-    />
+    <MatchUpdateContext.Provider value={pendingUpdate}>
+      <Matched
+        caseId={caseId}
+        variant={variant}
+        data={data}
+        ap={ap}
+        busy={busy || (needsSapMatchPolling(data) && !loadError)}
+        validationRequired={
+          validationRequired || needsSapMatchPolling(data) || Boolean(loadError)
+        }
+        actionError={actionError ?? loadError}
+        onRetry={() =>
+          pendingUpdate?.action
+            ? void act(pendingUpdate.action)
+            : void recheck()
+        }
+        confirmingDraft={confirmingDraft}
+        creating={creating}
+        draftMessage={draftMessage}
+        showPassed={showPassed}
+        onTogglePassed={() => setShowPassed((current) => !current)}
+        onConfirmDraft={(value) => setConfirmingDraft(value)}
+        onCreateDraft={(choices) => void createDraft(choices)}
+        onRefresh={() => void recheck()}
+        onChoose={choose}
+        onUndo={(check) => void act({ action: "undo", checkId: check.id })}
+        onAllocate={(lineIndex, allocations) =>
+          void act({ action: "allocate", lineIndex, allocations })
+        }
+        onResetAllocation={(lineIndex) =>
+          void act({ action: "reset-allocation", lineIndex })
+        }
+        onLinkVendor={(cardCode) =>
+          void act({ action: "map-vendor", cardCode })
+        }
+        onLink={(line: LineResult, itemCode: string) => {
+          const invoiceLine = data.invoice.lines[line.index];
+          const key = invoiceLine ? itemMappingKey(invoiceLine) : null;
+          if (!data.vendor || !key) return;
+          void act({
+            action: "map-item",
+            vendorCardCode: data.vendor.cardCode,
+            mappingKey: key,
+            sapItemCode: itemCode,
+          });
+        }}
+      />
+    </MatchUpdateContext.Provider>
   );
 }
 
@@ -458,6 +569,8 @@ function Matched({
   data,
   ap,
   busy,
+  validationRequired = false,
+  onRetry,
   actionError,
   confirmingDraft,
   creating,
@@ -479,6 +592,8 @@ function Matched({
   data: SapMatchAvailable;
   ap: { status: string; sap_docnum: string | null } | undefined;
   busy: boolean;
+  validationRequired?: boolean;
+  onRetry?: () => void;
   actionError: string | null;
   confirmingDraft: boolean;
   creating: boolean;
@@ -615,6 +730,7 @@ function Matched({
     (check) => check.sev === "pass" && !check.open && !check.decision,
   );
   const canCreate =
+    !validationRequired &&
     data.postable &&
     result.status === "ready" &&
     !ap &&
@@ -647,7 +763,7 @@ function Matched({
             caseId={caseId}
             confirming
             numberingSeriesRetry={draftMessage?.numberingSeriesRequired}
-            busy={creating}
+            busy={creating || busy || validationRequired}
             onConfirm={onCreateDraft}
             onCancel={() => onConfirmDraft(false)}
           />
@@ -673,6 +789,7 @@ function Matched({
 
   return (
     <div className="space-y-4 px-4 py-3">
+      <MatchUpdateNotice lineIndex={null} />
       <ReviewHeader
         title={
           ap
@@ -730,6 +847,16 @@ function Matched({
       {actionError ? (
         <div className="rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] text-[#b91c1c]">
           {sapMessage(actionError)}
+          {onRetry ? (
+            <button
+              type="button"
+              className="ml-2 font-medium underline"
+              disabled={busy}
+              onClick={onRetry}
+            >
+              Retry
+            </button>
+          ) : null}
         </div>
       ) : null}
 

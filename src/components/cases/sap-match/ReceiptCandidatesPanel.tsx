@@ -804,8 +804,6 @@ export function ReceiptCandidatesPanel({
                 onClick={() => {
                   if (busy || hasErrors || !selection.dirty) return;
                   onAllocate(line.index, selection.allocations);
-                  setEdits({});
-                  setOpen(false);
                 }}
               >
                 Apply

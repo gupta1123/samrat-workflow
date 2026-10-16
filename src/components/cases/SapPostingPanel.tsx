@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2, Send, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -36,32 +36,69 @@ export function SapPostingPanel({
   const [confirming, setConfirming] = useState(false);
   const [baseGrpoDocNum, setBaseGrpoDocNum] = useState<string>("");
   const [basePoDocNum, setBasePoDocNum] = useState<string>("");
+  const statusCallback = useRef(onStatusChange);
+  statusCallback.current = onStatusChange;
+  const savedReadiness = useRef<SapReadiness | null>(null);
+  const requestVersion = useRef(0);
+  const activeCase = useRef(caseId);
+  activeCase.current = caseId;
 
   const load = useCallback(async () => {
+    const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
-    onStatusChange?.({ readiness: null, checking: true, error: null });
+    statusCallback.current?.({
+      readiness: savedReadiness.current,
+      checking: true,
+      error: null,
+    });
     try {
       const next = await fetchSapReadiness(caseId);
+      if (activeCase.current !== caseId || version !== requestVersion.current)
+        return;
+      savedReadiness.current = next;
       setReadiness(next);
-      onStatusChange?.({ readiness: next, checking: false, error: null });
+      statusCallback.current?.({
+        readiness: next,
+        checking: false,
+        error: null,
+      });
     } catch (loadError) {
+      if (activeCase.current !== caseId || version !== requestVersion.current)
+        return;
       const message =
         loadError instanceof Error
           ? loadError.message
           : "Could not load SAP readiness.";
       setError(message);
-      onStatusChange?.({ readiness: null, checking: false, error: message });
+      statusCallback.current?.({
+        readiness: savedReadiness.current,
+        checking: false,
+        error: message,
+      });
     } finally {
-      setLoading(false);
+      if (activeCase.current === caseId && version === requestVersion.current)
+        setLoading(false);
     }
-  }, [caseId, onStatusChange]);
+  }, [caseId]);
 
   useEffect(() => {
+    const requests = requestVersion;
+    savedReadiness.current = null;
+    setReadiness(null);
+    setResult(null);
+    setConfirming(false);
+    setPosting(false);
+    setBaseGrpoDocNum("");
+    setBasePoDocNum("");
     void load();
+    return () => {
+      requests.current++;
+    };
   }, [load]);
 
   async function handlePost() {
+    if (posting || loading) return;
     setPosting(true);
     setResult(null);
     try {
@@ -71,6 +108,7 @@ export function SapPostingPanel({
         caseId,
         grpo ? { baseGrpoDocNum: grpo } : { basePoDocNum: po ?? null },
       );
+      if (activeCase.current !== caseId) return;
       if (ok) {
         setResult(
           typeof body.message === "string" && body.message
@@ -85,17 +123,20 @@ export function SapPostingPanel({
         );
       }
     } catch (postError) {
+      if (activeCase.current !== caseId) return;
       setResult(
         postError instanceof Error ? postError.message : "SAP posting failed.",
       );
     } finally {
-      setPosting(false);
-      setConfirming(false);
-      await load();
+      if (activeCase.current === caseId) {
+        await load();
+        setPosting(false);
+        setConfirming(false);
+      }
     }
   }
 
-  if (loading) {
+  if (loading && !readiness) {
     return (
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <p className="flex items-center gap-2 text-sm text-slate-500">
@@ -105,7 +146,7 @@ export function SapPostingPanel({
     );
   }
 
-  if (error || !readiness) {
+  if (!readiness) {
     return (
       <section className="rounded-2xl border border-red-200 bg-red-50 p-5">
         <p className="text-sm text-red-700">{error ?? "SAP is unavailable."}</p>
@@ -146,6 +187,23 @@ export function SapPostingPanel({
       className="rounded-2xl border border-slate-200 bg-white p-5"
       aria-label="SAP posting"
     >
+      {loading ? (
+        <p role="status" className="text-xs text-slate-500">
+          Updating SAP readiness… Your selections are kept.
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" className="text-xs text-red-700">
+          {error}{" "}
+          <button
+            type="button"
+            className="underline"
+            onClick={() => void load()}
+          >
+            Retry check
+          </button>
+        </p>
+      ) : null}
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-slate-900">
           SAP Test A/P Invoice Draft
@@ -328,7 +386,7 @@ export function SapPostingPanel({
             </span>
             <Button
               size="sm"
-              disabled={posting || !canCreateDraft}
+              disabled={posting || loading || Boolean(error) || !canCreateDraft}
               onClick={() => void handlePost()}
             >
               {posting ? (
@@ -351,7 +409,7 @@ export function SapPostingPanel({
           <Button
             size="sm"
             className="mt-4"
-            disabled={!canCreateDraft}
+            disabled={loading || Boolean(error) || !canCreateDraft}
             onClick={() => setConfirming(true)}
           >
             <Send className="h-3.5 w-3.5" />
