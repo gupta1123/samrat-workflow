@@ -16,99 +16,30 @@ import { CheckBlock } from "./CheckBlock";
 import { formatDate, inr, qty } from "./format";
 import { ItemLinker } from "./ItemLinker";
 import { MatchUpdateNotice, useMatchUpdate } from "./MatchUpdateContext";
-import { factsFor } from "./ServicePoCandidates";
-
-const EPSILON = 0.005;
-
-function candidatesOf(line: LineResult) {
-  return (
-    line.kind === "unmapped"
-      ? (line.nonStockPoCandidates ?? [])
-      : line.candidates
-  ).filter(
-    (candidate) =>
-      candidate.kind === "PO" && candidate.documentType === "dDocument_Items",
-  );
-}
-
-function lineTitle(candidate: CandidateView) {
-  return (
-    candidate.poEvidence?.lineRemarks ||
-    candidate.poEvidence?.description ||
-    candidate.itemName ||
-    "No description"
-  );
-}
-
-function optionLabel(candidate: CandidateView) {
-  return `Line ${(candidate.lineNum ?? 0) + 1} · ${lineTitle(candidate)} · ${qty(candidate.poEvidence?.openQuantity)} × ${inr(candidate.price)}`;
-}
-
-/** Exact quantity and price: a stated fact used only to group the choices, never to pick one. */
-function fits(line: LineResult, candidate: CandidateView) {
-  return (
-    line.invoiceQty != null &&
-    line.invoiceRate != null &&
-    candidate.poEvidence?.openQuantity != null &&
-    candidate.price != null &&
-    Math.abs(line.invoiceQty - candidate.poEvidence.openQuantity) < EPSILON &&
-    Math.abs(line.invoiceRate - candidate.price) < EPSILON
-  );
-}
+import {
+  NonStockPoDrawer,
+  confirmedPoCandidate,
+  poCandidatesOf as candidatesOf,
+  poLineTitle,
+} from "./NonStockPoDrawer";
 
 function Row({
   invoice,
   line,
-  pool,
-  picked,
-  onPick,
-  claimedElsewhere,
   busy,
   locked,
-  onAllocate,
   onResetAllocation,
 }: {
   invoice: MatchInvoice;
   line: LineResult;
-  pool: CandidateView[];
-  picked: string;
-  onPick: (key: string) => void;
-  claimedElsewhere: (key: string) => number;
   busy: boolean;
   locked: boolean;
-  onAllocate: (index: number, allocations: Record<string, number>) => void;
   onResetAllocation: (index: number) => void;
 }) {
   const source = invoice.lines.find((entry) => entry.index === line.index);
   const update = useMatchUpdate(line.index);
   const saving = Boolean(update && update.phase !== "failed");
-  const confirmed = line.candidates.find(
-    (candidate) => candidate.kind === "PO" && candidate.allocated > 0,
-  );
-  const chosen =
-    confirmed ?? pool.find((candidate) => candidate.key === picked);
-  const amount = line.invoiceAmount;
-  const facts = chosen
-    ? factsFor(chosen, source, amount).facts.filter(
-        (fact) => fact.tone !== "ok" && !fact.text.startsWith("Item code"),
-      )
-    : [];
-  const left = chosen ? (chosen.open ?? 0) - claimedElsewhere(chosen.key) : 0;
-  const overdrawn = Boolean(
-    chosen && !confirmed && (amount ?? 0) > left + EPSILON,
-  );
-  const fitting = pool.filter((candidate) => fits(line, candidate));
-  const others = pool.filter((candidate) => !fits(line, candidate));
-  const option = (candidate: CandidateView) => (
-    <option
-      key={candidate.key}
-      value={candidate.key}
-      disabled={Boolean(candidate.rejected)}
-    >
-      {optionLabel(candidate)}
-      {candidate.rejected ? " · not available" : ""}
-    </option>
-  );
+  const confirmed = confirmedPoCandidate(line);
   return (
     <tr className="border-b border-[#f0ece4] align-top last:border-b-0">
       <td className="px-3 py-2 text-[#8a7f72]">{line.index + 1}</td>
@@ -117,7 +48,8 @@ function Row({
           {source?.description || `Invoice line ${line.index + 1}`}
         </span>
         <span className="block tabular-nums text-[#6b5d50]">
-          {qty(line.invoiceQty)} × {inr(line.invoiceRate)} = {inr(amount)}
+          {qty(line.invoiceQty)} × {inr(line.invoiceRate)} ={" "}
+          {inr(line.invoiceAmount)}
         </span>
         <MatchUpdateNotice lineIndex={line.index} />
       </td>
@@ -126,7 +58,7 @@ function Row({
           <span className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-[#24583e]">
               ✓ PO {confirmed.docNum} · Line {(confirmed.lineNum ?? 0) + 1} ·{" "}
-              {lineTitle(confirmed)}
+              {poLineTitle(confirmed)}
             </span>
             {!locked ? (
               <button
@@ -140,56 +72,7 @@ function Row({
             ) : null}
           </span>
         ) : (
-          <span className="flex flex-wrap items-center gap-2">
-            <select
-              aria-label={`PO line for invoice line ${line.index + 1}`}
-              className="min-w-[16rem] max-w-full rounded-md border border-[#e0d8cc] bg-white p-1.5"
-              value={picked}
-              disabled={busy || locked || saving || !amount}
-              onChange={(event) => onPick(event.target.value)}
-            >
-              <option value="">Choose a PO line</option>
-              {fitting.length ? (
-                <optgroup label="Same quantity and price">
-                  {fitting.map(option)}
-                </optgroup>
-              ) : null}
-              {others.length ? (
-                <optgroup label={fitting.length ? "Other lines" : "PO lines"}>
-                  {others.map(option)}
-                </optgroup>
-              ) : null}
-            </select>
-            {picked && !overdrawn ? (
-              <Button
-                type="button"
-                size="sm"
-                className="h-7 px-2.5 text-[11px]"
-                disabled={busy || locked || saving}
-                onClick={() => onAllocate(line.index, { [picked]: amount! })}
-              >
-                Confirm
-              </Button>
-            ) : null}
-          </span>
-        )}
-      </td>
-      <td className="px-3 py-2">
-        {overdrawn ? (
-          <span className="text-[#b3261e]">
-            Only {inr(Math.max(left, 0))} left on this PO line
-          </span>
-        ) : chosen && !facts.length ? (
-          <span className="text-[#3d5a47]">✓ Quantity and price</span>
-        ) : (
-          facts.map((fact) => (
-            <span
-              key={fact.text}
-              className={`block ${fact.tone === "bad" ? "text-[#b3261e]" : "text-[#8a5207]"}`}
-            >
-              {fact.text}
-            </span>
-          ))
+          <span className="text-[#8a5207]">Needs your choice</span>
         )}
       </td>
     </tr>
@@ -222,7 +105,7 @@ export function NonStockPoTable({
   onResetAllocation: (index: number) => void;
   onLink: (line: LineResult, itemCode: string) => void;
 }) {
-  const [picks, setPicks] = useState<Record<number, string>>({});
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [changingPo, setChangingPo] = useState(false);
   const pending = lines.filter((line) =>
     needsNonStockPoConfirmation(invoice, line),
@@ -267,17 +150,6 @@ export function NonStockPoTable({
   const confirmedTotal = lines
     .filter((line) => !pending.includes(line))
     .reduce((sum, line) => sum + (line.invoiceAmount ?? 0), 0);
-  /** What other invoice lines have already confirmed or picked on the same PO line. */
-  const claimedElsewhere = (line: LineResult) => (key: string) =>
-    lines.reduce((sum, other) => {
-      if (other.index === line.index) return sum;
-      const confirmed = other.candidates.some(
-        (candidate) => candidate.key === key && candidate.allocated > 0,
-      );
-      return confirmed || picks[other.index] === key
-        ? sum + (other.invoiceAmount ?? 0)
-        : sum;
-    }, 0);
   const openChecks = checks.filter(
     (check) => !check.id.startsWith("map-") && (check.open || check.decision),
   );
@@ -295,7 +167,7 @@ export function NonStockPoTable({
     >
       <header className="space-y-0.5 border-b border-[#ece6dc] px-4 py-3">
         <h3 className="text-[13px] font-semibold text-[#111827]">
-          Confirm the PO line for each invoice line
+          Match each invoice line to a PO line
         </h3>
         <p className="text-[11px] text-[#6b5d50]">
           SAP lists these PO items as non-stock. Nothing is chosen for you.
@@ -311,7 +183,6 @@ export function NonStockPoTable({
               disabled={confirmedCount > 0}
               onChange={(event) => {
                 setPoChoice(event.target.value);
-                setPicks({});
                 setChangingPo(false);
               }}
             >
@@ -360,53 +231,59 @@ export function NonStockPoTable({
         ) : null}
 
         {poChoice ? (
-          <div className="overflow-x-auto rounded-lg border border-[#e0d8cc]">
-            <table className="w-full min-w-[640px] text-left text-[11px]">
-              <thead>
-                <tr className="border-b border-[#ece6dc] bg-[#faf8f4] text-[10px] font-medium uppercase tracking-wider text-[#8a7f72]">
-                  <th scope="col" className="w-8 px-3 py-1.5">
-                    #
-                  </th>
-                  <th scope="col" className="px-3 py-1.5">
-                    Invoice line
-                  </th>
-                  <th scope="col" className="px-3 py-1.5">
-                    PO line
-                  </th>
-                  <th scope="col" className="w-48 px-3 py-1.5">
-                    Check
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line) => (
-                  <Row
-                    key={line.index}
-                    invoice={invoice}
-                    line={line}
-                    pool={candidatesOf(line).filter(
-                      (candidate) => String(candidate.docEntry) === poChoice,
-                    )}
-                    picked={picks[line.index] ?? ""}
-                    onPick={(key) =>
-                      setPicks((current) => ({ ...current, [line.index]: key }))
-                    }
-                    claimedElsewhere={claimedElsewhere(line)}
-                    busy={busy}
-                    locked={locked}
-                    onAllocate={(index, allocations) => {
-                      onAllocate(index, allocations);
-                      setPicks((current) => {
-                        const next = { ...current };
-                        delete next[index];
-                        return next;
-                      });
-                    }}
-                    onResetAllocation={onResetAllocation}
-                  />
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-2">
+            <div className="overflow-x-auto rounded-lg border border-[#e0d8cc]">
+              <table className="w-full min-w-[520px] text-left text-[11px]">
+                <thead>
+                  <tr className="border-b border-[#ece6dc] bg-[#faf8f4] text-[10px] font-medium uppercase tracking-wider text-[#8a7f72]">
+                    <th scope="col" className="w-8 px-3 py-1.5">
+                      #
+                    </th>
+                    <th scope="col" className="px-3 py-1.5">
+                      Invoice line
+                    </th>
+                    <th scope="col" className="px-3 py-1.5">
+                      PO line
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line) => (
+                    <Row
+                      key={line.index}
+                      invoice={invoice}
+                      line={line}
+                      busy={busy}
+                      locked={locked}
+                      onResetAllocation={onResetAllocation}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!locked && pending.length ? (
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                onClick={() => setDrawerOpen(true)}
+              >
+                Match PO lines
+              </Button>
+            ) : null}
+            {currentPo ? (
+              <NonStockPoDrawer
+                open={drawerOpen}
+                onOpenChange={setDrawerOpen}
+                invoice={invoice}
+                lines={lines}
+                poDocEntry={currentPo.docEntry}
+                poLabel={poText(currentPo)}
+                busy={busy}
+                locked={locked}
+                onAllocate={onAllocate}
+              />
+            ) : null}
           </div>
         ) : (
           <p className="text-[#6b5d50]">Choose the SAP PO to see its lines.</p>

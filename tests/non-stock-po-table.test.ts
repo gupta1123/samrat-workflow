@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NonStockPoTable } from "@/components/cases/sap-match/NonStockPoTable";
+import { fitsInvoiceLine } from "@/components/cases/sap-match/NonStockPoDrawer";
 
 const { createElement } = React;
 // The app compiles JSX with the automatic runtime; tsx here uses the classic one.
@@ -55,7 +57,7 @@ const line = (index: number, rate: number) =>
     po: null,
   }) as never;
 
-test("four unresolved non-stock lines render as one table with grouped PO choices", () => {
+test("four unresolved non-stock lines render as a summary table with a Match PO lines button", () => {
   const html = renderToStaticMarkup(
     createElement(NonStockPoTable, {
       caseId: "c",
@@ -81,13 +83,28 @@ test("four unresolved non-stock lines render as one table with grouped PO choice
   const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
   assert.equal((html.match(/<table/g) ?? []).length, 1);
   assert.equal((html.match(/<tr/g) ?? []).length, 5);
-  assert.match(text, /Confirm the PO line for each invoice line/);
+  assert.match(text, /Match each invoice line to a PO line/);
+  assert.match(text, /Match PO lines/);
+  assert.equal((text.match(/Needs your choice/g) ?? []).length, 4);
   assert.match(text, /cited on the invoice/);
-  assert.match(html, /label="Same quantity and price"/);
+  assert.doesNotMatch(html, /<select[^>]*PO line for invoice line/);
   assert.match(text, /PO 475 · 08 Aug 2026 · ₹14,875 left/);
   assert.match(text, /Invoice ₹14,875 · confirmed ₹0 · 4 of 4 lines left/);
   assert.ok(
     text.split(" ").length < 400,
     `too wordy: ${text.split(" ").length}`,
   );
+});
+
+test("drawer groups PO lines by exact fit and applies them one at a time", () => {
+  const first = line(0, 8.25) as never as Parameters<typeof fitsInvoiceLine>[0];
+  const [a4, a3] = pool as never as Parameters<typeof fitsInvoiceLine>[1][];
+  assert.equal(fitsInvoiceLine(first, a4), true);
+  assert.equal(fitsInvoiceLine(first, a3), false);
+  const source = readFileSync(
+    "src/components/cases/sap-match/NonStockPoDrawer.tsx",
+    "utf8",
+  );
+  assert.match(source, /Same quantity and price/);
+  assert.match(source, /if \(busy\) return;/);
 });
