@@ -1,6 +1,10 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
+  ChevronDown,
   CopyCheck,
   Fingerprint,
   GitBranch,
@@ -92,6 +96,8 @@ export function PacketIntelligencePanel({
   className,
   density = "wide",
 }: PacketIntelligencePanelProps) {
+  // Warnings stay on one slim line; only a duplicate upload opens by default.
+  const [open, setOpen] = useState(packetIntelligence?.tone === "danger");
   if (!packetIntelligence) return null;
 
   // A confirmed single shipment does not change the reviewer workflow. Keep the
@@ -124,152 +130,166 @@ export function PacketIntelligencePanel({
   return (
     <section
       className={cn(
-        "rounded-xl border p-3 shadow-sm",
-        density === "wide" ? "sm:p-4" : "p-3",
+        "rounded-xl border px-3 py-2 shadow-sm",
         styles.shell,
         className,
       )}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-3">
         <div
           className={cn(
-            "grid h-8 w-8 shrink-0 place-items-center rounded-lg",
+            "grid h-7 w-7 shrink-0 place-items-center rounded-lg",
             styles.icon,
           )}
         >
           <Icon className="h-4 w-4" />
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className={cn("truncate text-sm font-medium", styles.label)}>
-              {packetIntelligence.label}
-            </h2>
-            <span className="rounded-full border border-white/70 bg-white/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-              {packetIntelligence.confidence} confidence
-            </span>
-          </div>
-          <p className={cn("mt-1 text-xs leading-5", styles.text)}>
-            {packetIntelligence.summary}
-          </p>
-        </div>
-      </div>
-
-      <div
-        className={cn(
-          "mt-3 rounded-lg px-3 py-2 text-xs leading-5",
-          styles.action,
-        )}
-      >
-        {packetIntelligence.recommendedAction}
-      </div>
-
-      {visibleChecks.length ? (
-        <div
+        <p className={cn("min-w-0 flex-1 truncate text-xs", styles.text)}>
+          <span className={cn("font-medium", styles.label)}>
+            {packetIntelligence.label}
+          </span>
+          {" · "}
+          {packetIntelligence.summary}
+        </p>
+        <button
+          type="button"
+          aria-expanded={open}
           className={cn(
-            "mt-3 grid gap-2",
-            density === "sidebar"
-              ? "grid-cols-1"
-              : "sm:grid-cols-2 xl:grid-cols-3",
+            "inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium",
+            styles.action,
           )}
+          onClick={() => setOpen((value) => !value)}
         >
-          {visibleChecks.map((check) => (
+          {open ? "Hide" : "Details"}
+          <ChevronDown
+            className={cn("h-3 w-3 transition-transform", open && "rotate-180")}
+          />
+        </button>
+      </div>
+      {open ? (
+        <div className="mt-2">
+          <div
+            className={cn(
+              "mt-3 rounded-lg px-3 py-2 text-xs leading-5",
+              styles.action,
+            )}
+          >
+            {packetIntelligence.recommendedAction}
+          </div>
+
+          {visibleChecks.length ? (
             <div
-              key={check.key}
               className={cn(
-                "rounded-lg border px-3 py-2 text-xs",
-                CHECK_STYLES[check.status],
+                "mt-3 grid gap-2",
+                density === "sidebar"
+                  ? "grid-cols-1"
+                  : "sm:grid-cols-2 xl:grid-cols-3",
               )}
             >
-              <div className="flex items-center gap-2">
-                <span
+              {visibleChecks.map((check) => (
+                <div
+                  key={check.key}
                   className={cn(
-                    "h-1.5 w-1.5 shrink-0 rounded-full",
-                    statusDotClassName(check.status),
+                    "rounded-lg border px-3 py-2 text-xs",
+                    CHECK_STYLES[check.status],
                   )}
-                />
-                <span className="truncate font-medium">{check.label}</span>
-              </div>
-              <p className="mt-1 line-clamp-2 leading-4 opacity-85">
-                {check.detail}
-              </p>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {(showShipments || showCopies || showDuplicates) && (
-        <div className="mt-3 space-y-2 border-t border-white/70 pt-3">
-          {showShipments && (
-            <div className="space-y-1.5">
-              {importantShipmentGroups
-                .slice(0, density === "sidebar" ? 3 : 5)
-                .map((group) => (
-                  <div
-                    key={group.key}
-                    className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-white/70 px-3 py-2 text-xs text-slate-700"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-slate-900">
-                        {group.invoiceNumber || group.label}
-                      </div>
-                      <div className="truncate text-[11px] text-slate-500">
-                        {group.company || group.reason}
-                      </div>
-                    </div>
+                >
+                  <div className="flex items-center gap-2">
                     <span
                       className={cn(
-                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-                        group.role === "context"
-                          ? "bg-slate-100 text-slate-600"
-                          : group.role === "split_candidate"
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-emerald-100 text-emerald-700",
+                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                        statusDotClassName(check.status),
                       )}
-                    >
-                      {group.role === "split_candidate"
-                        ? "Split"
-                        : packetIntelligence.kind === "seller_chain"
-                          ? group.role === "context"
-                            ? "Mother bill"
-                            : "Buyer-facing"
-                          : group.role}
-                    </span>
+                    />
+                    <span className="truncate font-medium">{check.label}</span>
                   </div>
-                ))}
-            </div>
-          )}
-
-          {showCopies && (
-            <div className="rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-slate-700">
-              <span className="font-medium text-slate-900">
-                Collapsed copies:{" "}
-              </span>
-              {packetIntelligence.collapsedCopyGroups
-                .map((group) => `${group.label} (${group.documentIds.length})`)
-                .join(", ")}
-            </div>
-          )}
-
-          {showDuplicates && (
-            <div className="rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-slate-700">
-              <span className="font-medium text-slate-900">
-                Existing case:{" "}
-              </span>
-              {packetIntelligence.duplicateCases.map((duplicateCase, index) => (
-                <span key={duplicateCase.id}>
-                  {index > 0 ? ", " : ""}
-                  <Link
-                    className="text-rose-700 underline-offset-2 hover:underline"
-                    href={`/cases/${duplicateCase.id}`}
-                  >
-                    {duplicateCase.displayName}
-                  </Link>
-                </span>
+                  <p className="mt-1 line-clamp-2 leading-4 opacity-85">
+                    {check.detail}
+                  </p>
+                </div>
               ))}
+            </div>
+          ) : null}
+
+          {(showShipments || showCopies || showDuplicates) && (
+            <div className="mt-3 space-y-2 border-t border-white/70 pt-3">
+              {showShipments && (
+                <div className="space-y-1.5">
+                  {importantShipmentGroups
+                    .slice(0, density === "sidebar" ? 3 : 5)
+                    .map((group) => (
+                      <div
+                        key={group.key}
+                        className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-white/70 px-3 py-2 text-xs text-slate-700"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-slate-900">
+                            {group.invoiceNumber || group.label}
+                          </div>
+                          <div className="truncate text-[11px] text-slate-500">
+                            {group.company || group.reason}
+                          </div>
+                        </div>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                            group.role === "context"
+                              ? "bg-slate-100 text-slate-600"
+                              : group.role === "split_candidate"
+                                ? "bg-amber-100 text-amber-700"
+                                : "bg-emerald-100 text-emerald-700",
+                          )}
+                        >
+                          {group.role === "split_candidate"
+                            ? "Split"
+                            : packetIntelligence.kind === "seller_chain"
+                              ? group.role === "context"
+                                ? "Mother bill"
+                                : "Buyer-facing"
+                              : group.role}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {showCopies && (
+                <div className="rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-slate-700">
+                  <span className="font-medium text-slate-900">
+                    Collapsed copies:{" "}
+                  </span>
+                  {packetIntelligence.collapsedCopyGroups
+                    .map(
+                      (group) => `${group.label} (${group.documentIds.length})`,
+                    )
+                    .join(", ")}
+                </div>
+              )}
+
+              {showDuplicates && (
+                <div className="rounded-lg bg-white/70 px-3 py-2 text-xs leading-5 text-slate-700">
+                  <span className="font-medium text-slate-900">
+                    Existing case:{" "}
+                  </span>
+                  {packetIntelligence.duplicateCases.map(
+                    (duplicateCase, index) => (
+                      <span key={duplicateCase.id}>
+                        {index > 0 ? ", " : ""}
+                        <Link
+                          className="text-rose-700 underline-offset-2 hover:underline"
+                          href={`/cases/${duplicateCase.id}`}
+                        >
+                          {duplicateCase.displayName}
+                        </Link>
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
