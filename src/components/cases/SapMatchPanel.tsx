@@ -53,6 +53,7 @@ import {
   MatchUpdateNotice,
   type MatchUpdate,
 } from "./sap-match/MatchUpdateContext";
+import { SapUpdateToast } from "./sap-match/SapUpdateToast";
 import type { DraftFieldChoices } from "@/lib/sap-draft-fields";
 import { SavedPostingCard } from "./sap-match/SavedPostingPreview";
 import { ReviewHeader } from "./sap-match/ReviewHeader";
@@ -559,6 +560,16 @@ export function SapMatchPanel({
           });
         }}
       />
+      {variant === "sidebar" ? null : (
+        <SapUpdateToast
+          update={pendingUpdate}
+          onRetry={() =>
+            pendingUpdate?.action
+              ? void act(pendingUpdate.action)
+              : void recheck()
+          }
+        />
+      )}
     </MatchUpdateContext.Provider>
   );
 }

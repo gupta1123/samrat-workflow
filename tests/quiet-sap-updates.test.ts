@@ -109,7 +109,7 @@ const output = resolve("tmp/quiet-sap-ui.cjs");
 buildSync({
   stdin: {
     contents:
-      'export {MatchUpdateContext, MatchUpdateNotice} from "./src/components/cases/sap-match/MatchUpdateContext"; export {ServicePoCandidates} from "./src/components/cases/sap-match/ServicePoCandidates";',
+      'export {MatchUpdateContext, MatchUpdateNotice} from "./src/components/cases/sap-match/MatchUpdateContext"; export {ServicePoCandidates} from "./src/components/cases/sap-match/ServicePoCandidates"; export {SapUpdateToast} from "./src/components/cases/sap-match/SapUpdateToast";',
     resolveDir: process.cwd(),
     loader: "tsx",
   },
@@ -120,8 +120,32 @@ buildSync({
   jsx: "automatic",
   external: ["react", "react-dom"],
 });
-const { MatchUpdateContext, MatchUpdateNotice, ServicePoCandidates } =
-  createRequire(resolve("package.json"))(output);
+const {
+  MatchUpdateContext,
+  MatchUpdateNotice,
+  ServicePoCandidates,
+  SapUpdateToast,
+} = createRequire(resolve("package.json"))(output);
+test("SAP progress toast exposes pending and failed checks without claiming premature success", () => {
+  const render = (phase: string | null) =>
+    renderToStaticMarkup(
+      createElement(SapUpdateToast, {
+        update: phase ? { action: null, lineIndex: null, phase } : null,
+        onRetry: () => {},
+      }),
+    );
+  assert.equal(render(null), "");
+  const saving = render("saving");
+  assert.ok(saving.includes("Saving your selection"));
+  assert.ok(saving.includes('role="status"'));
+  const validating = render("validating");
+  assert.ok(validating.includes("Checking it against SAP"));
+  assert.ok(!validating.includes("SAP check complete"));
+  const failed = render("failed");
+  assert.ok(failed.includes('role="alert"'));
+  assert.ok(failed.includes("last verified comparison"));
+  assert.ok(failed.includes("Try again"));
+});
 test("pending PO choice is shown immediately without claiming validated matching or changing totals", () => {
   const line = {
     ...verified.result.lines[0],

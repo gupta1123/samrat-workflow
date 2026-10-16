@@ -1,6 +1,9 @@
+/* Pinned to the viewport on desktop so a scrolled or bounced window can never
+   leave blank page background under the app. Panels scroll inside it. */
 .shell {
+  position: fixed;
+  inset: 0;
   display: flex;
-  height: 100vh;
   overflow: hidden;
   background-color: #f7f7f5;
 }
@@ -14,6 +17,8 @@
 
 @media (max-width: 768px) {
   .shell {
+    position: static;
+    inset: auto;
     display: block;
     overflow: visible;
     min-height: 100dvh;
