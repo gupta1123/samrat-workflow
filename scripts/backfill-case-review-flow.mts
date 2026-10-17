@@ -26,5 +26,5 @@ console.log(
 );
 for (const row of data) {
   console.log(row.id, row.display_name);
-  if (run) await enqueueSapMatch(db, row.owner_user_id, row.id);
+  if (run) await enqueueSapMatch(db, row.owner_user_id, row.id, true);
 }

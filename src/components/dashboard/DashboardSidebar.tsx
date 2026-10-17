@@ -5,6 +5,7 @@ import {
   ChevronsUpDown,
   FileStack,
   FolderOpen,
+  HelpCircle,
   LayoutDashboard,
   LogOut,
   Settings,
@@ -27,6 +28,8 @@ const settingsItem = {
   label: "Settings",
   icon: Settings,
 };
+
+const helpItem = { href: "/help", label: "Help", icon: HelpCircle };
 
 const sections = [
   {
@@ -182,9 +185,11 @@ export function DashboardSidebar({
       >
         <ul className={styles.navList}>
           {/* Phones have no account popover, so settings stays in the bottom bar. */}
-          {[...sections.flatMap((section) => section.items), settingsItem].map(
-            navItem,
-          )}
+          {[
+            ...sections.flatMap((section) => section.items),
+            helpItem,
+            settingsItem,
+          ].map(navItem)}
           <li className={styles.mobileLogoutItem}>
             <form action="/auth/signout" method="post">
               <button
@@ -201,6 +206,12 @@ export function DashboardSidebar({
         </ul>
       </nav>
       <div className={styles.spacer} />
+      <nav
+        aria-label="Help"
+        className={`${styles.navSection} ${styles.desktopNav}`}
+      >
+        <ul className={styles.navList}>{navItem(helpItem)}</ul>
+      </nav>
       <div className={`${styles.userRowWrapper} p-2`}>
         <Popover>
           <PopoverTrigger asChild>
