@@ -2,7 +2,6 @@ import { Boxes, ClipboardList, Info } from "lucide-react";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/dashboard/AppShell";
 
-type Step = { title: string; body: string };
 type Guide = {
   id: string;
   icon: ReactNode;
@@ -10,108 +9,132 @@ type Guide = {
   tag: string;
   when: string;
   badge: string;
-  steps: Step[];
+  steps: Array<[string, string]>;
   terms: Array<[string, string]>;
-  skipped: string;
+  note: string;
+  sample?: ReactNode;
 };
+
+/** A static picture of the PO-line table, so people know what to look for. */
+function PoTableSample() {
+  const rows: Array<[string, string, string]> = [
+    ["1", "RCP - A4 · 450 × ₹8.25", "Choose PO line"],
+    ["2", "RCP - A3 · 450 × ₹13", "✓ PO 475 · Line 2"],
+  ];
+  return (
+    <figure
+      aria-label="Example of the PO line table"
+      className="mt-5 overflow-hidden rounded-xl border border-[#e0d8cc] text-xs"
+    >
+      <div className="border-b border-[#e0d8cc] bg-[#fbfaf8] px-3 py-2 font-semibold text-[#111827]">
+        Choose the PO line for each invoice line
+      </div>
+      {rows.map(([n, line, action]) => (
+        <div
+          key={n}
+          className="flex items-center justify-between gap-3 border-b border-[#efe9e1] px-3 py-2 last:border-b-0"
+        >
+          <span className="text-[#3d3530]">
+            <span className="mr-2 text-[#8a7f72]">{n}</span>
+            {line}
+          </span>
+          <span
+            className={
+              action.startsWith("✓")
+                ? "font-medium text-[#24583e]"
+                : "rounded-md border border-[#ded8d0] px-2 py-1 font-medium text-[#111827]"
+            }
+          >
+            {action}
+          </span>
+        </div>
+      ))}
+      <figcaption className="bg-[#fbfaf8] px-3 py-2 text-[#6b5d50]">
+        Line 1 still needs a PO line. Line 2 is done.
+      </figcaption>
+    </figure>
+  );
+}
 
 const GUIDES: Guide[] = [
   {
     id: "material",
     icon: <Boxes className="h-5 w-5" aria-hidden="true" />,
     name: "Material case",
-    tag: "Goods you stock",
-    when: "The invoice is for physical goods that are items in your SAP stock, such as steel or coils. The goods arrive and are received in SAP first.",
-    badge: "Material · goods receipt",
+    tag: "Goods you keep in stock",
+    when: "Physical goods that are stock items in SAP, like steel or coils. They arrive and are received in SAP first.",
+    badge: "Material",
     steps: [
-      {
-        title: "Check the Issues tab",
-        body: "The app compares the invoice with the other documents in the packet (PO, transport document, weight proof). Anything that does not agree is listed as an issue. Accept it if it is fine, or reject it.",
-      },
-      {
-        title: "Open the SAP tab",
-        body: "The app finds the supplier in SAP and links every invoice line to a SAP item. If a line shows “Item not linked”, search for the SAP item and link it once. Next time it links itself.",
-      },
-      {
-        title: "Choose the receipts",
-        body: "Pick the goods receipts (GRPO) this invoice is for. The app shows how much of each receipt is still unbilled, and checks quantity, price and tax against the invoice.",
-      },
-      {
-        title: "Approve",
-        body: "When every check is green and no issue is open, Approve creates the A/P Invoice Draft in SAP. A person still posts the draft there.",
-      },
+      [
+        "Issues tab",
+        "Go through what does not agree between the documents. Accept it if it is fine, reject it if not.",
+      ],
+      [
+        "SAP tab: link items",
+        "A line that says “Item not linked” needs its SAP item. Search for it and link it once.",
+      ],
+      [
+        "SAP tab: choose receipts",
+        "Pick the goods receipts this invoice is for. The app checks quantity, price and tax.",
+      ],
+      ["Approve", "Creates the A/P Invoice Draft. Someone posts it in SAP."],
     ],
     terms: [
-      [
-        "Confirm receipts",
-        "You must choose which goods receipts this invoice covers.",
-      ],
-      [
-        "Ready for SAP draft",
-        "Nothing is left to decide. Approve will create the draft.",
-      ],
-      [
-        "What goes to SAP",
-        "The exact lines, quantities and amounts that will be written into the draft.",
-      ],
+      ["Confirm receipts", "Choose which goods receipts this invoice covers."],
+      ["Ready for SAP draft", "Nothing is left to decide."],
     ],
-    skipped:
-      "Transport document and weight proof are required here, because goods have to travel and be weighed.",
+    note: "Transport document and weight proof are required, because goods travel and are weighed.",
   },
   {
     id: "non-material",
     icon: <ClipboardList className="h-5 w-5" aria-hidden="true" />,
     name: "Non-material case",
     tag: "Services and non-stock items",
-    when: "The invoice is for services or items that are not stock in SAP, such as printing, events, trophies or advertising. Nothing is received into the warehouse, so there is no goods receipt.",
-    badge: "Non-material · PO line (or Service · PO line)",
+    when: "Printing, events, trophies, advertising. Nothing goes into the warehouse, so there is no goods receipt.",
+    badge: "Non-material or Service",
     steps: [
-      {
-        title: "Check the Issues tab",
-        body: "Same as a material case. Transport document and weight proof are not asked for, so you will not see them here.",
-      },
-      {
-        title: "Open the SAP tab",
-        body: "The invoice is matched to the supplier's open Purchase Order directly. The page says “Confirm PO lines”. The PO the invoice cites is shown first.",
-      },
-      {
-        title: "Choose the PO line for each invoice line",
-        body: "Press “Choose PO line” on a row and pick the PO line it belongs to. Nothing is chosen for you. If the invoice cites another PO, use “Change PO”. When every line is chosen, the page says “PO lines matched”.",
-      },
-      {
-        title: "Approve",
-        body: "Approve creates the A/P Invoice Draft against the PO lines you chose. A person still posts the draft in SAP.",
-      },
+      [
+        "Issues tab",
+        "Same as a material case, but transport document and weight proof are not asked for.",
+      ],
+      [
+        "SAP tab: check the PO",
+        "The invoice is matched to the supplier's open PO. The one the invoice cites comes first. Use “Change PO” for another.",
+      ],
+      [
+        "SAP tab: choose PO lines",
+        "On each row press “Choose PO line” and pick the line it belongs to. Nothing is chosen for you.",
+      ],
+      [
+        "Approve",
+        "Creates the A/P Invoice Draft against those PO lines. Someone posts it in SAP.",
+      ],
     ],
     terms: [
       ["Confirm PO lines", "Each invoice line still needs a PO line."],
-      [
-        "₹ left",
-        "How much of that PO is not yet billed. A line cannot take more than this.",
-      ],
-      [
-        "A line is not on this PO?",
-        "Appears only when a line fits no PO line. Link it to a SAP item instead.",
-      ],
+      ["₹ left", "What is still unbilled on that PO."],
     ],
-    skipped:
-      "Transport document and weight proof are not needed. The app accepts that issue for you once it sees the case is non-material.",
+    note: "Transport document and weight proof are not needed. The app settles that issue itself once it knows the case is non-material.",
+    sample: <PoTableSample />,
   },
 ];
 
 const BADGES: Array<[string, string]> = [
   ["Material · goods receipt", "Reviewed against goods receipts."],
-  ["Non-material · PO line", "Reviewed against PO lines. No goods receipt."],
+  ["Non-material · PO line", "Reviewed against PO lines."],
   ["Service · PO line", "A service invoice, reviewed against PO lines."],
-  ["Mixed lines", "Some lines are goods and some are not."],
-  [
-    "Already in SAP",
-    "This invoice is already recorded, so nothing is created.",
-  ],
+  ["Mixed lines", "Some lines are goods, some are not."],
+  ["Already in SAP", "Already recorded, so nothing is created."],
   [
     "… · invoice reads as goods",
-    "The invoice looks like goods, but its items are not stock in SAP. Check that the PO lines are right.",
+    "Looks like goods, but its items are not stock in SAP. Check the PO lines.",
   ],
+];
+
+const WORDS: Array<[string, string]> = [
+  ["PO", "Purchase Order: what you ordered from the supplier."],
+  ["Goods receipt (GRPO)", "The record that the goods arrived."],
+  ["A/P Invoice Draft", "The supplier bill, ready in SAP for someone to post."],
 ];
 
 function GuideCard({ guide }: { guide: Guide }) {
@@ -135,55 +158,46 @@ function GuideCard({ guide }: { guide: Guide }) {
         </div>
       </div>
 
-      <p className="mt-4 text-sm leading-relaxed text-[#3d3530]">
+      <p className="mt-4 min-h-[3.75rem] text-sm leading-relaxed text-[#3d3530]">
         {guide.when}
       </p>
-      <p className="mt-3 text-xs text-[#6b5d50]">
-        Badge next to the case name:{" "}
-        <span className="rounded-md border border-[#ded8d0] bg-[#fbfaf8] px-1.5 py-0.5 font-medium">
-          {guide.badge}
-        </span>
-      </p>
 
-      <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#8a7f72]">
+      <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-[#8a7f72]">
         What you do
       </h3>
-      <ol className="mt-3 space-y-4">
-        {guide.steps.map((step, index) => (
-          <li key={step.title} className="flex gap-3">
+      <ol className="mt-3 space-y-3">
+        {guide.steps.map(([title, body], index) => (
+          <li key={title} className="flex gap-3">
             <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#111827] text-xs font-semibold text-white">
               {index + 1}
             </span>
-            <div>
-              <p className="text-sm font-semibold text-[#111827]">
-                {step.title}
-              </p>
-              <p className="mt-0.5 text-sm leading-relaxed text-[#5a5046]">
-                {step.body}
-              </p>
-            </div>
+            <p className="text-sm leading-relaxed text-[#5a5046]">
+              <b className="font-semibold text-[#111827]">{title}.</b> {body}
+            </p>
           </li>
         ))}
       </ol>
 
-      <h3 className="mt-6 text-xs font-semibold uppercase tracking-wide text-[#8a7f72]">
-        What the screen says
+      {guide.sample}
+
+      <h3 className="mt-5 text-xs font-semibold uppercase tracking-wide text-[#8a7f72]">
+        You may see
       </h3>
-      <dl className="mt-3 space-y-2.5">
+      <dl className="mt-2 space-y-1.5">
         {guide.terms.map(([term, meaning]) => (
-          <div key={term} className="text-sm">
-            <dt className="font-semibold text-[#111827]">{term}</dt>
-            <dd className="text-[#5a5046]">{meaning}</dd>
+          <div key={term} className="text-sm text-[#5a5046]">
+            <dt className="inline font-semibold text-[#111827]">{term}</dt>
+            <dd className="inline"> · {meaning}</dd>
           </div>
         ))}
       </dl>
 
-      <div className="mt-6 flex gap-2 rounded-xl bg-[#f7f4ef] p-3 text-sm text-[#5a5046]">
+      <div className="mt-auto flex gap-2 rounded-xl bg-[#f7f4ef] p-3 text-sm text-[#5a5046] [&:not(:first-child)]:mt-5">
         <Info
           className="mt-0.5 h-4 w-4 shrink-0 text-[#8a7f72]"
           aria-hidden="true"
         />
-        <p>{guide.skipped}</p>
+        <p>{guide.note}</p>
       </div>
     </section>
   );
@@ -199,13 +213,48 @@ export function HelpPage() {
           </h1>
           <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[#5a5046]">
             Each case is a supplier invoice with its documents. The app checks
-            the packet, matches the invoice to SAP, and prepares an A/P Invoice
-            Draft for you to approve. It does not post anything to SAP for you.
-            What you do depends on whether the invoice is for materials or not.
-            The badge next to the case name tells you which.
+            them, matches the invoice to SAP, and prepares a draft for you to
+            approve. It never posts to SAP by itself.
           </p>
 
-          <div className="mt-6 grid gap-5 lg:grid-cols-2">
+          <section
+            aria-labelledby="help-which"
+            className="mt-5 rounded-2xl border border-[#e0d8cc] bg-white p-5 sm:p-6"
+          >
+            <h2
+              id="help-which"
+              className="text-base font-bold tracking-tight text-[#111827]"
+            >
+              Which one is my case?
+            </h2>
+            <ul className="mt-2 space-y-1.5 text-sm leading-relaxed text-[#5a5046]">
+              <li>
+                <b className="text-[#111827]">Look at the badge</b> next to the
+                case name. It says Material, Non-material, Service, Mixed or
+                Already in SAP.
+              </li>
+              <li>
+                <b className="text-[#111827]">No badge?</b> Open the SAP tab.
+                The badge appears once the SAP check has run. Press the refresh
+                button there if it has not.
+              </li>
+              <li>
+                <b className="text-[#111827]">Still unsure?</b> Goods that go
+                into your warehouse are material. Everything else is
+                non-material.
+              </li>
+            </ul>
+            <dl className="mt-4 grid gap-3 border-t border-[#efe9e1] pt-4 sm:grid-cols-3">
+              {WORDS.map(([word, meaning]) => (
+                <div key={word} className="text-sm">
+                  <dt className="font-semibold text-[#111827]">{word}</dt>
+                  <dd className="text-[#5a5046]">{meaning}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
             {GUIDES.map((guide) => (
               <GuideCard key={guide.id} guide={guide} />
             ))}
@@ -213,7 +262,7 @@ export function HelpPage() {
 
           <section
             aria-labelledby="help-badges"
-            className="mt-6 rounded-2xl border border-[#e0d8cc] bg-white p-5 sm:p-6"
+            className="mt-5 rounded-2xl border border-[#e0d8cc] bg-white p-5 sm:p-6"
           >
             <h2
               id="help-badges"
@@ -230,9 +279,13 @@ export function HelpPage() {
               ))}
             </dl>
             <p className="mt-4 text-sm text-[#5a5046]">
-              Two tabs in every case: <b>Issues</b> lists what does not agree
+              Every case has two tabs. <b>Issues</b> lists what does not agree
               between the documents. <b>SAP</b> is where you match the invoice
               and approve. Approve stays off until no issue is open.
+            </p>
+            <p className="mt-2 text-sm text-[#5a5046]">
+              If the badge looks wrong for your invoice, do not approve it.
+              Check the SAP tab, then ask whoever manages the SAP items.
             </p>
           </section>
         </div>
