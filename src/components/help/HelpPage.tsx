@@ -77,7 +77,10 @@ const GUIDES: Guide[] = [
         "SAP tab: choose receipts",
         "Pick the goods receipts this invoice is for. The app checks quantity, price and tax.",
       ],
-      ["Approve", "Creates the A/P Invoice Draft. Someone posts it in SAP."],
+      [
+        "Approve",
+        "Approves the case. Then create the A/P Invoice Draft; someone posts it in SAP.",
+      ],
     ],
     terms: [
       ["Confirm receipts", "Choose which goods receipts this invoice covers."],
@@ -107,7 +110,7 @@ const GUIDES: Guide[] = [
       ],
       [
         "Approve",
-        "Creates the A/P Invoice Draft against those PO lines. Someone posts it in SAP.",
+        "Approves the case. Then create the A/P Invoice Draft against those PO lines; someone posts it in SAP.",
       ],
     ],
     terms: [
