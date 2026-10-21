@@ -20,6 +20,7 @@ import {
   selectUniqueExactOpenPurchaseOrder,
 } from "@/lib/sap-exact-po-match";
 import { readSapEnvironment } from "@/server/sap/config";
+import { invoiceCurrencyMatchesSap } from "@/server/sap/currency";
 import {
   buildApInvoiceDraft,
   buildPoApInvoiceDraft,
@@ -314,12 +315,16 @@ export async function POST(request: Request, context: Context) {
             409,
           );
         }
-        const invoiceCurrency = String(invoiceFields.currency ?? "")
-          .trim()
-          .toUpperCase();
         if (
-          invoiceCurrency &&
-          invoiceCurrency !== baseDocument.DocCurrency?.toUpperCase()
+          !invoiceCurrencyMatchesSap(
+            invoiceFields.currency,
+            baseDocument.DocCurrency,
+            [
+              invoiceFields.supplierGstin,
+              invoiceFields.buyerGstin,
+              invoiceFields.shipToGstin,
+            ],
+          )
         ) {
           throw new ApiError(
             "The vendor invoice currency differs from the selected SAP document.",
