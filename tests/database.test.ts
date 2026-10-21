@@ -161,6 +161,17 @@ before(async () => {
       "utf8",
     ),
   );
+  for (const migration of [
+    "20261015130910_service_invoice_po_document_approval.sql",
+    "20261021081909_optional_po_upload_approval.sql",
+  ]) {
+    await db.exec(
+      readFileSync(
+        new URL(`../supabase/migrations/${migration}`, import.meta.url),
+        "utf8",
+      ),
+    );
+  }
 });
 after(async () => db.close());
 async function upload(
@@ -868,6 +879,37 @@ test("document-reading warnings cannot be settled or approved", async () => {
     "completed",
   );
 });
+test("a verified goods invoice can be approved without a PO upload", async () => {
+  const c = await createCase();
+  const j = await job(c.id);
+  await claim(j.job.id);
+  await complete(j.job.id, c.id, false);
+  await db.query(
+    "update public.packet_documents set extracted_fields=extracted_fields||$2::jsonb where case_id=$1",
+    [
+      c.id,
+      JSON.stringify({
+        __supplyNature: {
+          kind: "goods",
+          evidence: [{ sourcePage: 1, quote: "Visiting Cards" }],
+        },
+      }),
+    ],
+  );
+  assert.equal(
+    await scalar<number>(
+      "select count(*)::int result from public.packet_documents where case_id=$1 and document_type in ('Purchase Order','Amended Purchase Order')",
+      [c.id],
+    ),
+    0,
+  );
+  const result = await scalar<{ status: string }>(
+    "select public.decide_case($1,$2,'accept') result",
+    [user, c.id],
+  );
+  assert.equal(result.status, "accepted");
+});
+
 test("approval fails closed without verified reading and extraction evidence", async () => {
   const c = await createCase();
   const j = await job(c.id);

@@ -182,7 +182,9 @@ export function NonStockPoTable({
             : "PO lines matched"}
         </h3>
         <p className="text-[11px] text-[#6b5d50]">
-          {pending.length ? "Nothing is chosen for you." : ""}
+          {pending.length
+            ? "A PO file upload is optional. Confirm the matching line from SAP below; nothing is chosen for you."
+            : ""}
           {invoice.servicePeriod
             ? ` Service period: ${invoice.servicePeriod}.`
             : ""}
