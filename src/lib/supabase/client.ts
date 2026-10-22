@@ -1,10 +1,7 @@
 import { createBrowserClient } from "@supabase/ssr";
 
-import { createSupabaseFetch } from "./fetch";
-import {
-  getSupabaseBrowserConfig,
-  SUPABASE_AUTH_COOKIE_NAME,
-} from "./config";
+import { createSupabaseBrowserFetch } from "./browser-fetch";
+import { getSupabaseBrowserConfig, SUPABASE_AUTH_COOKIE_NAME } from "./config";
 
 function requireEnv(name: string, value?: string) {
   if (!value) {
@@ -21,7 +18,13 @@ export function createSupabaseBrowserClient() {
     {
       cookieOptions: { name: SUPABASE_AUTH_COOKIE_NAME },
       global: {
-        fetch: createSupabaseFetch(),
+        fetch:
+          typeof window === "undefined"
+            ? undefined
+            : createSupabaseBrowserFetch(
+                requireEnv("Supabase browser URL", config.url),
+                window.location.origin,
+              ),
       },
     },
   );

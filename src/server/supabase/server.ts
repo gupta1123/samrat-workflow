@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { createSupabaseFetch } from "@/lib/supabase/fetch";
 import {
   getSupabasePublishableKey,
   getSupabaseServerUrl,
@@ -21,6 +22,7 @@ export async function createSupabaseServerClient() {
     requireEnv("Supabase publishable key", getSupabasePublishableKey()),
     {
       cookieOptions: { name: SUPABASE_AUTH_COOKIE_NAME },
+      global: { fetch: createSupabaseFetch() },
       cookies: {
         getAll() {
           return cookieStore.getAll();

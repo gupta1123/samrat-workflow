@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { signInErrorMessage } from "@/lib/supabase/auth-error";
 import styles from "./Login.module.css";
 
 function safeNextPath(value: string | null) {
@@ -16,30 +17,6 @@ function safeNextPath(value: string | null) {
   )
     return "/";
   return value;
-}
-
-async function withAuthTimeout<T>(
-  operation: Promise<T>,
-  timeoutMs = 20_000,
-): Promise<T> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      operation,
-      new Promise<T>((_, reject) => {
-        timeout = setTimeout(() => {
-          reject(
-            new Error(
-              "Authentication timed out. Check the Supabase URL/network and try again.",
-            ),
-          );
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
 }
 
 export function Login() {
@@ -131,15 +108,14 @@ export function Login() {
     setMessage(null);
 
     try {
-      const { data, error: signInError } = await withAuthTimeout(
-        supabase.auth.signInWithPassword({
+      const { data, error: signInError } =
+        await supabase.auth.signInWithPassword({
           email,
           password,
-        }),
-      );
+        });
 
       if (signInError) {
-        setError(signInError.message);
+        setError(signInErrorMessage(signInError));
         setLoadingMode(null);
         return;
       }
@@ -147,7 +123,7 @@ export function Login() {
       if (!data.session) {
         const {
           data: { session },
-        } = await withAuthTimeout(supabase.auth.getSession());
+        } = await supabase.auth.getSession();
 
         if (!session) {
           setError(
@@ -159,12 +135,8 @@ export function Login() {
       }
 
       window.location.assign(nextPath);
-    } catch (authError) {
-      setError(
-        authError instanceof Error
-          ? authError.message
-          : "Authentication failed. Try again.",
-      );
+    } catch {
+      setError(signInErrorMessage({ status: 0 }));
       setLoadingMode(null);
     }
   }

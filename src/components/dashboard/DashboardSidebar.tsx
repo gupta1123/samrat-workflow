@@ -76,7 +76,7 @@ function useSidebarUser() {
     if (cachedSidebarUser) return;
     let active = true;
     try {
-      // getSession reads the saved session locally; it makes no backend request.
+      // getSession reads the saved session and may renew it through our Auth relay.
       void createSupabaseBrowserClient()
         .auth.getSession()
         .then(({ data: { session } }) => {
