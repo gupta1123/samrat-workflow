@@ -481,27 +481,28 @@ export function ServicePoCandidates({
                               {compact
                                 ? `Line ${candidate.lineNum + 1}`
                                 : `SAP line ${candidate.lineNum}`}
-                              {candidate.poEvidence?.lineRemarks
-                                ? ` · ${candidate.poEvidence.lineRemarks}`
-                                : ""}
                             </span>
                             <span className="block text-[#6b5d50]">
                               {[
                                 items && candidate.itemCode
-                                  ? `${candidate.itemCode}${candidate.itemName ? ` · ${candidate.itemName}` : ""}`
+                                  ? `SAP item: ${candidate.itemCode}${candidate.itemName ? ` · ${candidate.itemName}` : ""}`
                                   : null,
                                 !items
                                   ? `Service account ${candidate.accountCode || "not recorded"}`
                                   : null,
-                                description &&
-                                refKey(description) !==
-                                  refKey(candidate.itemName)
-                                  ? description
-                                  : null,
                               ]
                                 .filter(Boolean)
-                                .join(" · ") || "Description not recorded"}
+                                .join(" · ")}
                             </span>
+                            <span className="block whitespace-pre-wrap break-words text-[#6b5d50]">
+                              {items ? "Item description" : "Description"}:{" "}
+                              {description || "Not recorded"}
+                            </span>
+                            {candidate.poEvidence?.lineRemarks ? (
+                              <span className="block whitespace-pre-wrap break-words text-[#6b5d50]">
+                                Free text: {candidate.poEvidence.lineRemarks}
+                              </span>
+                            ) : null}
                             {(checked || visible.length <= 4) &&
                             facts.length ? (
                               <span className="mt-1 flex flex-wrap gap-1">

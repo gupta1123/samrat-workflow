@@ -18,7 +18,6 @@ import {
   confirmedPoCandidate,
   fitsInvoiceLine,
   poCandidatesOf as candidatesOf,
-  poLineTitle,
 } from "./NonStockPoDrawer";
 import { NonStockPoPicker } from "./NonStockPoPicker";
 
@@ -55,9 +54,22 @@ function Row({
       <td className="px-3 py-2">
         <span className="flex flex-wrap items-center gap-2">
           {confirmed ? (
-            <span className="font-medium text-[#24583e]">
-              ✓ PO {confirmed.docNum} · Line {(confirmed.lineNum ?? 0) + 1} ·{" "}
-              {poLineTitle(confirmed)}
+            <span className="min-w-0 whitespace-pre-wrap break-words text-[#24583e]">
+              <span className="block font-medium">
+                ✓ PO {confirmed.docNum} · Line {(confirmed.lineNum ?? 0) + 1} ·{" "}
+                {confirmed.itemCode}
+              </span>
+              <span className="block">
+                Item description:{" "}
+                {confirmed.poEvidence?.description ||
+                  confirmed.itemName ||
+                  "Not recorded"}
+              </span>
+              {confirmed.poEvidence?.lineRemarks ? (
+                <span className="block">
+                  Free text: {confirmed.poEvidence.lineRemarks}
+                </span>
+              ) : null}
             </span>
           ) : null}
           <button

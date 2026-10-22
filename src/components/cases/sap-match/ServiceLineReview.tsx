@@ -92,10 +92,15 @@ export function ServiceLineReview({
                 Service
               </th>
               <td className={cellClass}>{title}</td>
-              <td className={cellClass}>
+              <td className={`${cellClass} whitespace-pre-wrap`}>
                 {selected?.poEvidence?.description ||
                   selected?.itemName ||
                   (selected ? "See PO details" : "No PO line linked")}
+                {selected?.poEvidence?.lineRemarks ? (
+                  <span className="mt-1 block text-[#6b5d50]">
+                    Free text: {selected.poEvidence.lineRemarks}
+                  </span>
+                ) : null}
               </td>
             </tr>
             <tr className="border-b border-[#f0ece4]">

@@ -146,6 +146,9 @@ function Detail({
       ? null
       : Math.abs(line.invoiceRate - candidate.price) < EPSILON;
   const enough = amount <= candidate.open + EPSILON;
+  const description =
+    candidate.poEvidence?.description || candidate.itemName || "Not recorded";
+  const freeText = candidate.poEvidence?.lineRemarks;
   const headerRemarks = candidate.poEvidence?.headerRemarks;
   const good = qtyOk && priceOk && enough;
   return (
@@ -174,16 +177,27 @@ function Detail({
               </span>
             </div>
             <CompareRow
-              label="Description"
+              label="Item description"
               ok={null}
               invoice={<Marked text={invoiceText} shared={shared} />}
-              po={<Marked text={poLineTitle(candidate)} shared={shared} />}
-            >
-              {shared.length ? (
-                <small>Words in common: {shared.join(", ")}</small>
-              ) : null}
-              {headerRemarks ? <small>{headerRemarks}</small> : null}
-            </CompareRow>
+              po={<Marked text={description} shared={shared} />}
+            />
+            {freeText ? (
+              <CompareRow
+                label="Free text"
+                ok={null}
+                invoice="—"
+                po={<Marked text={freeText} shared={shared} />}
+              />
+            ) : null}
+            {headerRemarks ? (
+              <CompareRow
+                label="PO remarks"
+                ok={null}
+                invoice="—"
+                po={headerRemarks}
+              />
+            ) : null}
             <CompareRow
               label="Quantity"
               ok={qtyOk}
@@ -313,7 +327,7 @@ export function NonStockPoDrawer({
   const query = search.trim().toLowerCase();
   const matches = (candidate: CandidateView) =>
     !query ||
-    `${(candidate.lineNum ?? 0) + 1} ${poLineTitle(candidate)}`
+    `${(candidate.lineNum ?? 0) + 1} ${candidate.itemCode ?? ""} ${candidate.itemName ?? ""} ${candidate.poEvidence?.description ?? ""} ${candidate.poEvidence?.lineRemarks ?? ""}`
       .toLowerCase()
       .includes(query);
   const groups = [
@@ -449,9 +463,21 @@ export function NonStockPoDrawer({
             }
           >
             <span className="gr-id">
-              <b className="truncate">
-                Line {(candidate.lineNum ?? 0) + 1} · {poLineTitle(candidate)}
+              <b className="whitespace-normal break-words">
+                Line {(candidate.lineNum ?? 0) + 1} ·{" "}
+                {candidate.itemCode || "PO line"}
               </b>
+              <span className="whitespace-pre-wrap break-words text-[11px]">
+                Item description:{" "}
+                {candidate.poEvidence?.description ||
+                  candidate.itemName ||
+                  "Not recorded"}
+              </span>
+              {candidate.poEvidence?.lineRemarks ? (
+                <span className="whitespace-pre-wrap break-words text-[11px]">
+                  Free text: {candidate.poEvidence.lineRemarks}
+                </span>
+              ) : null}
               <small>
                 {qty(candidate.poEvidence?.openQuantity)} ×{" "}
                 {inr(candidate.price)}
@@ -598,7 +624,7 @@ export function NonStockPoDrawer({
                 <Search size={15} />
                 <input
                   aria-label="Search PO lines"
-                  placeholder="Find by line number or description"
+                  placeholder="Find by item code, description or free text"
                   autoComplete="off"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
