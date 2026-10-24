@@ -23,6 +23,7 @@ import { INVOICE_NUMBER_REQUIRED_FIELD } from "@/lib/invoice-approval";
 import { WEIGHT_CALCULATION_FIELD } from "@/lib/weight-calculation";
 import { isLineItemMismatchField } from "@/lib/line-items";
 import type { CommercialLineItem } from "@/types/pipeline";
+import { usePrivateDocumentUrl } from "@/lib/use-private-document-url";
 
 type MismatchSourceDrawerProps = {
   caseId: string;
@@ -287,10 +288,13 @@ export function MismatchSourceDrawer({
   );
   const [pageNumber, setPageNumber] = useState(sourceFocus.pageNumber);
   const [zoom, setZoom] = useState(SOURCE_ZOOM_DEFAULT);
-  const [signedUrl, setSignedUrl] = useState<string | null>(
+  const [rawSignedUrl, setSignedUrl] = useState<string | null>(
     sourceFile?.signedUrl ?? null,
   );
-  const [sourceError, setSourceError] = useState<string | null>(null);
+  const [rawSourceError, setSourceError] = useState<string | null>(null);
+  const privateDocument = usePrivateDocumentUrl(rawSignedUrl);
+  const signedUrl = privateDocument.url;
+  const sourceError = rawSourceError || privateDocument.error;
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 

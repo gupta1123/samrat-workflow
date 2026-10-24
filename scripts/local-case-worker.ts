@@ -1,6 +1,10 @@
 import { processCaseJob } from "../src/server/process-job";
 import { processSapMatchJob } from "../src/server/sap/match-job";
 import { createSupabaseAdminClient } from "../src/server/supabase/admin";
+import {
+  cleanupConsumedUploadParts,
+  removeUploadParts,
+} from "../src/server/upload-relay";
 
 const IDLE_POLL_MS = 400;
 const RECOVERY_INTERVAL_MS = 15 * 1000;
@@ -63,6 +67,7 @@ async function cleanupOrphanUploads() {
 
   const assets = (data ?? []) as { id: string; storage_path: string }[];
   if (assets.length) {
+    for (const asset of assets) await removeUploadParts(db, asset.storage_path);
     const removed = await db.storage
       .from("packet-files")
       .remove(assets.map((asset) => asset.storage_path));
@@ -78,6 +83,7 @@ async function cleanupOrphanUploads() {
     if (deleted.error) throw deleted.error;
   }
 
+  await cleanupConsumedUploadParts(db);
   lastCleanupAt = Date.now();
 }
 

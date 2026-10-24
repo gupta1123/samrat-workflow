@@ -1,6 +1,6 @@
 import { apiFetch } from "@/lib/api-client";
 import type { PacketIntelligence } from "@/lib/packet-intelligence";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { uploadFileThroughWebsite } from "@/lib/file-transfer-client";
 import { getQueuedUploadFiles } from "@/lib/upload-groups";
 import { validateCasePageLimit } from "@/lib/upload-page-limit";
 import { isConfirmedAnalysisStart } from "@/lib/analysis-start";
@@ -305,28 +305,7 @@ async function uploadFiles(uploads: QueuedUpload[]) {
         const sha256 = Array.from(new Uint8Array(digest))
           .map((b) => b.toString(16).padStart(2, "0"))
           .join("");
-        const response = await performApiFetch("/api/uploads", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: file.name, size: file.size, sha256 }),
-        });
-        const payload = await response.json();
-        if (!response.ok)
-          throw toApiRequestError(payload, "Could not prepare upload.", {
-            status: response.status,
-          });
-        const { error } = await createSupabaseBrowserClient()
-          .storage.from("packet-files")
-          .uploadToSignedUrl(payload.path, payload.token, file, {
-            contentType: file.type || "application/octet-stream",
-          });
-        if (error)
-          throw new Error(
-            "Upload failed for " +
-              file.name +
-              ". Check your connection and retry.",
-          );
-        return payload.id as string;
+        return uploadFileThroughWebsite(file, sha256);
       })().catch((error) => {
         signedUploads.delete(file);
         throw error;

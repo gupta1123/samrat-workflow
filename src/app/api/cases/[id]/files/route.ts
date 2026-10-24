@@ -8,78 +8,48 @@ import {
   uuid,
   withUser,
 } from "@/server/api/helpers";
-import {
-  inlineCaseFileResponse,
-  listDraftCaseFiles,
-} from "@/server/case-files";
+import { caseFileContentUrl, listDraftCaseFiles } from "@/server/case-files";
 import { mapProcessingJob } from "@/server/processing/jobs";
-import { getDirectSupabasePublicUrl } from "@/lib/supabase/config";
 import { verifyUploads } from "@/server/uploads";
-
-function canRedirectToStorage() {
-  return (
-    !process.env.SUPABASE_INTERNAL_URL?.trim() &&
-    Boolean(getDirectSupabasePublicUrl())
-  );
-}
+import { FILE_CHUNK_BYTES } from "@/lib/file-transfer";
+import { fileTransferRequest } from "@/server/file-transfer";
+import { privateFileContent } from "@/server/file-content";
 
 type Context = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, context: Context) {
-  return withUser(request, async (db, user) => {
+  return fileTransferRequest(request, "document", async (db, user) => {
     const { id } = await context.params;
     await ownedCase(db, user, id);
     const search = new URL(request.url).searchParams;
     const fileId = search.get("fileId");
-    if (!fileId || search.get("content") !== "1") {
+    if (!fileId) {
       throw new ApiError("File not found.", 404);
     }
     const fileResult = await db
       .from("packet_case_files")
-      .select("id, original_name, storage_bucket, storage_path, mime_type")
+      .select(
+        "id, original_name, storage_bucket, storage_path, mime_type, size_bytes, content_sha256",
+      )
       .eq("id", uuid(fileId))
       .eq("case_id", uuid(id))
       .maybeSingle();
     dbCheck(fileResult.error);
     if (!fileResult.data) throw new ApiError("File not found.", 404);
     const file = fileResult.data;
-    const bucket = file.storage_bucket || "packet-files";
-    if (search.get("content") !== "1") {
-      const signed = await db.storage
-        .from(bucket)
-        .createSignedUrl(file.storage_path, 300);
-      dbCheck(signed.error);
-      if (!signed.data?.signedUrl) {
-        throw new ApiError("File content is unavailable.", 404);
-      }
-      return { fileId: file.id, signedUrl: signed.data.signedUrl };
-    }
-    // On hosted Supabase the browser can reach Storage directly. Redirecting to
-    // a short-lived signed URL avoids buffering the whole file through this
-    // function and lets PDF.js fetch only the byte ranges it needs. Self-hosted
-    // installs use an internal Storage URL, so they keep the streaming proxy.
-    if (canRedirectToStorage()) {
-      const signed = await db.storage
-        .from(bucket)
-        .createSignedUrl(file.storage_path, 3600);
-      if (!signed.error && signed.data?.signedUrl) {
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: signed.data.signedUrl,
-            "Cache-Control": "private, max-age=600",
-          },
-        });
-      }
-    }
-    const download = await db.storage.from(bucket).download(file.storage_path);
-    if (download.error || !download.data) {
-      throw new ApiError("File content is unavailable.", 404);
-    }
-    return inlineCaseFileResponse(download.data, {
-      originalName: file.original_name,
-      mimeType: file.mime_type,
-    });
+    if (file.storage_bucket && file.storage_bucket !== "packet-files")
+      throw new ApiError("File not found.", 404);
+    if (search.get("info") === "1")
+      return {
+        fileId: file.id,
+        size: file.size_bytes,
+        sha256: file.content_sha256,
+        mimeType: file.mime_type,
+        chunkSize: FILE_CHUNK_BYTES,
+      };
+    if (search.get("content") !== "1")
+      return { fileId: file.id, signedUrl: caseFileContentUrl(id, file.id) };
+    return privateFileContent(request, file);
   });
 }
 
@@ -98,9 +68,13 @@ export async function POST(request: Request, context: Context) {
     });
     dbCheck(error);
     if (data.duplicateCase)
-      throw new ApiError("These documents already belong to a saved case.", 409, {
-        duplicateCase: data.duplicateCase,
-      });
+      throw new ApiError(
+        "These documents already belong to a saved case.",
+        409,
+        {
+          duplicateCase: data.duplicateCase,
+        },
+      );
     return {
       case: mapCase(data.case),
       files: await listDraftCaseFiles(db, data.case.id),
@@ -178,12 +152,15 @@ export async function DELETE(request: Request, context: Context) {
 
     const fileResult = await db
       .from("packet_case_files")
-      .select("id, original_name, storage_bucket, storage_path, storage_asset_id")
+      .select(
+        "id, original_name, storage_bucket, storage_path, storage_asset_id",
+      )
       .eq("id", fileUuid)
       .eq("case_id", uuid(id))
       .maybeSingle();
     dbCheck(fileResult.error);
-    if (!fileResult.data) throw new ApiError("File not found in this case.", 404);
+    if (!fileResult.data)
+      throw new ApiError("File not found in this case.", 404);
 
     const remainingResult = await db
       .from("packet_case_files")

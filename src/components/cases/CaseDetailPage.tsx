@@ -1,6 +1,7 @@
 "use client";
 
 import { getFriendlyAnalysisStartError } from "@/lib/analysis-start";
+import { usePrivateDocumentUrl } from "@/lib/use-private-document-url";
 
 import Image from "next/image";
 import Link from "next/link";
@@ -1408,7 +1409,9 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
   const [loadingPreviewFileId, setLoadingPreviewFileId] = useState<
     string | null
   >(null);
-  const [previewUrlError, setPreviewUrlError] = useState<string | null>(null);
+  const [rawPreviewUrlError, setPreviewUrlError] = useState<string | null>(
+    null,
+  );
   const desktopWorkspaceRef = useRef<HTMLDivElement | null>(null);
   const paneResizeStartRef = useRef<{
     pointerX: number;
@@ -1994,11 +1997,14 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
 
   const activePreviewFile =
     activeDocumentFiles[previewPageIndex] ?? activeDocumentFiles[0] ?? null;
-  const activeFileUrl = activePreviewFile
+  const rawActiveFileUrl = activePreviewFile
     ? (signedFileUrls[activePreviewFile.id] ??
       activePreviewFile.signedUrl ??
       null)
     : null;
+  const privateDocument = usePrivateDocumentUrl(rawActiveFileUrl);
+  const activeFileUrl = privateDocument.url;
+  const previewUrlError = rawPreviewUrlError || privateDocument.error;
   const previewPdfPageCount =
     previewPdfSource.url === activeFileUrl ? previewPdfSource.pageCount : 0;
   const setPreviewPdfPageCount = useCallback(
@@ -2009,7 +2015,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
   );
   const isPreviewUrlLoading =
     Boolean(activePreviewFile) &&
-    loadingPreviewFileId === activePreviewFile?.id;
+    (loadingPreviewFileId === activePreviewFile?.id || privateDocument.loading);
   const previewPageCount =
     activeDocumentFiles.length || activeDocument?.pageCount || 1;
   const activeSourceLabel = getSourceFileLabel(

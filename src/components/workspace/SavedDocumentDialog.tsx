@@ -15,6 +15,7 @@ import {
   type SavedCaseFile,
 } from "@/lib/case-persistence";
 import { PdfDocumentPreview } from "./PdfDocumentPreview";
+import { usePrivateDocumentUrl } from "@/lib/use-private-document-url";
 
 export function SavedDocumentDialog({
   caseId,
@@ -25,8 +26,11 @@ export function SavedDocumentDialog({
   file: SavedCaseFile | null;
   onClose: () => void;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [sourceUrl, setUrl] = useState<string | null>(null);
+  const [sourceError, setError] = useState("");
+  const privateDocument = usePrivateDocumentUrl(sourceUrl);
+  const url = privateDocument.url;
+  const error = sourceError || privateDocument.error;
   useEffect(() => {
     let active = true;
     setUrl(null);

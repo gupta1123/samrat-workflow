@@ -39,6 +39,7 @@ import {
   readMissingDocumentGroups,
 } from "@/lib/missing-documents";
 import { DUPLICATE_INVOICE_FIELD } from "@/lib/duplicate-invoice";
+import { usePrivateDocumentUrl } from "@/lib/use-private-document-url";
 
 type MismatchComparePaneProps = {
   caseId: string;
@@ -78,8 +79,11 @@ function EvidencePage({
     [evidence.document],
   );
   const [pageNumber, setPageNumber] = useState(sourceFocus.pageNumber);
-  const [signedUrl, setSignedUrl] = useState(sourceFile?.signedUrl ?? null);
-  const [sourceError, setSourceError] = useState<string | null>(null);
+  const [rawSignedUrl, setSignedUrl] = useState(sourceFile?.signedUrl ?? null);
+  const [rawSourceError, setSourceError] = useState<string | null>(null);
+  const privateDocument = usePrivateDocumentUrl(rawSignedUrl);
+  const signedUrl = privateDocument.url;
+  const sourceError = rawSourceError || privateDocument.error;
 
   useEffect(() => {
     setPageNumber(sourceFocus.pageNumber);
