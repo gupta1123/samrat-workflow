@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AppShell } from "@/components/dashboard/AppShell";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { BusinessPartnersTab } from "./BusinessPartnersTab";
 import { ItemsInspectorTab } from "./ItemsInspectorTab";
@@ -414,6 +415,9 @@ export function SapInspectorPage() {
                 see the base links, line values, raw response, and likely reasons
                 a packet cannot find or use that record.
               </p>
+              <Link href="/sap-inspector/open-grpos" className="mt-2 inline-block text-sm font-semibold text-[#6b3d20] underline">
+                Open GRPO Inspector
+              </Link>
             </div>
             {activeTab !== "items" && activeTab !== "business-partners" && activeTab !== "grpo" ? <div className="flex items-center gap-2">
               {data ? (

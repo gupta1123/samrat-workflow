@@ -12,7 +12,9 @@ import type {
 
 export function GrpoInspectorTab({
   renderDetails,
+  openOnly = false,
 }: {
+  openOnly?: boolean;
   renderDetails: (record: SapInspectorRecord) => ReactNode;
 }) {
   const [search, setSearch] = useState("");
@@ -41,7 +43,7 @@ export function GrpoInspectorTab({
     const params = new URLSearchParams({
       q: criteria.search,
       supplier: criteria.supplier,
-      status: criteria.status,
+      status: openOnly ? "open" : criteria.status,
       limit: "25",
     });
     if (cursor !== null) params.set("before", String(cursor));
@@ -72,7 +74,7 @@ export function GrpoInspectorTab({
       active = false;
       controller.abort();
     };
-  }, [criteria, cursor, refresh]);
+  }, [criteria, cursor, refresh, openOnly]);
   const button = "h-8 border-[#ddd4c8] bg-white px-3 text-[11px]";
   return (
     <section className="mt-4 text-[11px]">
@@ -80,7 +82,8 @@ export function GrpoInspectorTab({
         <div>
           <h2 className="text-[12px] font-semibold">Goods Receipt PO (GRPO)</h2>
           <p className="mt-1 text-[#81766b]">
-            SAP Test · Read only · Open GRPOs shown by default
+            SAP Test · Read only ·{" "}
+            {openOnly ? "Open receipts only" : "Open GRPOs shown by default"}
           </p>
         </div>
         <Button
@@ -126,18 +129,20 @@ export function GrpoInspectorTab({
           onChange={(event) => setSupplier(event.target.value)}
           className="h-8 min-w-0 flex-[0_1_210px] rounded-md border border-[#ddd4c8] px-2 text-[11px]"
         />
-        <select
-          aria-label="GRPO status"
-          value={status}
-          onChange={(event) =>
-            setStatus(event.target.value as GrpoInspectorQuery["status"])
-          }
-          className="h-8 rounded-md border border-[#ddd4c8] bg-white px-2 text-[11px]"
-        >
-          <option value="open">Open, not cancelled</option>
-          <option value="closed">Closed, not cancelled</option>
-          <option value="all">All statuses</option>
-        </select>
+        {!openOnly ? (
+          <select
+            aria-label="GRPO status"
+            value={status}
+            onChange={(event) =>
+              setStatus(event.target.value as GrpoInspectorQuery["status"])
+            }
+            className="h-8 rounded-md border border-[#ddd4c8] bg-white px-2 text-[11px]"
+          >
+            <option value="open">Open, not cancelled</option>
+            <option value="closed">Closed, not cancelled</option>
+            <option value="all">All statuses</option>
+          </select>
+        ) : null}
         <Button type="submit" variant="outline" className={button}>
           Search SAP
         </Button>
@@ -184,7 +189,7 @@ export function GrpoInspectorTab({
                     "Vendor Invoice No.",
                     "Linked PO No.",
                     "Status",
-                    "Lines",
+                    openOnly ? "Remaining quantity by item" : "Lines",
                   ].map((label) => (
                     <th key={label} className="px-3 py-2 font-semibold">
                       {label}
@@ -246,7 +251,29 @@ export function GrpoInspectorTab({
                         ].join(" · ") || "—"}
                       </td>
                       <td className="px-3 py-2">{record.status}</td>
-                      <td className="px-3 py-2">{record.lines.length}</td>
+                      <td className="px-3 py-2">
+                        {openOnly ? (
+                          <ul className="space-y-1">
+                            {record.lines.map((line, index) => (
+                              <li
+                                key={index}
+                                className="flex justify-between gap-4"
+                              >
+                                <span>
+                                  {line.itemCode ??
+                                    line.description ??
+                                    `Line ${index + 1}`}
+                                </span>
+                                <span className="font-mono">
+                                  {line.openQuantity ?? "Not returned"}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          record.lines.length
+                        )}
+                      </td>
                     </tr>
                     {expanded === record.id ? (
                       <tr>
@@ -262,7 +289,9 @@ export function GrpoInspectorTab({
           </div>
           {!data.records.length ? (
             <p className="px-4 py-8 text-center text-[#81766b]">
-              No GRPOs found. Change the supplier, search or status.
+              {openOnly
+                ? "No open GRPOs found. Change the supplier or search."
+                : "No GRPOs found. Change the supplier, search or status."}
             </p>
           ) : null}
           <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e7e0d7] bg-[#fbfaf8] px-3 py-2 text-[10px] text-[#776d63]">
