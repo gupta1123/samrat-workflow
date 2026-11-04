@@ -8,7 +8,7 @@ export default function OpenGrpoInspectorPage() {
   return (
     <AppShell defaultSidebarCollapsed>
       <main className="min-h-full bg-[#f7f4ef] px-4 py-6 text-[#17130f] sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-3xl">
+        <div className="mx-auto max-w-[1500px]">
           <Link
             href="/sap-inspector"
             className="text-sm text-[#6b3d20] underline"

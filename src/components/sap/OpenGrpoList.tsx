@@ -1,13 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import {
-  AlertCircle,
-  ChevronDown,
-  Loader2,
-  RefreshCw,
-  Search,
-} from "lucide-react";
+import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 
 import { apiFetch } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -71,61 +65,39 @@ function referencesOf(record: SapInspectorRecord) {
   };
 }
 
-function Chip({ label, values }: { label: string; values: string[] }) {
-  if (!values.length) return null;
+const HEAD =
+  "sticky top-0 z-10 bg-[#f3efe9] px-3 py-2.5 text-left text-xs font-semibold text-[#6b6157]";
+const CELL = "px-3 py-2.5 align-top";
+
+function Dash() {
+  return <span className="text-[#b5aa9d]">—</span>;
+}
+
+function Quantity({
+  value,
+  line,
+  strong = false,
+}: {
+  value: number | null;
+  line: SapInspectorLine;
+  strong?: boolean;
+}) {
+  if (value === null)
+    return <span className="text-xs text-[#9a8f84]">Not returned</span>;
+  const unit = unitOf(line);
   return (
-    <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-[#f3eee6] px-2.5 py-1 text-xs">
-      <span className="text-[#81766b]">{label}</span>
-      <span className="truncate font-mono font-medium text-[#2b231d]">
-        {values.join(", ")}
-      </span>
+    <span
+      className={`tabular-nums ${strong ? "text-[15px] font-semibold text-[#17130f]" : ""}`}
+    >
+      {qty(value)}
+      {unit ? (
+        <span className="ml-1 text-xs font-normal text-[#81766b]">{unit}</span>
+      ) : null}
     </span>
   );
 }
 
-function LeftBar({ line }: { line: SapInspectorLine }) {
-  const total = line.quantity;
-  const left = line.openQuantity;
-  const billedShare =
-    total && total > 0 && left !== null
-      ? Math.min(100, Math.max(0, ((total - left) / total) * 100))
-      : null;
-  const unit = unitOf(line);
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5">
-      <div className="min-w-0 text-sm text-[#2b231d]">
-        <span className="line-clamp-2 break-words">{itemName(line, 0)}</span>
-      </div>
-      <div className="text-right">
-        <span className="text-base font-semibold tabular-nums text-[#17130f]">
-          {left === null ? "Not returned" : qty(left)}
-        </span>
-        {left !== null ? (
-          <span className="ml-1 text-xs text-[#6b6157]">{unit} left</span>
-        ) : null}
-        {total !== null ? (
-          <span className="ml-1.5 text-xs tabular-nums text-[#9a8f84]">
-            of {qty(total)}
-          </span>
-        ) : null}
-      </div>
-      {billedShare !== null ? (
-        <div
-          className="col-span-2 h-1.5 overflow-hidden rounded-full bg-[#ece5da]"
-          role="img"
-          aria-label={`${Math.round(billedShare)}% billed`}
-        >
-          <div
-            className="h-full rounded-full bg-[#6b3d20]"
-            style={{ width: `${billedShare}%` }}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function Details({ record }: { record: SapInspectorRecord }) {
+function MoreInfo({ record }: { record: SapInspectorRecord }) {
   const refs = referencesOf(record);
   const facts: Array<[string, string]> = [
     ["E-way bill", refs.eWayBill.join(", ")],
@@ -133,77 +105,52 @@ function Details({ record }: { record: SapInspectorRecord }) {
     ["Warehouse", uniq(record.lines.map((line) => line.warehouse)).join(", ")],
     ["SAP entry", record.docEntry ?? ""],
     ["Note", record.comments ?? ""],
-  ];
+  ].filter(([, value]) => value) as Array<[string, string]>;
   return (
-    <div className="border-t border-[#ece6de] bg-[#fbfaf8] px-4 py-4 sm:px-5">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[460px] text-left text-sm">
-          <thead className="text-xs text-[#81766b]">
-            <tr>
-              <th className="pb-2 pr-3 font-medium">Item</th>
-              <th className="pb-2 pr-3 text-right font-medium">Received</th>
-              <th className="pb-2 pr-3 text-right font-medium">Left</th>
-              <th className="pb-2 text-right font-medium">Rate</th>
-            </tr>
-          </thead>
-          <tbody>
-            {record.lines.map((line, index) => {
-              const rateDiffers =
-                line.price !== null &&
-                line.linkedPoPrice != null &&
-                Math.abs(line.price - line.linkedPoPrice) > 0.005;
-              return (
-                <tr
-                  key={`${line.lineNumber ?? index}`}
-                  className={`border-t border-[#ece6de] align-top ${
-                    isOpen(line) ? "" : "text-[#9a8f84]"
-                  }`}
-                >
-                  <td className="py-2 pr-3">
-                    {itemName(line, index)}
-                    {line.itemCode && line.description ? (
-                      <div className="font-mono text-xs text-[#9a8f84]">
-                        {line.itemCode}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td className="py-2 pr-3 text-right tabular-nums">
-                    {qty(line.quantity)}
-                  </td>
-                  <td className="py-2 pr-3 text-right font-medium tabular-nums">
-                    {line.openQuantity === null
-                      ? "Not returned"
-                      : qty(line.openQuantity)}
-                  </td>
-                  <td className="py-2 text-right tabular-nums">
-                    {line.price !== null
-                      ? [line.raw.Currency, money.format(line.price)]
-                          .filter((value) => typeof value === "string" && value)
-                          .join(" ")
-                      : "—"}
-                    {rateDiffers ? (
-                      <div className="text-xs text-amber-700">
-                        PO rate {money.format(line.linkedPoPrice as number)}
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-        {facts
-          .filter(([, value]) => value)
-          .map(([label, value]) => (
+    <div className="space-y-4 px-3 py-4">
+      <table className="w-full max-w-xl text-sm">
+        <thead className="text-xs text-[#81766b]">
+          <tr>
+            <th className="pb-1.5 pr-3 text-left font-medium">Item</th>
+            <th className="pb-1.5 pr-3 text-right font-medium">GRPO rate</th>
+            <th className="pb-1.5 text-right font-medium">PO rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {record.lines.map((line, index) => {
+            const currency =
+              typeof line.raw.Currency === "string" ? line.raw.Currency : "";
+            const rate = (value: number | null | undefined) =>
+              value == null
+                ? "—"
+                : [currency, money.format(value)].join(" ").trim();
+            return (
+              <tr key={index} className="border-t border-[#ece6de]">
+                <td className="py-1.5 pr-3">{itemName(line, index)}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">
+                  {rate(line.price)}
+                </td>
+                <td className="py-1.5 text-right tabular-nums">
+                  {line.linkedPoPrice == null
+                    ? "—"
+                    : money.format(line.linkedPoPrice)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {facts.length ? (
+        <dl className="grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          {facts.map(([label, value]) => (
             <div key={label} className="min-w-0">
               <dt className="text-xs text-[#81766b]">{label}</dt>
               <dd className="break-words font-mono text-[#2b231d]">{value}</dd>
             </div>
           ))}
-      </dl>
-      <details className="mt-4 text-xs text-[#81766b]">
+        </dl>
+      ) : null}
+      <details className="text-xs text-[#81766b]">
         <summary className="cursor-pointer select-none">Show SAP data</summary>
         <pre className="mt-2 max-h-80 overflow-auto rounded-lg bg-[#201c19] p-3 font-mono text-[11px] leading-4 text-[#eee7dc]">
           {JSON.stringify(record.raw, null, 2)}
@@ -213,93 +160,132 @@ function Details({ record }: { record: SapInspectorRecord }) {
   );
 }
 
-function ReceiptCard({ record }: { record: SapInspectorRecord }) {
+/** One GRPO: shared columns span its item rows, quantities stay per item. */
+function GrpoRows({ record }: { record: SapInspectorRecord }) {
   const [open, setOpen] = useState(false);
   const refs = referencesOf(record);
   const date = dateParts(record.date);
-  const openLines = record.lines.filter(isOpen);
-  const shown = record.lines.filter(
-    (line) => isOpen(line) || line.openQuantity === null,
-  );
-  const billedLines = record.lines.filter(
-    (line) => line.openQuantity === 0,
-  ).length;
+  const span = Math.max(record.lines.length, 1);
+  const lines = record.lines.length ? record.lines : [null];
   return (
-    <li className="overflow-hidden rounded-xl border border-[#e2dacf] bg-white shadow-[0_1px_0_rgba(23,19,15,0.03)]">
-      <div className="px-4 py-4 sm:px-5">
-        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-          <div className="min-w-0">
-            <h2 className="break-words text-base font-semibold text-[#17130f]">
-              {record.vendorName ?? record.vendorCode ?? "Unknown supplier"}
-            </h2>
-            <p className="mt-0.5 text-xs text-[#81766b]">
-              {record.vendorCode ? (
-                <span className="font-mono">{record.vendorCode}</span>
-              ) : null}
-            </p>
-          </div>
-          <div className="text-right text-sm">
-            <div className="font-mono font-semibold text-[#6b3d20]">
-              GRPO {record.docNumber ?? "—"}
-            </div>
-            {date ? (
-              <div className="text-xs text-[#81766b]">
-                {date.label} · {date.age}
-              </div>
+    <tbody className="border-t-2 border-[#e2dacf] first:border-t-0">
+      {lines.map((line, index) => {
+        const done = line !== null && line.openQuantity === 0;
+        return (
+          <tr
+            key={index}
+            className={`${index > 0 ? "border-t border-[#f0ebe3]" : ""} ${done ? "text-[#9a8f84]" : ""}`}
+          >
+            {index === 0 ? (
+              <>
+                <td
+                  rowSpan={span}
+                  className={`${CELL} border-r border-[#f0ebe3]`}
+                >
+                  <button
+                    type="button"
+                    aria-expanded={open}
+                    aria-label={`${open ? "Hide" : "Show"} more about GRPO ${record.docNumber ?? ""}`}
+                    onClick={() => setOpen((value) => !value)}
+                    className="flex items-center gap-1 font-mono text-[15px] font-semibold text-[#6b3d20] hover:underline"
+                  >
+                    <ChevronRight
+                      className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`}
+                    />
+                    {record.docNumber ?? "—"}
+                  </button>
+                  {date ? (
+                    <div className="mt-0.5 pl-5 text-xs text-[#81766b]">
+                      {date.label}
+                      <span className="text-[#b5aa9d]"> · {date.age}</span>
+                    </div>
+                  ) : null}
+                </td>
+                <td rowSpan={span} className={`${CELL} max-w-[240px]`}>
+                  <div className="break-words font-medium text-[#17130f]">
+                    {record.vendorName ?? "—"}
+                  </div>
+                  {record.vendorCode ? (
+                    <div className="font-mono text-xs text-[#81766b]">
+                      {record.vendorCode}
+                    </div>
+                  ) : null}
+                </td>
+                <td rowSpan={span} className={`${CELL} font-mono`}>
+                  {refs.invoice.length ? (
+                    refs.invoice.join(", ")
+                  ) : (
+                    <span className="font-sans text-xs text-amber-700">
+                      Not entered
+                    </span>
+                  )}
+                </td>
+                <td
+                  rowSpan={span}
+                  className={`${CELL} border-r border-[#f0ebe3] font-mono`}
+                >
+                  {refs.truck.length ? refs.truck.join(", ") : <Dash />}
+                </td>
+              </>
             ) : null}
-          </div>
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Chip label="PO" values={refs.po} />
-          <Chip label="Invoice" values={refs.invoice} />
-          <Chip label="Truck" values={refs.truck} />
-          {!refs.invoice.length ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-xs text-amber-800">
-              <AlertCircle className="h-3 w-3" />
-              No invoice no.
-            </span>
-          ) : null}
-        </div>
-
-        <ul className="mt-4 space-y-4 border-t border-[#f0ebe3] pt-4">
-          {shown.map((line, index) => (
-            <li key={`${line.lineNumber ?? index}`}>
-              <LeftBar line={{ ...line, description: itemName(line, index) }} />
-            </li>
-          ))}
-        </ul>
-        {billedLines > 0 && openLines.length ? (
-          <p className="mt-3 text-xs text-[#9a8f84]">
-            {billedLines} other {billedLines === 1 ? "item is" : "items are"} at
-            zero remaining quantity.
-          </p>
-        ) : null}
-      </div>
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center justify-center gap-1.5 border-t border-[#ece6de] bg-[#fbfaf8] py-2 text-xs font-medium text-[#6b3d20] hover:bg-[#f4efe8]"
-      >
-        {open ? "Hide details" : "Details"}
-        <ChevronDown
-          className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open ? <Details record={record} /> : null}
-    </li>
+            <td className={`${CELL} font-mono`}>
+              {line?.linkedPoNumber ?? <Dash />}
+            </td>
+            <td className={`${CELL} max-w-[300px]`}>
+              {line ? (
+                <>
+                  <div className="break-words">{itemName(line, index)}</div>
+                  {line.itemCode && line.description ? (
+                    <div className="font-mono text-xs text-[#9a8f84]">
+                      {line.itemCode}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <Dash />
+              )}
+            </td>
+            <td className={`${CELL} text-right`}>
+              {line ? <Quantity value={line.quantity} line={line} /> : <Dash />}
+            </td>
+            <td className={`${CELL} text-right`}>
+              {line ? (
+                <Quantity
+                  value={line.openQuantity}
+                  line={line}
+                  strong={!done}
+                />
+              ) : (
+                <Dash />
+              )}
+            </td>
+          </tr>
+        );
+      })}
+      {open ? (
+        <tr className="border-t border-[#f0ebe3] bg-[#fbfaf8]">
+          <td colSpan={8} className="p-0">
+            <MoreInfo record={record} />
+          </td>
+        </tr>
+      ) : null}
+    </tbody>
   );
 }
 
-function CardSkeleton() {
+function SkeletonRows() {
   return (
-    <li className="rounded-xl border border-[#e2dacf] bg-white p-5">
-      <Skeleton className="h-5 w-1/2" />
-      <Skeleton className="mt-3 h-4 w-2/3" />
-      <Skeleton className="mt-6 h-4 w-full" />
-      <Skeleton className="mt-2 h-1.5 w-full" />
-    </li>
+    <tbody>
+      {[0, 1, 2, 3, 4].map((row) => (
+        <tr key={row} className="border-t border-[#f0ebe3]">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((cell) => (
+            <td key={cell} className={CELL}>
+              <Skeleton className="h-4 w-full max-w-[120px]" />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </tbody>
   );
 }
 
@@ -422,17 +408,40 @@ export function OpenGrpoList() {
         </div>
       ) : null}
 
-      <ul className="mt-4 space-y-4" aria-busy={loading}>
-        {loading
-          ? [0, 1, 2].map((key) => <CardSkeleton key={key} />)
-          : stillOpen.map((record) => (
-              <ReceiptCard key={record.id} record={record} />
-            ))}
-      </ul>
+      <div className="mt-4 overflow-x-auto rounded-xl border border-[#e2dacf] bg-white">
+        <table
+          className="w-full min-w-[1000px] border-collapse text-sm"
+          aria-busy={loading}
+        >
+          <thead>
+            <tr>
+              <th className={HEAD}>GRPO</th>
+              <th className={HEAD}>Supplier</th>
+              <th className={HEAD}>Invoice no.</th>
+              <th className={`${HEAD} border-r border-[#e2dacf]`}>Truck</th>
+              <th className={HEAD}>PO no.</th>
+              <th className={HEAD}>Item</th>
+              <th className={`${HEAD} text-right`}>Received</th>
+              <th className={`${HEAD} text-right`}>Left to bill</th>
+            </tr>
+          </thead>
+          {loading ? (
+            <SkeletonRows />
+          ) : (
+            stillOpen.map((record) => (
+              <GrpoRows key={record.id} record={record} />
+            ))
+          )}
+        </table>
+      </div>
 
       {data && !loading && !stillOpen.length && !error ? (
         <p className="mt-10 text-center text-sm text-[#81766b]">
-          {search ? "Nothing found. Try another word." : "No open GRPOs."}
+          {data.nextCursor !== null
+            ? "No remaining quantities on this page. Choose Older to keep looking."
+            : search
+              ? "Nothing found. Try another word."
+              : "No open GRPOs on this page."}
         </p>
       ) : null}
 
