@@ -24,6 +24,7 @@ import {
 } from "../src/lib/grpo-import-client";
 import { createSupabaseAdminClient } from "../src/server/supabase/admin";
 import { GrpoDraftBadge } from "../src/components/sap/GrpoDraftBadge";
+import { zipFixture } from "./helpers/zip-fixture";
 
 // Raw JSON rows in the mock PostgREST server deliberately have dynamic columns.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,6 +50,9 @@ async function setup(t: TestContext) {
     SAP_SL_TEST_COMPANY_DB: "COMPANY",
     SAP_SL_TEST_USERNAME: "user",
     SAP_SL_TEST_PASSWORD: "password",
+    SAP_TEST_BASE_URL: "https://sap-api.invalid",
+    SAP_TEST_USERNAME: "api-user",
+    SAP_TEST_PASSWORD: "api-password",
     QUOTAGUARDSTATIC_URL: "",
   };
   const old = Object.fromEntries(
@@ -74,6 +78,9 @@ async function setup(t: TestContext) {
     closed: false,
     missing: false,
     badPdf: false,
+    changedPdf: false,
+    attachmentApiStatus: 200,
+    attachmentApiCalls: [] as string[],
     failSave: false,
     failEvents: false,
     failDraftRead: false,
@@ -133,15 +140,32 @@ async function setup(t: TestContext) {
       }),
     }))
     .persist();
-  sap
+  mock
+    .get("https://sbivan.samratgroup.com:5061")
     .intercept({
-      path: /^\/b1s\/v1\/Attachments2\(9\)\/\$value\?/,
+      path: "/api/Grpo/42/download-attachments",
       method: "GET",
+      headers: {
+        authorization: `Basic ${Buffer.from("api-user:api-password").toString("base64")}`,
+      },
     })
-    .reply(() => ({
-      statusCode: 200,
-      data: state.badPdf ? Buffer.from("<html>not a PDF</html>") : bytes,
-    }))
+    .reply((options) => {
+      state.attachmentApiCalls.push(String(options.path));
+      return {
+        statusCode: state.attachmentApiStatus,
+        data: zipFixture([
+          {
+            name: state.missing ? "Report.rpt" : "Original.pdf",
+            bytes: state.badPdf
+              ? Buffer.from("<html>not a PDF</html>")
+              : state.changedPdf
+                ? Buffer.concat([bytes, Buffer.from("\n% changed source")])
+                : bytes,
+          },
+        ]),
+        responseOptions: { headers: { "content-type": "application/zip" } },
+      };
+    })
     .persist();
   sap
     .intercept({ path: /^\/b1s\/v1\/PurchaseDeliveryNotes\?/, method: "GET" })
@@ -379,6 +403,12 @@ test("SAP import stores the original bytes, validates pages, attaches once and r
   assert.equal((await done.json()).caseId, caseId);
   assert.equal(state.cases.length, 1);
   assert.deepEqual([...state.objects.values()][0], bytes);
+  assert.ok(state.attachmentApiCalls.length >= 3);
+  assert.ok(
+    state.attachmentApiCalls.every(
+      (path) => path === "/api/Grpo/42/download-attachments",
+    ),
+  );
   assert.equal(state.events[0].details.environment, "test");
   const again = await call({ ...s, action: "finish" });
   assert.equal(again.status, 200);
@@ -407,6 +437,38 @@ test("an HTML download is rejected before reserving storage", async (t) => {
   state.badPdf = true;
   assert.equal((await call({ ...s, action: "file", index: 0 })).status, 502);
   assert.equal(state.assets.length, 0);
+});
+
+test("changed PDF bytes under the same filename invalidate the import manifest", async (t) => {
+  const { state, call, session } = await setup(t);
+  const s = await session();
+  state.changedPdf = true;
+  assert.equal((await call({ ...s, action: "file", index: 0 })).status, 409);
+  assert.equal(state.assets.length, 0);
+  assert.equal(state.cases.length, 0);
+});
+
+test("attachment API failures cannot fall back to a different PDF source", async (t) => {
+  const { state, call } = await setup(t);
+  state.attachmentApiStatus = 401;
+  assert.equal((await call({ action: "prepare" })).status, 502);
+  state.attachmentApiStatus = 404;
+  assert.equal((await call({ action: "prepare" })).status, 404);
+  assert.equal(state.assets.length, 0);
+  assert.equal(state.cases.length, 0);
+});
+
+test("GRPO downloads retain Test credentials even when the general SAP environment is live", async (t) => {
+  const prior = process.env.SAP_API_ENV;
+  t.after(() => {
+    if (prior === undefined) delete process.env.SAP_API_ENV;
+    else process.env.SAP_API_ENV = prior;
+  });
+  process.env.SAP_API_ENV = "live";
+  const { state, session } = await setup(t);
+  await session();
+  assert.deepEqual(state.attachmentApiCalls, ["/api/Grpo/42/download-attachments"]);
+  assert.equal(state.cases.length, 0);
 });
 
 test("changed manifests, invalid indexes and other users' assets cannot be imported", async (t) => {

@@ -12,17 +12,19 @@ Download & analyze ignores recycled source links, revalidates SAP's open receipt
 
 ## Source API
 
-The integration uses the existing server-only SAP Test Service Layer session and static egress proxy:
+PDF downloads use the SAP team's Test attachment API, with the existing server-only `SAP_TEST_USERNAME` / `SAP_TEST_PASSWORD` Basic credentials and static egress proxy:
 
-1. `GET PurchaseDeliveryNotes(DocEntry)` verifies the receipt is still open and not cancelled and reads its `AttachmentEntry`.
-2. `GET Attachments2(AttachmentEntry)` lists the actual attachment filenames.
-3. `GET Attachments2(AttachmentEntry)/$value?filename='…'` reads each PDF.
+`GET https://sbivan.samratgroup.com:5061/api/Grpo/{DocEntry}/download-attachments`
 
-There is no generated supplier invoice, report rendering, guessed download URL, or browser connection to SAP. Report templates (`.rpt`) are not PDFs. Credentials and SAP session cookies stay on the server. The source PDF bytes are not modified.
+The identifier is the SAP **DocEntry**, not the displayed GRPO DocNum. Before downloading, the existing SAP Test Service Layer session re-reads `PurchaseDeliveryNotes(DocEntry)` to verify the receipt is still open and not cancelled. PDF availability badges continue to use the recorded attachment metadata as a lightweight presence check; the import revalidates the actual archive.
+
+The supplied endpoint returns a ZIP. A server-side Undici request supports HTTPS port 5061 (which the fetch API rejects), retains TLS verification and static egress, and never follows redirects with credentials. The ZIP is read in memory, without writing its paths to disk. Only actual PDF entries are imported; report templates (`.rpt`) and other non-PDF attachments are ignored. Invalid paths, duplicate PDF names, encryption, damaged CRC/size data, non-PDF contents, more than 20 PDFs, or a download/expanded PDF packet above 50 MB are rejected. PDF bytes are preserved exactly. There is no fallback to Service Layer `$value`, report rendering, generated supplier invoices, or a browser connection to SAP.
+
+Read-only verification against the client endpoint for Test GRPO entry 174368 returned HTTP 200 with a ZIP containing `AP27Y5949 (2).pdf`. Its SHA-256 matched the existing source PDF exactly. This verification did not upload documents, create cases, run analysis, or write to SAP. Open PO FTP access remains pending the SAP team's configuration; GRPO attachments are not treated as an Open PO invoice feed.
 
 ## Workflow and recovery
 
-The authenticated import endpoint is `/api/sap-inspector/grpos/:docEntry/import`, with `prepare`, `file`, and `finish` POST actions. Each PDF is downloaded and stored in a separate bounded request. The client retains the manifest, session UUID, and day for the batch. A changed SAP attachment manifest is rejected. Each file must be a readable, unencrypted PDF within existing size/page limits; finish reuses the existing server checksum/page validation and transactional case-attachment RPC.
+The authenticated import endpoint is `/api/sap-inspector/grpos/:docEntry/import`, with `prepare`, `file`, and `finish` POST actions. Each step revalidates the receipt and downloads the bounded archive from the supplied API. The file step stores only its selected PDF. The client retains the manifest, session UUID, and day for the batch. The manifest includes deterministically ordered filenames and original PDF SHA-256 values: changed bytes under an unchanged filename are also rejected. Each file must be a readable, unencrypted PDF within existing size/page limits; finish reuses the existing server checksum/page validation and transactional case-attachment RPC.
 
 The existing attachment RPC serializes case creation by owner and prevents exact-content duplicate cases. A lost response or concurrent request can safely reuse a committed case. The source event is written only after verifying the original PDF hashes are present in the case. If writing that event fails, a retry recognizes the existing case by its files.
 
@@ -38,7 +40,7 @@ No schema migration, new tables, or SQL execution is required. The feature uses 
 
 ## PDF availability and navigation
 
-The sidebar includes Unbilled Receipts. Its Add Folder button opens the existing `/workspace` PDF/image upload page; Add Case is removed from the sidebar. Before enabling Download & analyze, the list reads SAP's `AttachmentEntry` and attachment metadata, with at most four concurrent metadata reads and a shared read for repeated attachment entries. Confirmed missing PDFs show No PDF attached and a disabled button. A failed or omitted metadata response instead shows PDF check unavailable; Refresh retries the check. The import endpoint still rechecks the receipt and attachments when clicked.
+The sidebar includes Add Case, opening the existing `/workspace` PDF/image upload page. Unbilled Receipts is omitted from the desktop and mobile sidebar, but remains accessible at `/sap-inspector/open-grpos`, including its existing Add Folder button. Before enabling Download & analyze, the list reads SAP's `AttachmentEntry` and attachment metadata, with at most four concurrent metadata reads and a shared read for repeated attachment entries. Confirmed missing PDFs show No PDF attached and a disabled button. A failed or omitted metadata response instead shows PDF check unavailable; Refresh retries the check. The import endpoint still rechecks the receipt and downloads the actual archive when clicked.
 
 After upload and a confirmed analysis enqueue, imports and analysis retries navigate to `/cases/:id`, the same progress page used after manual uploads. The existing polling and results flow continue there. An enqueue failure leaves a saved case with the existing retry action.
 

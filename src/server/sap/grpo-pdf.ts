@@ -1,10 +1,12 @@
 import { ApiError } from "@/server/api/helpers";
 import { sapFetch } from "./http";
+import { downloadGrpoPdfs } from "./grpo-attachments-api";
 
 export type GrpoPdfFile = {
-  attachmentEntry: number;
+  attachmentEntry?: number;
   name: string;
   index: number;
+  sha256?: string;
 };
 export function grpoEntry(value: unknown) {
   const id = Number(value);
@@ -71,7 +73,7 @@ export async function readBoundedPdf(response: Response) {
   return bytes;
 }
 
-/** This uses only the configured SAP Test origin and SAP's recorded attachment link. */
+/** Verify the live SAP Test receipt; download only from the SAP team's attachment API. */
 export async function withGrpoPdfs<T>(
   entry: number,
   action: (source: {
@@ -144,28 +146,12 @@ export async function withGrpoPdfs<T>(
       );
     if (!Number.isSafeInteger(receipt.DocNum))
       throw new ApiError("SAP receipt identity is unavailable.", 502);
-    if (
-      !Number.isSafeInteger(receipt.AttachmentEntry) ||
-      receipt.AttachmentEntry <= 0
-    )
-      throw new ApiError("No attachment is recorded on this SAP GRPO.", 404);
-    const { body: meta } = await json(
-      `/Attachments2(${receipt.AttachmentEntry})`,
-    );
-    const files = pdfAttachments(
-      receipt.AttachmentEntry,
-      meta.Attachments2_Lines,
-    );
-    if (!files.length)
-      throw new ApiError(
-        "No PDF is attached to this SAP GRPO. Report templates are not supplier PDFs.",
-        404,
-      );
-    if (files.length > 20)
-      throw new ApiError(
-        "This GRPO has more than 20 PDFs. Upload a selected packet manually.",
-        413,
-      );
+    const pdfs = await downloadGrpoPdfs(entry);
+    const files = pdfs.map(({ name, sha256 }, index) => ({
+      name,
+      sha256,
+      index,
+    }));
     return await action({
       company,
       docNum: receipt.DocNum,
@@ -173,14 +159,7 @@ export async function withGrpoPdfs<T>(
       download: async (index) => {
         const file = files[index];
         if (!file) throw new ApiError("Invalid PDF selection.");
-        const params = new URLSearchParams({
-          filename: `'${file.name.replaceAll("'", "''")}'`,
-        });
-        return readBoundedPdf(
-          await request(
-            `/Attachments2(${file.attachmentEntry})/$value?${params}`,
-          ),
-        );
+        return pdfs[index].bytes;
       },
     });
   } finally {

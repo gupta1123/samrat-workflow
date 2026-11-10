@@ -4,7 +4,7 @@ import {
   ChevronLeft,
   ChevronsUpDown,
   FolderOpen,
-  PackageOpen,
+  FolderPlus,
   HelpCircle,
   LayoutDashboard,
   LogOut,
@@ -41,9 +41,9 @@ const sections = [
     items: [
       { href: "/cases", label: "All Cases", icon: FolderOpen },
       {
-        href: "/sap-inspector/open-grpos",
-        label: "Unbilled Receipts",
-        icon: PackageOpen,
+        href: "/workspace",
+        label: "Add Case",
+        icon: FolderPlus,
       },
     ],
   },
