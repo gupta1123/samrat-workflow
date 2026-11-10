@@ -77,7 +77,7 @@ export async function POST(
     const prior = (
       await grpoUploadStates(db, user, company, [{ docEntry: String(entry) }])
     )[String(entry)];
-    if (prior) return { existing: true, ...prior };
+    if (prior && !prior.deleted) return { existing: true, ...prior };
     return withGrpoPdfs(entry, async (source) => {
       const manifest = createHash("sha256")
         .update(JSON.stringify(source.files))

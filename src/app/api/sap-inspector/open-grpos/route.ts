@@ -54,7 +54,8 @@ export async function GET(request: Request) {
         let consumed = 0;
         for (const record of basic) {
           consumed++;
-          const upload = states[String(record.docEntry)];
+          const saved = states[String(record.docEntry)];
+          const upload = saved?.deleted ? undefined : saved;
           if (Boolean(upload) === (tab === "yes")) {
             records.push(record);
             if (upload) uploads[String(record.docEntry)] = upload;

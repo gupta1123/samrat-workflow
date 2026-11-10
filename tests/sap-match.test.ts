@@ -686,6 +686,102 @@ test("a part bill asks for confirmation, then is ready", () => {
   assert.equal(done.payload!.lines[0].quantity, 20);
 });
 
+for (const quantities of [
+  [0.406, 10.144],
+  [10.144, 0.406],
+]) {
+  test(`continued rows ${quantities.join(" + ")} fully bill one receipt without a false part-bill warning`, () => {
+    const inv = invoice({
+      freightAmount: 0,
+      taxableTotal: 10.55 * 68000,
+      lines: quantities.map((quantity, index) => ({
+        ...invoice().lines[0],
+        index,
+        quantity,
+        amount: quantity * 68000,
+      })),
+    });
+    const ctx = context([
+      receipt(1205, { ...truck, quantity: 10.55, openQty: 10.55 }),
+    ]);
+    const result = evaluateMatch({ invoice: inv, context: ctx });
+    assert.equal(result.status, "ready");
+    assert.equal(
+      result.checks.filter((check) => check.id.startsWith("part-")).length,
+      0,
+    );
+    assert.deepEqual(
+      result.payload?.lines.map((line) => line.quantity),
+      quantities,
+    );
+    assert.ok(
+      result.payload?.lines.every(
+        (line) => line.baseEntry === 9205 && line.baseLine === 0,
+      ),
+    );
+  });
+}
+
+test("continued rows leave one part-bill check for the actual remaining receipt balance", () => {
+  const quantities = [0.406, 10];
+  const inv = invoice({
+    freightAmount: 0,
+    taxableTotal: 10.406 * 68000,
+    lines: quantities.map((quantity, index) => ({
+      ...invoice().lines[0],
+      index,
+      quantity,
+      amount: quantity * 68000,
+    })),
+  });
+  const ctx = context([
+    receipt(1205, { ...truck, quantity: 10.55, openQty: 10.55 }),
+  ]);
+  const result = evaluateMatch({ invoice: inv, context: ctx });
+  const parts = result.checks.filter((check) => check.id.startsWith("part-"));
+  assert.equal(parts.length, 1);
+  assert.match(parts[0].title, /10\.406.*10\.55/);
+  assert.match(parts[0].help!, /other 0.144 stays open/);
+  const confirmed = evaluateMatch({
+    invoice: inv,
+    context: ctx,
+    state: decide(EMPTY_MATCH_STATE, parts[0].id, "ok"),
+  });
+  assert.equal(confirmed.status, "ready");
+  assert.deepEqual(
+    confirmed.payload?.lines.map((line) => line.quantity),
+    quantities,
+  );
+});
+
+test("part-bill balances remain separate for different SAP entries with the same displayed GRPO number", () => {
+  const quantities = [10.55, 9.45];
+  const inv = invoice({
+    freightAmount: 0,
+    taxableTotal: 20 * 68000,
+    lines: quantities.map((quantity, index) => ({
+      ...invoice().lines[0],
+      index,
+      quantity,
+      amount: quantity * 68000,
+    })),
+  });
+  const ctx = context([
+    receipt(1205, { ...truck, quantity: 10.55, openQty: 10.55 }),
+    receipt(1205, {
+      ...truck,
+      docEntry: 19205,
+      quantity: 10.55,
+      openQty: 10.55,
+    }),
+  ]);
+  const result = evaluateMatch({ invoice: inv, context: ctx });
+  const parts = result.checks.filter((check) => check.id.startsWith("part-"));
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0].id, "part-1-19205:0");
+  assert.match(parts[0].help!, /other 1.1 stays open/);
+});
+
 test("billing more than was received is blocked and never invents stock", () => {
   const inv = invoice({
     poReferences: ["APPO26-0250"],

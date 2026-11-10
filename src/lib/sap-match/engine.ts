@@ -859,6 +859,48 @@ function evaluateMatchRaw(input: EvaluateInput): MatchResult {
     }
   }
 
+  // Assess part bills only after all invoice rows have consumed the receipt.
+  // A continued product row may bill the balance of a receipt used above.
+  const partBillReceipts = new Set<string>();
+  for (const line of lineResults) {
+    if (
+      line.kind !== "material" ||
+      line.allocatedQty > (line.invoiceQty ?? 0) + EPS
+    )
+      continue;
+    for (const candidate of line.candidates) {
+      if (candidate.allocated <= EPS || partBillReceipts.has(candidate.key))
+        continue;
+      partBillReceipts.add(candidate.key);
+      const source = context.receipts.find(
+        (receipt) => receiptKey(receipt) === candidate.key,
+      );
+      const left = remainingReceiptQty.get(candidate.key);
+      if (!source || left === undefined || left <= EPS) continue;
+      const billed = r3(source.openQty - left);
+      checks.push({
+        id: `part-${line.index}-${candidate.key}`,
+        lineIndex: line.index,
+        sev: "ack",
+        ask: "Is a part bill expected here?",
+        title: `Billed ${qty(billed)} of the ${qty(source.openQty)} received`,
+        help: `${source.note ? `${source.note}. ` : ""}The other ${qty(left)} stays open on receipt ${source.docNum} for the vendor's next invoice.`,
+        options: [
+          {
+            choice: "ok",
+            title: "Yes, a part bill is expected",
+            lines: [
+              `Bill ${qty(billed)} now`,
+              `${qty(left)} waits for the next invoice`,
+            ],
+            effect: "resolve",
+            recommended: true,
+          },
+        ],
+      });
+    }
+  }
+
   // ---- Freight and totals ----
   const freight = invoice.freightAmount;
   let freightExpense: number | null = null;
@@ -1429,35 +1471,6 @@ function evaluateMaterialLine(args: {
           },
         ],
       });
-    }
-  }
-
-  // Part bills: only part of a receipt is being billed.
-  if (diff >= -EPS) {
-    for (const candidate of selected) {
-      const left = r3(candidate.view.open - candidate.view.allocated);
-      if (left > EPS) {
-        checks.push({
-          id: `part-${i}-${candidate.view.key}`,
-          lineIndex: i,
-          sev: "ack",
-          ask: "Is a part bill expected here?",
-          title: `Billed ${qty(candidate.view.allocated)} of the ${qty(candidate.view.open)} received`,
-          help: `${candidate.view.note ? `${candidate.view.note}. ` : ""}The other ${qty(left)} stays open on receipt ${candidate.view.docNum} for the vendor's next invoice.`,
-          options: [
-            {
-              choice: "ok",
-              title: "Yes, a part bill is expected",
-              lines: [
-                `Bill ${qty(candidate.view.allocated)} now`,
-                `${qty(left)} waits for the next invoice`,
-              ],
-              effect: "resolve",
-              recommended: true,
-            },
-          ],
-        });
-      }
     }
   }
 

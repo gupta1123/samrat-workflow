@@ -229,22 +229,28 @@ async function setup(t: TestContext) {
         const assets = state.assets.filter((a) =>
           body.p_upload_ids.includes(a.id),
         );
-        if (!state.cases.length) {
-          state.cases.push({
-            id: caseId,
+        let active = state.cases.find(
+          (c) => c.owner_user_id === body.p_user && !c.deleted_at,
+        );
+        if (!active) {
+          active = {
+            id: state.cases.length
+              ? "55555555-5555-4555-8555-555555555555"
+              : caseId,
             status: "draft",
             deleted_at: null,
             owner_user_id: owner,
-          });
+          };
+          state.cases.push(active);
           for (const a of assets) {
-            a.consumed_case_id = caseId;
+            a.consumed_case_id = active.id;
             state.files.push({
-              case_id: caseId,
+              case_id: active.id,
               content_sha256: a.content_sha256,
             });
           }
         }
-        return Response.json({ case: state.cases[0] });
+        return Response.json({ case: active });
       }
       if (url.pathname === "/rest/v1/rpc/decide_case") {
         assert.equal(body.p_action, "recycle");
@@ -885,6 +891,97 @@ test("tabs filter on the server and keep accurate cursors across sparse uploaded
     ["43", "41"],
   );
   assert.equal(second.nextCursor, null);
+});
+
+test("recycled receipts move to Not uploaded with fresh PDF availability; restoring moves them back", async (t) => {
+  const { state, call, session, listRows } = await setup(t);
+  listRows.find((row) => row.DocEntry === 42)!.AttachmentEntry = 9;
+  const s = await session();
+  await call({ ...s, action: "file", index: 0 });
+  await call({ ...s, action: "finish" });
+  const read = async (tab: string) => {
+    const r = await listRoute(
+      new Request(
+        `https://app.invalid/api/sap-inspector/open-grpos?uploaded=${tab}&limit=100`,
+        { headers: { Authorization: "Bearer " + jwt(owner) } },
+      ),
+    );
+    assert.equal(r.status, 200);
+    return r.json();
+  };
+  assert.equal((await read("yes")).uploads[42].caseId, caseId);
+  assert.equal((await deleteReceipt()).status, 200);
+  assert.deepEqual((await read("yes")).records, []);
+  const notUploaded = await read("no");
+  assert.ok(
+    notUploaded.records.some(
+      (row: { docEntry: string }) => row.docEntry === "42",
+    ),
+  );
+  assert.equal(
+    notUploaded.uploads[42],
+    undefined,
+    "A recycled case must not render as an active uploaded case",
+  );
+  assert.equal(notUploaded.pdfs[42].status, "available");
+  assert.equal(state.files.length, 1);
+  state.cases[0].deleted_at = null;
+  assert.equal((await read("yes")).uploads[42].caseId, caseId);
+  assert.ok(
+    !(await read("no")).records.some(
+      (row: { docEntry: string }) => row.docEntry === "42",
+    ),
+  );
+});
+
+test("download after recycling revalidates SAP and creates a fresh case without restoring the old case", async (t) => {
+  const { state, bytes, call, session } = await setup(t);
+  const first = await session();
+  await call({ ...first, action: "file", index: 0 });
+  await call({ ...first, action: "finish" });
+  assert.equal((await deleteReceipt()).status, 200);
+  state.closed = true;
+  assert.equal(
+    (await call({ action: "prepare" })).status,
+    409,
+    "A recycled case must not bypass the current SAP open check",
+  );
+  state.closed = false;
+  const fresh = await session();
+  assert.equal(fresh.caseId, undefined);
+  assert.equal(fresh.files.length, 1);
+  assert.notEqual(fresh.session, first.session);
+  assert.equal(
+    (await call({ ...fresh, action: "file", index: 0 })).status,
+    200,
+  );
+  const finished = await call({ ...fresh, action: "finish" });
+  assert.equal(finished.status, 200);
+  const result = await finished.json();
+  assert.notEqual(result.caseId, caseId);
+  assert.equal(state.cases.length, 2);
+  assert.ok(state.cases[0].deleted_at);
+  assert.equal(state.cases[1].deleted_at, null);
+  assert.equal(state.files.filter((file) => file.case_id === caseId).length, 1);
+  assert.ok([...state.objects.values()].every((value) => value.equals(bytes)));
+  const states = await grpoUploadStates(
+    createSupabaseAdminClient(),
+    owner,
+    "COMPANY",
+    [{ docEntry: "42" }],
+  );
+  assert.equal(states[42].caseId, result.caseId);
+  assert.equal(states[42].deleted, false);
+  let queued: string | null = null;
+  await importGrpoAndAnalyze("42", () => {}, {
+    fetcher: (_url, init) => call(JSON.parse(String(init?.body))),
+    enqueue: async (id) => {
+      queued = id;
+      return {} as never;
+    },
+  });
+  assert.equal(queued, result.caseId);
+  assert.equal(state.cases.length, 2);
 });
 
 test("a manual case with the identical PDF and extra documents is reused", async (t) => {

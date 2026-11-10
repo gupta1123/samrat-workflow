@@ -434,6 +434,8 @@ export function OpenGrpoList() {
     try {
       await recycleImportedGrpo(pendingDelete.entry, pendingDelete.caseId);
       setPendingDelete(null);
+      setActionCase(null);
+      changeTab("no");
       setRefresh((v) => v + 1);
     } catch (error) {
       setPendingDelete(null);
