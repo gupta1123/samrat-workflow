@@ -1,0 +1,632 @@
+import assert from "node:assert/strict";
+import test, { type TestContext } from "node:test";
+import { PDFDocument } from "pdf-lib";
+import { createHash } from "node:crypto";
+import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from "undici";
+import { GET as listRoute } from "../src/app/api/sap-inspector/open-grpos/route";
+import { POST as importRoute } from "../src/app/api/sap-inspector/grpos/[id]/import/route";
+import {
+  pdfAttachments,
+  readBoundedPdf,
+  grpoEntry,
+} from "../src/server/sap/grpo-pdf";
+import { importAssetId, grpoUploadStates } from "../src/server/sap/grpo-import";
+import {
+  importGrpoAndAnalyze,
+  GrpoAnalysisStartError,
+} from "../src/lib/grpo-import-client";
+import { createSupabaseAdminClient } from "../src/server/supabase/admin";
+
+// Raw JSON rows in the mock PostgREST server deliberately have dynamic columns.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type MockRow = Record<string, any>;
+
+const owner = "11111111-1111-4111-8111-111111111111",
+  other = "22222222-2222-4222-8222-222222222222";
+const caseId = "33333333-3333-4333-8333-333333333333";
+const jwt = (sub: string) =>
+  [
+    { alg: "HS256", typ: "JWT" },
+    { sub, exp: Math.floor(Date.now() / 1000) + 3600, aud: "authenticated" },
+  ]
+    .map((v) => Buffer.from(JSON.stringify(v)).toString("base64url"))
+    .join(".") + ".dGVzdA";
+const digest = (v: Uint8Array) => createHash("sha256").update(v).digest("hex");
+async function setup(t: TestContext) {
+  const cfg = {
+    SUPABASE_INTERNAL_URL: "https://store.invalid",
+    SUPABASE_PUBLISHABLE_KEY: "public",
+    SUPABASE_SERVICE_ROLE_KEY: "secret",
+    SAP_SL_TEST_BASE_URL: "https://sap.invalid/b1s/v1",
+    SAP_SL_TEST_COMPANY_DB: "COMPANY",
+    SAP_SL_TEST_USERNAME: "user",
+    SAP_SL_TEST_PASSWORD: "password",
+    QUOTAGUARDSTATIC_URL: "",
+  };
+  const old = Object.fromEntries(
+    Object.keys(cfg).map((k) => [k, process.env[k]]),
+  );
+  Object.assign(process.env, cfg);
+  const dispatcher = getGlobalDispatcher(),
+    mock = new MockAgent();
+  mock.disableNetConnect();
+  setGlobalDispatcher(mock);
+  t.after(async () => {
+    setGlobalDispatcher(dispatcher);
+    await mock.close();
+    for (const [k, v] of Object.entries(old)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  const pdf = await PDFDocument.create();
+  pdf.addPage();
+  const bytes = Buffer.from(await pdf.save());
+  const state = {
+    closed: false,
+    missing: false,
+    badPdf: false,
+    failSave: false,
+    failEvents: false,
+    assets: [] as MockRow[],
+    events: [] as MockRow[],
+    cases: [] as MockRow[],
+    files: [] as MockRow[],
+    objects: new Map<string, Buffer>(),
+    sapWrites: [] as string[],
+  };
+  const listRows = [45, 44, 43, 42, 41].map((id) => ({
+    DocEntry: id,
+    DocNum: 100 + id,
+    DocumentStatus: "bost_Open",
+    Cancelled: "tNO",
+    DocumentLines: [
+      { LineNum: 0, ItemCode: "ITEM", Quantity: 5, RemainingOpenQuantity: 3 },
+    ],
+  }));
+  const sap = mock.get("https://sap.invalid");
+  sap
+    .intercept({ path: "/b1s/v1/Login", method: "POST" })
+    .reply(200, { SessionId: "session" })
+    .persist();
+  sap
+    .intercept({ path: "/b1s/v1/Logout", method: "POST" })
+    .reply(204)
+    .persist();
+  sap
+    .intercept({ path: "/b1s/v1/PurchaseDeliveryNotes(42)", method: "GET" })
+    .reply(() => ({
+      statusCode: 200,
+      data: JSON.stringify({
+        DocEntry: 42,
+        DocNum: 100,
+        DocumentStatus: state.closed ? "bost_Close" : "bost_Open",
+        Cancelled: "tNO",
+        AttachmentEntry: 9,
+      }),
+    }))
+    .persist();
+  sap
+    .intercept({ path: "/b1s/v1/Attachments2(9)", method: "GET" })
+    .reply(() => ({
+      statusCode: 200,
+      data: JSON.stringify({
+        Attachments2_Lines: [
+          {
+            FileName: "Original",
+            FileExtension: state.missing ? "rpt" : "pdf",
+          },
+        ],
+      }),
+    }))
+    .persist();
+  sap
+    .intercept({
+      path: /^\/b1s\/v1\/Attachments2\(9\)\/\$value\?/,
+      method: "GET",
+    })
+    .reply(() => ({
+      statusCode: 200,
+      data: state.badPdf ? Buffer.from("<html>not a PDF</html>") : bytes,
+    }))
+    .persist();
+  sap
+    .intercept({ path: /^\/b1s\/v1\/PurchaseDeliveryNotes\?/, method: "GET" })
+    .reply((options) => {
+      const url = new URL(String(options.path), "https://sap.invalid");
+      const filter = url.searchParams.get("$filter") ?? "";
+      assert.ok(filter.includes("DocumentStatus eq 'bost_Open'"));
+      assert.ok(filter.includes("Cancelled eq 'tNO'"));
+      const before = Number(/DocEntry lt (\d+)/.exec(filter)?.[1] ?? Infinity);
+      const limit = Number(url.searchParams.get("$top") ?? 100);
+      return {
+        statusCode: 200,
+        data: JSON.stringify({
+          value: listRows
+            .filter((r) => r.DocEntry < before)
+            .slice(
+              Number(url.searchParams.get("$skip") ?? 0),
+              Number(url.searchParams.get("$skip") ?? 0) + limit,
+            ),
+        }),
+      };
+    })
+    .persist();
+  const matches = (row: MockRow, params: URLSearchParams) =>
+    [...params].every(([key, v]) => {
+      if (key === "select" || key === "order" || key === "limit") return true;
+      let actual = row as MockRow;
+      for (const part of key.replaceAll(".", "->>").split("->>"))
+        actual = actual?.[part];
+      if (v.startsWith("eq.")) return String(actual) === v.slice(3);
+      if (v.startsWith("in.("))
+        return v
+          .slice(4, -1)
+          .split(",")
+          .map((x) => x.replaceAll('"', ""))
+          .includes(String(actual));
+      if (v === "is.null") return actual === null;
+      if (v.startsWith("cs.")) {
+        const sub = JSON.parse(v.slice(3));
+        return Object.entries(sub).every(([k, x]) => actual?.[k] === x);
+      }
+      return true;
+    });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = new URL(String(input));
+      assert.equal(
+        url.origin,
+        "https://store.invalid",
+        "Tests must not access real services",
+      );
+      const method = init.method ?? "GET";
+      const body =
+        typeof init.body === "string" && init.body.startsWith("{")
+          ? JSON.parse(init.body)
+          : null;
+      if (url.pathname === "/auth/v1/user")
+        return Response.json({
+          id: owner,
+          aud: "authenticated",
+          role: "authenticated",
+        });
+      if (url.pathname === "/rest/v1/rpc/reserve_upload") {
+        if (state.assets.some((a) => a.id === body.p_id))
+          return Response.json(
+            { code: "23505", message: "duplicate" },
+            { status: 409 },
+          );
+        state.assets.push({
+          id: body.p_id,
+          owner_user_id: body.p_user,
+          storage_path: body.p_path,
+          original_name: body.p_name,
+          content_sha256: body.p_sha,
+          size_bytes: body.p_size,
+          mime_type: body.p_mime,
+          page_count: null,
+        });
+        return Response.json(null);
+      }
+      if (url.pathname === "/rest/v1/rpc/attach_case_uploads") {
+        assert.equal(body.p_allow_duplicate, false);
+        const assets = state.assets.filter((a) =>
+          body.p_upload_ids.includes(a.id),
+        );
+        if (!state.cases.length) {
+          state.cases.push({
+            id: caseId,
+            status: "draft",
+            deleted_at: null,
+            owner_user_id: owner,
+          });
+          for (const a of assets) {
+            a.consumed_case_id = caseId;
+            state.files.push({
+              case_id: caseId,
+              content_sha256: a.content_sha256,
+            });
+          }
+        }
+        return Response.json({ case: state.cases[0] });
+      }
+      if (url.pathname.startsWith("/storage/v1/object/")) {
+        const path = decodeURIComponent(url.pathname).replace(
+          /^\/storage\/v1\/object\/(authenticated\/)?packet-files\//,
+          "",
+        );
+        if (method === "POST") {
+          if (state.failSave)
+            return Response.json({ message: "Unavailable" }, { status: 503 });
+          if (state.objects.has(path))
+            return Response.json(
+              { message: "Already exists" },
+              { status: 409 },
+            );
+          state.objects.set(path, Buffer.from(init.body as Uint8Array));
+          return Response.json({ Key: path });
+        }
+        const value = state.objects.get(path);
+        return value
+          ? new Response(Uint8Array.from(value).buffer)
+          : Response.json({ message: "missing" }, { status: 404 });
+      }
+      const table = url.pathname.split("/").at(-1);
+      const rows =
+        table === "storage_assets"
+          ? state.assets
+          : table === "packet_cases"
+            ? state.cases
+            : table === "packet_case_files"
+              ? state.files
+              : table === "case_review_events"
+                ? state.events
+                : null;
+      assert.ok(rows, `Unexpected data call ${url}`);
+      const visible =
+        table === "packet_case_files" &&
+        url.searchParams.get("select")?.includes("!inner")
+          ? rows.map((r) => ({
+              ...r,
+              packet_cases: state.cases.find((c) => c.id === r.case_id),
+            }))
+          : rows;
+      const selected = visible.filter((r) => matches(r, url.searchParams));
+      if (method === "PATCH") {
+        for (const r of selected) Object.assign(r, body);
+        return new Response(null, { status: 204 });
+      }
+      if (method === "POST") {
+        if (state.failEvents)
+          return Response.json(
+            { message: "temporarily unavailable" },
+            { status: 503 },
+          );
+        rows.push(body);
+        return new Response(null, { status: 201 });
+      }
+      const accept = new Headers(init.headers).get("accept") ?? "";
+      return Response.json(
+        accept.includes("object+json") ? (selected[0] ?? null) : selected,
+      );
+    },
+  );
+  const call = (body: Record<string, unknown>, user = owner) =>
+    importRoute(
+      new Request("https://app.invalid/api/sap-inspector/grpos/42/import", {
+        method: "POST",
+        headers: {
+          Origin: "https://app.invalid",
+          Authorization: "Bearer " + jwt(user),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      }),
+      { params: Promise.resolve({ id: "42" }) },
+    );
+  const session = async () => {
+    const r = await call({ action: "prepare" });
+    assert.equal(r.status, 200);
+    return r.json();
+  };
+  return { state, bytes, call, session };
+}
+
+test("SAP import stores the original bytes, validates pages, attaches once and reports uploaded", async (t) => {
+  const { state, bytes, call, session } = await setup(t);
+  const s = await session();
+  assert.equal(s.files.length, 1);
+  const saved = await call({ ...s, action: "file", index: 0 });
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).sha256, digest(bytes));
+  assert.equal(state.assets[0].page_count, 1);
+  const done = await call({ ...s, action: "finish" });
+  assert.equal(done.status, 200);
+  assert.equal((await done.json()).caseId, caseId);
+  assert.equal(state.cases.length, 1);
+  assert.deepEqual([...state.objects.values()][0], bytes);
+  assert.equal(state.events[0].details.environment, "test");
+  const again = await call({ ...s, action: "finish" });
+  assert.equal(again.status, 200);
+  assert.equal(state.cases.length, 1);
+  const states = await grpoUploadStates(
+    createSupabaseAdminClient(),
+    owner,
+    "COMPANY",
+    [{ docEntry: "42" }],
+  );
+  assert.equal(states[42].caseId, caseId);
+});
+
+test("missing or non-PDF attachments and closed GRPOs create no uploads", async (t) => {
+  const { state, call } = await setup(t);
+  state.missing = true;
+  assert.equal((await call({ action: "prepare" })).status, 404);
+  state.closed = true;
+  assert.equal((await call({ action: "prepare" })).status, 409);
+  assert.equal(state.assets.length, 0);
+});
+
+test("an HTML download is rejected before reserving storage", async (t) => {
+  const { state, call, session } = await setup(t);
+  const s = await session();
+  state.badPdf = true;
+  assert.equal((await call({ ...s, action: "file", index: 0 })).status, 502);
+  assert.equal(state.assets.length, 0);
+});
+
+test("changed manifests, invalid indexes and other users' assets cannot be imported", async (t) => {
+  const { state, call, session } = await setup(t);
+  const s = await session();
+  assert.equal(
+    (await call({ ...s, manifest: "changed", action: "file", index: 0 }))
+      .status,
+    409,
+  );
+  assert.equal((await call({ ...s, action: "file", index: 99 })).status, 400);
+  state.assets.push({
+    id: importAssetId(owner, "COMPANY", 42, s.day, 0, s.session),
+    owner_user_id: other,
+    storage_path: "other/private.pdf",
+  });
+  assert.equal((await call({ ...s, action: "file", index: 0 })).status, 409);
+  assert.equal(state.objects.size, 0);
+});
+
+test("partial uploads cannot create a case; retrying a saved file is idempotent", async (t) => {
+  const { state, call, session } = await setup(t);
+  const s = await session();
+  assert.equal((await call({ ...s, action: "finish" })).status, 404);
+  await call({ ...s, action: "file", index: 0 });
+  await call({ ...s, action: "file", index: 0 });
+  assert.equal(state.assets.length, 1);
+  assert.equal(state.objects.size, 1);
+  assert.equal(state.cases.length, 0);
+});
+
+test("uploaded state respects company, owner, recycle bin and removed source files", async (t) => {
+  const { state, call, session } = await setup(t);
+  const s = await session();
+  await call({ ...s, action: "file", index: 0 });
+  await call({ ...s, action: "finish" });
+  const db = createSupabaseAdminClient();
+  assert.deepEqual(
+    await grpoUploadStates(db, other, "COMPANY", [{ docEntry: "42" }]),
+    {},
+  );
+  assert.deepEqual(
+    await grpoUploadStates(db, owner, "ANOTHER", [{ docEntry: "42" }]),
+    {},
+  );
+  state.cases[0].deleted_at = "2026-01-01";
+  assert.equal(
+    (await grpoUploadStates(db, owner, "COMPANY", [{ docEntry: "42" }]))[42]
+      .deleted,
+    true,
+  );
+  state.files = [];
+  assert.deepEqual(
+    await grpoUploadStates(db, owner, "COMPANY", [{ docEntry: "42" }]),
+    {},
+  );
+});
+
+test("oversized or incomplete PDFs are rejected and attachment selection preserves SAP filenames", async () => {
+  assert.deepEqual(
+    pdfAttachments(2, [
+      { FileName: "report", FileExtension: "rpt" },
+      { FileName: "a'b", FileExtension: "PDF" },
+    ]),
+    [{ attachmentEntry: 2, name: "a'b.PDF", index: 0 }],
+  );
+  assert.throws(() =>
+    pdfAttachments(2, [{ FileName: "../escape", FileExtension: "pdf" }]),
+  );
+  assert.throws(() => grpoEntry("-1"));
+  await assert.rejects(
+    readBoundedPdf(
+      new Response("%PDF-a", {
+        headers: { "content-length": String(51 * 1024 * 1024) },
+      }),
+    ),
+    /50 MB/,
+  );
+  await assert.rejects(
+    readBoundedPdf(new Response("<html>")),
+    /did not return a PDF/,
+  );
+});
+
+test("client completes every PDF before creating a case and starting analysis", async () => {
+  const calls: string[] = [];
+  const progress: string[] = [];
+  const fetcher = async (_input: string, init?: RequestInit) => {
+    const b = JSON.parse(String(init?.body));
+    calls.push(b.action + (b.index ?? ""));
+    return Response.json(
+      b.action === "prepare"
+        ? {
+            files: [{ index: 0 }, { index: 1 }],
+            day: "2026-11-10",
+            manifest: "verified",
+            session: "uuid",
+          }
+        : b.action === "finish"
+          ? { caseId, status: "draft" }
+          : { id: "saved" },
+    );
+  };
+  const enqueue = async (id: string) => {
+    assert.equal(id, caseId);
+    calls.push("analysis");
+    return {} as never;
+  };
+  const result = await importGrpoAndAnalyze("42", (s) => progress.push(s), {
+    fetcher,
+    enqueue,
+  });
+  assert.deepEqual(calls, ["prepare", "file0", "file1", "finish", "analysis"]);
+  assert.equal(result.status, "processing");
+  assert.ok(progress.some((p) => p.includes("2 of 2")));
+});
+
+test("client never starts analysis after download failure and exposes saved-case queue failures", async () => {
+  let queued = false;
+  const enqueue = async () => {
+    queued = true;
+    throw Error("queue down");
+  };
+  let fail = true;
+  const fetcher = async (_input: string, init?: RequestInit) => {
+    const b = JSON.parse(String(init?.body));
+    return Response.json(
+      b.action === "prepare"
+        ? {
+            files: [{ index: 0 }],
+            day: "today",
+            manifest: "source",
+            session: "uuid",
+          }
+        : fail
+          ? { error: "Download failed" }
+          : { caseId, status: "draft" },
+      { status: b.action === "file" && fail ? 502 : 200 },
+    );
+  };
+  await assert.rejects(
+    importGrpoAndAnalyze("42", () => {}, { fetcher, enqueue }),
+    /Download failed/,
+  );
+  assert.equal(queued, false);
+  fail = false;
+  await assert.rejects(
+    importGrpoAndAnalyze("42", () => {}, { fetcher, enqueue }),
+    GrpoAnalysisStartError,
+  );
+  assert.equal(queued, true);
+});
+
+test("lost audit response or simultaneous imports still reuse one exact-content case", async (t) => {
+  const { state, call, session } = await setup(t);
+  const first = await session(),
+    second = await session();
+  for (const s of [first, second])
+    assert.equal((await call({ ...s, action: "file", index: 0 })).status, 200);
+  state.failEvents = true;
+  assert.equal((await call({ ...first, action: "finish" })).status, 500);
+  assert.equal(state.cases.length, 1);
+  state.failEvents = false;
+  assert.equal((await call({ ...second, action: "finish" })).status, 200);
+  assert.equal(state.cases.length, 1);
+  assert.equal(
+    (
+      await grpoUploadStates(createSupabaseAdminClient(), owner, "COMPANY", [
+        { docEntry: "42" },
+      ])
+    )[42].caseId,
+    caseId,
+  );
+});
+
+test("unauthenticated or cross-origin requests cannot trigger a SAP import", async (t) => {
+  const { state } = await setup(t);
+  for (const headers of [
+    {
+      "Content-Type": "application/json",
+      Authorization: "invalid",
+      Origin: "https://app.invalid",
+    },
+    {
+      Authorization: "Bearer " + jwt(owner),
+      Origin: "https://foreign.invalid",
+      "Content-Type": "application/json",
+    },
+  ]) {
+    const r = await importRoute(
+      new Request("https://app.invalid/api/sap-inspector/grpos/42/import", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ action: "prepare" }),
+      }),
+      { params: Promise.resolve({ id: "42" }) },
+    );
+    assert.ok([401, 403].includes(r.status));
+  }
+  assert.equal(state.assets.length, 0);
+});
+
+test("existing completed cases are opened without re-running analysis", async () => {
+  let queued = false;
+  const fetcher = async () =>
+    Response.json({ caseId, status: "completed", existing: true });
+  const enqueue = async () => {
+    queued = true;
+    return {} as never;
+  };
+  const result = await importGrpoAndAnalyze("42", () => {}, {
+    fetcher,
+    enqueue,
+  });
+  assert.equal(queued, false);
+  assert.equal(result.caseId, caseId);
+});
+
+test("tabs filter on the server and keep accurate cursors across sparse uploaded results", async (t) => {
+  const { call, session } = await setup(t);
+  const s = await session();
+  await call({ ...s, action: "file", index: 0 });
+  await call({ ...s, action: "finish" });
+  const list = async (query: string) => {
+    const r = await listRoute(
+      new Request(
+        "https://app.invalid/api/sap-inspector/open-grpos?limit=2&" + query,
+        { headers: { Authorization: "Bearer " + jwt(owner) } },
+      ),
+    );
+    assert.equal(r.status, 200);
+    return r.json();
+  };
+  const uploaded = await list("uploaded=yes");
+  assert.deepEqual(
+    uploaded.records.map((r: { docEntry: string }) => r.docEntry),
+    ["42"],
+  );
+  assert.equal(uploaded.uploads[42].caseId, caseId);
+  assert.equal(uploaded.nextCursor, null);
+  const first = await list("uploaded=no");
+  assert.deepEqual(
+    first.records.map((r: { docEntry: string }) => r.docEntry),
+    ["45", "44"],
+  );
+  assert.equal(first.nextCursor, 44);
+  const second = await list("uploaded=no&before=44");
+  assert.deepEqual(
+    second.records.map((r: { docEntry: string }) => r.docEntry),
+    ["43", "41"],
+  );
+  assert.equal(second.nextCursor, null);
+});
+
+test("a manual case with the identical PDF and extra documents is reused", async (t) => {
+  const { state, bytes, call, session } = await setup(t);
+  state.cases.push({
+    id: caseId,
+    status: "completed",
+    deleted_at: null,
+    owner_user_id: owner,
+  });
+  state.files.push(
+    { case_id: caseId, content_sha256: digest(bytes) },
+    { case_id: caseId, content_sha256: "extra-document" },
+  );
+  const s = await session();
+  await call({ ...s, action: "file", index: 0 });
+  const r = await call({ ...s, action: "finish" });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).status, "completed");
+  assert.equal(state.cases.length, 1);
+  assert.equal(state.events.length, 1);
+});

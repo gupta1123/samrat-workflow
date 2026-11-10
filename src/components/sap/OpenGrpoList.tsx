@@ -1,6 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import type { GrpoUploadState } from "@/lib/grpo-import";
+import {
+  GrpoAnalysisStartError,
+  importGrpoAndAnalyze,
+} from "@/lib/grpo-import-client";
+import { enqueueCaseAnalysis } from "@/lib/case-persistence";
 import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 
 import { apiFetch } from "@/lib/api-client";
@@ -161,7 +168,21 @@ function MoreInfo({ record }: { record: SapInspectorRecord }) {
 }
 
 /** One GRPO: shared columns span its item rows, quantities stay per item. */
-function GrpoRows({ record }: { record: SapInspectorRecord }) {
+function GrpoRows({
+  record,
+  upload,
+  busy,
+  progress,
+  onImport,
+  onRetry,
+}: {
+  record: SapInspectorRecord;
+  upload?: GrpoUploadState;
+  busy: boolean;
+  progress: string | null;
+  onImport: () => void;
+  onRetry: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const refs = referencesOf(record);
   const date = dateParts(record.date);
@@ -259,12 +280,57 @@ function GrpoRows({ record }: { record: SapInspectorRecord }) {
                 <Dash />
               )}
             </td>
+            {index === 0 ? (
+              <td rowSpan={span} className={`${CELL} min-w-[185px]`}>
+                {upload ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-[#81766b]">
+                      {upload.deleted
+                        ? "In Recycle Bin"
+                        : upload.status === "processing"
+                          ? "Analysis queued / running"
+                          : upload.status}
+                    </p>
+                    <Link
+                      className="font-medium text-[#6b3d20] underline"
+                      href={
+                        upload.deleted
+                          ? "/recycle-bin"
+                          : `/cases/${upload.caseId}`
+                      }
+                    >
+                      {upload.deleted ? "Restore case" : "Open case"}
+                    </Link>
+                    {!upload.deleted &&
+                    ["draft", "failed"].includes(upload.status) ? (
+                      <Button
+                        disabled={busy}
+                        onClick={onRetry}
+                        variant="outline"
+                        className="h-8 text-xs"
+                      >
+                        Start analysis
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <Button
+                    disabled={busy}
+                    onClick={onImport}
+                    variant="outline"
+                    className="h-auto whitespace-normal py-2 text-xs"
+                  >
+                    {progress ?? "Download & analyze"}
+                  </Button>
+                )}
+              </td>
+            ) : null}
           </tr>
         );
       })}
       {open ? (
         <tr className="border-t border-[#f0ebe3] bg-[#fbfaf8]">
-          <td colSpan={8} className="p-0">
+          <td colSpan={9} className="p-0">
             <MoreInfo record={record} />
           </td>
         </tr>
@@ -278,7 +344,7 @@ function SkeletonRows() {
     <tbody>
       {[0, 1, 2, 3, 4].map((row) => (
         <tr key={row} className="border-t border-[#f0ebe3]">
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((cell) => (
+          {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((cell) => (
             <td key={cell} className={CELL}>
               <Skeleton className="h-4 w-full max-w-[120px]" />
             </td>
@@ -295,10 +361,78 @@ export function OpenGrpoList() {
   const [cursors, setCursors] = useState<Array<number | null>>([null]);
   const [page, setPage] = useState(0);
   const [refresh, setRefresh] = useState(0);
-  const [data, setData] = useState<GrpoInspectorPage | null>(null);
+  const [data, setData] = useState<
+    | (GrpoInspectorPage & {
+        uploads: Record<string, GrpoUploadState>;
+        company: string;
+      })
+    | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const cursor = cursors[page];
+  const [tab, setTab] = useState<"no" | "yes">("no");
+  const [busyEntry, setBusyEntry] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionCase, setActionCase] = useState<string | null>(null);
+  const changeTab = (next: "no" | "yes") => {
+    setData(null);
+    setTab(next);
+    setPage(0);
+    setCursors([null]);
+  };
+  const importReceipt = async (entry: string) => {
+    if (busyEntry) return;
+    setBusyEntry(entry);
+    setActionError(null);
+    setActionCase(null);
+    try {
+      const result = await importGrpoAndAnalyze(entry, setProgress);
+      setActionCase(result.caseId);
+      changeTab("yes");
+      setRefresh((v) => v + 1);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "SAP import failed.",
+      );
+      if (error instanceof GrpoAnalysisStartError) {
+        setActionCase(error.caseId);
+        changeTab("yes");
+        setRefresh((v) => v + 1);
+      }
+    } finally {
+      setBusyEntry(null);
+      setProgress(null);
+    }
+  };
+  const retryAnalysis = async (entry: string, caseId: string) => {
+    if (busyEntry) return;
+    setBusyEntry(entry);
+    setActionError(null);
+    try {
+      await enqueueCaseAnalysis(caseId, {});
+      setActionCase(caseId);
+      setRefresh((v) => v + 1);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Analysis could not start.",
+      );
+    } finally {
+      setBusyEntry(null);
+    }
+  };
+  useEffect(() => {
+    if (
+      tab !== "yes" ||
+      !data?.records.some(
+        (r) => data.uploads[String(r.docEntry)]?.status === "processing",
+      )
+    )
+      return;
+    const timer = setTimeout(() => setRefresh((v) => v + 1), 15000);
+    return () => clearTimeout(timer);
+  }, [tab, data]);
 
   // Search while typing, without a request for every keystroke.
   useEffect(() => {
@@ -322,15 +456,19 @@ export function OpenGrpoList() {
       q: search,
       supplier: "",
       status: "open",
+      uploaded: tab,
       limit: String(PAGE_SIZE),
     });
     if (cursor !== null) params.set("before", String(cursor));
     void (async () => {
       try {
-        const response = await apiFetch(`/api/sap-inspector/grpos?${params}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
+        const response = await apiFetch(
+          `/api/sap-inspector/open-grpos?${params}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "Could not read SAP.");
         if (!Array.isArray(body.records))
@@ -349,7 +487,7 @@ export function OpenGrpoList() {
       active = false;
       controller.abort();
     };
-  }, [search, cursor, refresh]);
+  }, [search, cursor, refresh, tab]);
 
   const stillOpen = useMemo(
     () =>
@@ -361,6 +499,59 @@ export function OpenGrpoList() {
 
   return (
     <section className="mt-6">
+      <div
+        role="tablist"
+        aria-label="GRPO upload status"
+        className="mb-4 flex gap-2 border-b border-[#e2dacf] pb-3"
+      >
+        {(
+          [
+            ["yes", "Uploaded"],
+            ["no", "Not uploaded"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === value}
+            key={value}
+            onClick={() => changeTab(value)}
+            className={`rounded-lg px-4 py-2 text-sm font-medium ${tab === value ? "bg-[#6b3d20] text-white" : "bg-white text-[#6b3d20]"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <p className="mb-3 text-xs text-[#81766b]">
+        SAP Test{data?.company ? ` · ${data.company}` : ""} · Showing imports
+        for your account. Older manual uploads may appear under Not uploaded
+        until their SAP PDF is checked. If those PDFs are already in a case, the
+        app reuses that case.
+      </p>
+      {actionError ? (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg bg-rose-50 p-3 text-sm text-rose-800"
+        >
+          {actionError}
+        </p>
+      ) : null}
+      {actionCase ? (
+        <p role="status" className="mb-3 text-sm">
+          <Link
+            className="text-[#6b3d20] underline"
+            href={`/cases/${actionCase}`}
+          >
+            Open the saved case
+          </Link>
+        </p>
+      ) : null}
+      {busyEntry ? (
+        <p role="status" className="mb-3 text-sm">
+          {progress ?? "Starting analysis…"} Keep this page open until the case
+          is saved.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex h-11 min-w-0 flex-[1_1_280px] items-center gap-2 rounded-xl border border-[#ddd4c8] bg-white px-3.5 focus-within:border-[#b9a78f] focus-within:ring-4 focus-within:ring-[#6b3d20]/10">
           <Search className="h-4 w-4 shrink-0 text-[#9a8f84]" />
@@ -423,13 +614,26 @@ export function OpenGrpoList() {
               <th className={HEAD}>Item</th>
               <th className={`${HEAD} text-right`}>Received</th>
               <th className={`${HEAD} text-right`}>Left to bill</th>
+              <th className={HEAD}>Case / action</th>
             </tr>
           </thead>
           {loading ? (
             <SkeletonRows />
           ) : (
             stillOpen.map((record) => (
-              <GrpoRows key={record.id} record={record} />
+              <GrpoRows
+                key={record.id}
+                record={record}
+                upload={data?.uploads[String(record.docEntry)]}
+                busy={busyEntry !== null}
+                progress={busyEntry === record.docEntry ? progress : null}
+                onImport={() => void importReceipt(String(record.docEntry))}
+                onRetry={() => {
+                  const upload = data?.uploads[String(record.docEntry)];
+                  if (upload)
+                    void retryAnalysis(String(record.docEntry), upload.caseId);
+                }}
+              />
             ))
           )}
         </table>
@@ -438,10 +642,10 @@ export function OpenGrpoList() {
       {data && !loading && !stillOpen.length && !error ? (
         <p className="mt-10 text-center text-sm text-[#81766b]">
           {data.nextCursor !== null
-            ? "No remaining quantities on this page. Choose Older to keep looking."
+            ? "No matching GRPOs on this page. Choose Older to keep looking."
             : search
               ? "Nothing found. Try another word."
-              : "No open GRPOs on this page."}
+              : "No matching open GRPOs on this page."}
         </p>
       ) : null}
 
