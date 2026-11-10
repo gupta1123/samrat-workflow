@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { SapInspectorLine, SapInspectorRecord } from "@/lib/sap-inspector";
 import type { GrpoInspectorPage } from "@/lib/sap-grpo-inspector";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 const number = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 6 });
 const money = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
 
@@ -491,7 +491,14 @@ export function OpenGrpoList() {
         if (!response.ok) throw new Error(body.error || "Could not read SAP.");
         if (!Array.isArray(body.records))
           throw new Error("SAP sent an unexpected answer.");
-        if (active) setData(body);
+        if (active) {
+          setData(body);
+          setCursors((current) => {
+            if (body.nextCursor === null) return current.slice(0, page + 1);
+            if (current[page + 1] === body.nextCursor) return current;
+            return [...current.slice(0, page + 1), body.nextCursor];
+          });
+        }
       } catch (failure) {
         if (active && !controller.signal.aborted)
           setError(
@@ -505,7 +512,7 @@ export function OpenGrpoList() {
       active = false;
       controller.abort();
     };
-  }, [search, cursor, refresh, tab]);
+  }, [search, cursor, refresh, tab, page]);
 
   const stillOpen = useMemo(
     () =>
@@ -655,39 +662,66 @@ export function OpenGrpoList() {
       {data && !loading && !stillOpen.length && !error ? (
         <p className="mt-10 text-center text-sm text-[#81766b]">
           {data.nextCursor !== null
-            ? "No matching GRPOs on this page. Choose Older to keep looking."
+            ? "No matching GRPOs on this page. Choose Next to keep looking."
             : search
               ? "Nothing found. Try another word."
               : "No matching unbilled receipts on this page."}
         </p>
       ) : null}
 
-      {data && (page > 0 || data.nextCursor !== null) ? (
-        <div className="mt-5 flex items-center justify-between text-sm text-[#81766b]">
-          <Button
-            variant="outline"
-            className="h-9 bg-white"
-            disabled={page === 0 || loading}
-            onClick={() => setPage((value) => value - 1)}
+      {data ? (
+        <footer className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-[#81766b]">
+          <span>
+            {stillOpen.length} {stillOpen.length === 1 ? "receipt" : "receipts"}{" "}
+            · {PAGE_SIZE} per page
+          </span>
+          <nav
+            aria-label="Receipt pagination"
+            className="flex flex-wrap items-center gap-1.5"
           >
-            Newer
-          </Button>
-          <span>Page {page + 1}</span>
-          <Button
-            variant="outline"
-            className="h-9 bg-white"
-            disabled={data.nextCursor === null || loading}
-            onClick={() => {
-              setCursors((current) => [
-                ...current.slice(0, page + 1),
-                data.nextCursor,
-              ]);
-              setPage((value) => value + 1);
-            }}
-          >
-            Older
-          </Button>
-        </div>
+            <Button
+              variant="outline"
+              className="h-9 bg-white"
+              disabled={page === 0 || loading}
+              onClick={() => setPage((value) => value - 1)}
+            >
+              Previous
+            </Button>
+            {cursors.map((_, index) => {
+              const visible =
+                index === 0 ||
+                index === cursors.length - 1 ||
+                Math.abs(index - page) <= 2;
+              if (!visible)
+                return index === 1 || index === cursors.length - 2 ? (
+                  <span key={index} className="px-1">
+                    …
+                  </span>
+                ) : null;
+              return (
+                <Button
+                  key={index}
+                  variant="outline"
+                  aria-label={`Page ${index + 1}`}
+                  aria-current={index === page ? "page" : undefined}
+                  disabled={loading}
+                  onClick={() => setPage(index)}
+                  className={`h-9 min-w-9 px-2 ${index === page ? "border-[#6b3d20] bg-[#6b3d20] text-white hover:bg-[#6b3d20] hover:text-white" : "bg-white"}`}
+                >
+                  {index + 1}
+                </Button>
+              );
+            })}
+            <Button
+              variant="outline"
+              className="h-9 bg-white"
+              disabled={data.nextCursor === null || loading}
+              onClick={() => setPage((value) => value + 1)}
+            >
+              Next
+            </Button>
+          </nav>
+        </footer>
       ) : null}
     </section>
   );

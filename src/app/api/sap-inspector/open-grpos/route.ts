@@ -16,6 +16,7 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   return withUser(request, async (db, user) => {
     const params = new URL(request.url).searchParams;
+    if (!params.has("limit")) params.set("limit", "10");
     let query;
     try {
       query = parseGrpoInspectorQuery(params);

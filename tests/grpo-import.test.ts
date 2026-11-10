@@ -314,7 +314,7 @@ async function setup(t: TestContext) {
     assert.equal(r.status, 200);
     return r.json();
   };
-  return { state, bytes, call, session };
+  return { state, bytes, call, session, listRows };
 }
 
 test("SAP import stores the original bytes, validates pages, attaches once and reports uploaded", async (t) => {
@@ -680,4 +680,40 @@ test("attachment checks share repeated SAP reads and bound concurrency", async (
   assert.ok(max <= 4);
   assert.equal(Object.keys(result).length, 12);
   assert.ok(Object.values(result).every((v) => v.status === "available"));
+});
+
+test("receipt list defaults to ten receipts and continues without dropping records", async (t) => {
+  const { listRows } = await setup(t);
+  for (let id = 40; id >= 30; id--)
+    listRows.push({
+      DocEntry: id,
+      DocNum: 100 + id,
+      DocumentStatus: "bost_Open",
+      Cancelled: "tNO",
+      AttachmentEntry: null,
+      DocumentLines: [
+        { LineNum: 0, ItemCode: "ITEM", Quantity: 5, RemainingOpenQuantity: 3 },
+      ],
+    });
+  const read = async (before?: number) => {
+    const r = await listRoute(
+      new Request(
+        "https://app.invalid/api/sap-inspector/open-grpos?uploaded=no" +
+          (before ? `&before=${before}` : ""),
+        { headers: { Authorization: "Bearer " + jwt(owner) } },
+      ),
+    );
+    assert.equal(r.status, 200);
+    return r.json();
+  };
+  const first = await read();
+  assert.equal(first.records.length, 10);
+  assert.equal(first.nextCursor, 36);
+  const second = await read(first.nextCursor);
+  assert.equal(second.records.length, 6);
+  assert.equal(second.nextCursor, null);
+  assert.equal(
+    new Set([...first.records, ...second.records].map((r) => r.docEntry)).size,
+    16,
+  );
 });
