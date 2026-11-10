@@ -6,6 +6,7 @@ import {
   grpoPageRows,
   parseGrpoInspectorQuery,
 } from "@/lib/sap-grpo-inspector";
+import { grpoPdfAvailability } from "@/server/sap/grpo-pdf-availability";
 import { grpoUploadStates } from "@/server/sap/grpo-import";
 import type { SapInspectorRecord } from "@/lib/sap-inspector";
 import type { GrpoUploadState } from "@/lib/grpo-import";
@@ -81,7 +82,12 @@ export async function GET(request: Request) {
       const purchaseOrders = poEntries.length
         ? await client.listPurchaseOrdersByEntries(poEntries)
         : [];
+      const pdfs = await grpoPdfAvailability(
+        records.filter((r) => !uploads[String(r.docEntry)]),
+        (entry) => client.getAttachmentMetadata(entry),
+      );
       return {
+        pdfs,
         records: normalizeSapInspectorRecords(
           "grpo",
           records.map((r) => r.raw),

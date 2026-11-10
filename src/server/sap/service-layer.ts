@@ -185,6 +185,7 @@ export async function withTestServiceLayer<T>(
     listInspectorItemsPage: (
       query: ItemsQuery,
     ) => Promise<Record<string, unknown>[]>;
+    getAttachmentMetadata: (entry: number) => Promise<Record<string, unknown>>;
     listInspectorGrposPage: (
       query: GrpoInspectorQuery,
       fields: GrpoReferenceFields,
@@ -730,6 +731,11 @@ export async function withTestServiceLayer<T>(
           itemsReadPath(query),
           query.limit + 1,
         );
+      },
+      async getAttachmentMetadata(entry) {
+        if (!Number.isSafeInteger(entry) || entry <= 0)
+          throw new Error("Invalid SAP attachment entry.");
+        return (await request(`/Attachments2(${entry})`)).body;
       },
       async listInspectorGrposPage(query, fields) {
         return pageAll<Record<string, unknown>>(

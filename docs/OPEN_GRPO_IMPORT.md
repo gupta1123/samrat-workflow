@@ -29,3 +29,9 @@ No schema migration, new tables, or SQL execution is required. The feature uses 
 ## Verification
 
 `tests/grpo-import.test.ts` mocks SAP, Storage and PostgREST and exercises the real import/list handlers. Coverage includes original-byte preservation, PDF checks, changed manifests, concurrent/lost-response retries, source-file removal, account/company isolation, recycle-bin links, server pagination, exact-file manual-case reuse, and enqueue failure/recovery. The tests never upload real supplier documents or create real cases.
+
+## PDF availability and navigation
+
+The sidebar includes Open GRPOs. Before enabling Download & analyze, the list reads SAP's `AttachmentEntry` and attachment metadata, with at most four concurrent metadata reads and a shared read for repeated attachment entries. Confirmed missing PDFs show No PDF attached and a disabled button. A failed or omitted metadata response instead shows PDF check unavailable; Refresh retries the check. The import endpoint still rechecks the receipt and attachments when clicked.
+
+After upload and a confirmed analysis enqueue, imports and analysis retries navigate to `/cases/:id`, the same progress page used after manual uploads. The existing polling and results flow continue there. An enqueue failure leaves a saved case with the existing retry action.

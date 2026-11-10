@@ -14,3 +14,8 @@ export type GrpoImportResult = {
   status: string;
   deleted?: boolean;
 };
+
+export type GrpoPdfAvailability = {
+  status: "available" | "missing" | "unavailable";
+  count?: number;
+};

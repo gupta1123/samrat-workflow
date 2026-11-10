@@ -5,6 +5,7 @@ import {
   ChevronsUpDown,
   FileStack,
   FolderOpen,
+  PackageOpen,
   HelpCircle,
   LayoutDashboard,
   LogOut,
@@ -41,6 +42,11 @@ const sections = [
     items: [
       { href: "/workspace", label: "Add Case", icon: FileStack },
       { href: "/cases", label: "All Cases", icon: FolderOpen },
+      {
+        href: "/sap-inspector/open-grpos",
+        label: "Open GRPOs",
+        icon: PackageOpen,
+      },
     ],
   },
   {

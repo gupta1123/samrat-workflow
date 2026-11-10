@@ -103,6 +103,7 @@ export function grpoInspectorReadPath(
         "BPL_IDAssignedToInvoice",
         "Comments",
         "DocumentLines",
+        "AttachmentEntry",
         ...safeFields,
       ]),
     ].join(","),

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import type { GrpoUploadState } from "@/lib/grpo-import";
+import { useRouter } from "next/navigation";
+import type { GrpoPdfAvailability, GrpoUploadState } from "@/lib/grpo-import";
 import {
   GrpoAnalysisStartError,
   importGrpoAndAnalyze,
@@ -171,6 +172,7 @@ function MoreInfo({ record }: { record: SapInspectorRecord }) {
 function GrpoRows({
   record,
   upload,
+  pdf,
   busy,
   progress,
   onImport,
@@ -178,6 +180,7 @@ function GrpoRows({
 }: {
   record: SapInspectorRecord;
   upload?: GrpoUploadState;
+  pdf?: GrpoPdfAvailability;
   busy: boolean;
   progress: string | null;
   onImport: () => void;
@@ -314,14 +317,30 @@ function GrpoRows({
                     ) : null}
                   </div>
                 ) : (
-                  <Button
-                    disabled={busy}
-                    onClick={onImport}
-                    variant="outline"
-                    className="h-auto whitespace-normal py-2 text-xs"
-                  >
-                    {progress ?? "Download & analyze"}
-                  </Button>
+                  <div className="space-y-2">
+                    {pdf?.status !== "available" ? (
+                      <span className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+                        {pdf?.status === "missing"
+                          ? "No PDF attached"
+                          : "PDF check unavailable"}
+                      </span>
+                    ) : null}
+                    <Button
+                      disabled={busy || pdf?.status !== "available"}
+                      onClick={onImport}
+                      variant="outline"
+                      title={
+                        pdf?.status === "missing"
+                          ? "No PDF is attached to this GRPO in SAP."
+                          : pdf?.status !== "available"
+                            ? "Refresh to check PDF availability in SAP."
+                            : undefined
+                      }
+                      className="h-auto whitespace-normal py-2 text-xs"
+                    >
+                      {progress ?? "Download & analyze"}
+                    </Button>
+                  </div>
                 )}
               </td>
             ) : null}
@@ -356,6 +375,7 @@ function SkeletonRows() {
 }
 
 export function OpenGrpoList() {
+  const router = useRouter();
   const [text, setText] = useState("");
   const [search, setSearch] = useState("");
   const [cursors, setCursors] = useState<Array<number | null>>([null]);
@@ -364,6 +384,7 @@ export function OpenGrpoList() {
   const [data, setData] = useState<
     | (GrpoInspectorPage & {
         uploads: Record<string, GrpoUploadState>;
+        pdfs: Record<string, GrpoPdfAvailability>;
         company: string;
       })
     | null
@@ -389,9 +410,7 @@ export function OpenGrpoList() {
     setActionCase(null);
     try {
       const result = await importGrpoAndAnalyze(entry, setProgress);
-      setActionCase(result.caseId);
-      changeTab("yes");
-      setRefresh((v) => v + 1);
+      router.replace(`/cases/${result.caseId}`);
     } catch (error) {
       setActionError(
         error instanceof Error ? error.message : "SAP import failed.",
@@ -412,8 +431,7 @@ export function OpenGrpoList() {
     setActionError(null);
     try {
       await enqueueCaseAnalysis(caseId, {});
-      setActionCase(caseId);
-      setRefresh((v) => v + 1);
+      router.replace(`/cases/${caseId}`);
     } catch (error) {
       setActionError(
         error instanceof Error ? error.message : "Analysis could not start.",
@@ -625,6 +643,7 @@ export function OpenGrpoList() {
                 key={record.id}
                 record={record}
                 upload={data?.uploads[String(record.docEntry)]}
+                pdf={data?.pdfs?.[String(record.docEntry)]}
                 busy={busyEntry !== null}
                 progress={busyEntry === record.docEntry ? progress : null}
                 onImport={() => void importReceipt(String(record.docEntry))}

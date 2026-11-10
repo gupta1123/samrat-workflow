@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 import { PDFDocument } from "pdf-lib";
 import { createHash } from "node:crypto";
 import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from "undici";
+import { grpoPdfAvailability } from "../src/server/sap/grpo-pdf-availability";
 import { GET as listRoute } from "../src/app/api/sap-inspector/open-grpos/route";
 import { POST as importRoute } from "../src/app/api/sap-inspector/grpos/[id]/import/route";
 import {
@@ -78,6 +79,7 @@ async function setup(t: TestContext) {
   const listRows = [45, 44, 43, 42, 41].map((id) => ({
     DocEntry: id,
     DocNum: 100 + id,
+    AttachmentEntry: id === 45 ? 9 : null,
     DocumentStatus: "bost_Open",
     Cancelled: "tNO",
     DocumentLines: [
@@ -602,6 +604,8 @@ test("tabs filter on the server and keep accurate cursors across sparse uploaded
     ["45", "44"],
   );
   assert.equal(first.nextCursor, 44);
+  assert.equal(first.pdfs[45].status, "available");
+  assert.equal(first.pdfs[44].status, "missing");
   const second = await list("uploaded=no&before=44");
   assert.deepEqual(
     second.records.map((r: { docEntry: string }) => r.docEntry),
@@ -629,4 +633,51 @@ test("a manual case with the identical PDF and extra documents is reused", async
   assert.equal((await r.json()).status, "completed");
   assert.equal(state.cases.length, 1);
   assert.equal(state.events.length, 1);
+});
+
+test("PDF badges distinguish confirmed missing files from unavailable metadata", async () => {
+  const records = [null, -1, undefined, 1, 2, 3].map((entry, i) => ({
+    docEntry: String(i),
+    raw: { AttachmentEntry: entry },
+  }));
+  const result = await grpoPdfAvailability(records, async (entry) => {
+    if (entry === 3) throw Error("SAP unavailable");
+    return {
+      Attachments2_Lines: [
+        { FileName: "source", FileExtension: entry === 1 ? "pdf" : "rpt" },
+      ],
+    };
+  });
+  assert.equal(result[0].status, "missing");
+  assert.equal(result[1].status, "missing");
+  assert.equal(result[2].status, "unavailable");
+  assert.equal(result[3].status, "available");
+  assert.equal(result[4].status, "missing");
+  assert.equal(result[5].status, "unavailable");
+});
+
+test("attachment checks share repeated SAP reads and bound concurrency", async () => {
+  let active = 0,
+    max = 0,
+    calls = 0;
+  const result = await grpoPdfAvailability(
+    Array.from({ length: 12 }, (_, i) => ({
+      docEntry: String(i),
+      raw: { AttachmentEntry: 1 + Math.floor(i / 2) },
+    })),
+    async () => {
+      calls++;
+      active++;
+      max = Math.max(max, active);
+      await Promise.resolve();
+      active--;
+      return {
+        Attachments2_Lines: [{ FileName: "invoice", FileExtension: "pdf" }],
+      };
+    },
+  );
+  assert.equal(calls, 6);
+  assert.ok(max <= 4);
+  assert.equal(Object.keys(result).length, 12);
+  assert.ok(Object.values(result).every((v) => v.status === "available"));
 });
