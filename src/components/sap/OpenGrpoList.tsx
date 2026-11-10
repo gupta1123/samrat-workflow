@@ -540,12 +540,6 @@ export function OpenGrpoList() {
           </button>
         ))}
       </div>
-      <p className="mb-3 text-xs text-[#81766b]">
-        SAP Test{data?.company ? ` · ${data.company}` : ""} · Showing imports
-        for your account. Older manual uploads may appear under Not uploaded
-        until their SAP PDF is checked. If those PDFs are already in a case, the
-        app reuses that case.
-      </p>
       {actionError ? (
         <p
           role="alert"
