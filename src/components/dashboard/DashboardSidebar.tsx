@@ -39,12 +39,12 @@ const sections = [
   {
     title: "Cases",
     items: [
-      { href: "/cases", label: "All Cases", icon: FolderOpen },
       {
         href: "/workspace",
         label: "Add Case",
         icon: FolderPlus,
       },
+      { href: "/cases", label: "All Cases", icon: FolderOpen },
     ],
   },
   {
