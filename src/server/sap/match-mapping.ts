@@ -216,6 +216,18 @@ export function buildMatchInvoice(input: {
       unit: text(item.unit) || null,
       rate: amount(item.rate),
       amount: lineAmount,
+      ...(() => {
+        const printed = text(item.taxableAmount ?? item.lineTotal).replaceAll(
+          ",",
+          "",
+        );
+        const fraction = /^-?\d+\.(\d{1,6})$/.exec(printed)?.[1];
+        return fraction
+          ? { amountDecimals: fraction.length }
+          : /^-?\d+$/.test(printed)
+            ? { amountDecimals: 0 }
+            : {};
+      })(),
       source: {
         documentId: rowSources[rowIndex]?.docId ?? null,
         fileName: rowSources[rowIndex]?.fileName ?? null,

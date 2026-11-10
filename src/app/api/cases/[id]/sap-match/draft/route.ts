@@ -301,18 +301,20 @@ export async function POST(request: Request, context: Context) {
         await revalidateNonStockPoItems(plan, bases, (code) =>
           client.getItemInventoryState(code),
         );
-        const { payload, currency } = buildMatchedDraftPayload({
-          caseId: id,
-          plan,
-          bases,
-          freightExpenseCode: freightExpenseCode(),
-          invoiceRates: match.invoice.lines.map((line) => line.rate),
-          localCurrency: [...bases.values()].some(
-            (base) => base.DocType === "dDocument_Service",
-          )
-            ? (await client.getAdminCurrencies()).LocalCurrency
-            : undefined,
-        });
+        const { payload, currency, sourceLineGroups } =
+          buildMatchedDraftPayload({
+            caseId: id,
+            plan,
+            bases,
+            freightExpenseCode: freightExpenseCode(),
+            invoiceRates: match.invoice.lines.map((line) => line.rate),
+            invoiceLines: match.invoice.lines,
+            localCurrency: [...bases.values()].some(
+              (base) => base.DocType === "dDocument_Service",
+            )
+              ? (await client.getAdminCurrencies()).LocalCurrency
+              : undefined,
+          });
         Object.assign(payload, header.values);
         const [grpos, pos] = await Promise.all([
           plan.lines.some((line) => line.baseType === 20)
@@ -347,7 +349,7 @@ export async function POST(request: Request, context: Context) {
           baseDocument: first,
           numberingSeries: body?.numberingSeries,
         });
-        return { match, plan, created, header };
+        return { match, plan, created, header, sourceLineGroups };
       });
     } catch (error) {
       if (error instanceof ApiError) throw error;
@@ -371,7 +373,7 @@ export async function POST(request: Request, context: Context) {
       );
     }
 
-    const { match, plan, created, header } = outcome;
+    const { match, plan, created, header, sourceLineGroups } = outcome;
     const docEntry = created.created.DocEntry;
     if (!Number.isInteger(docEntry) || !docEntry) {
       return NextResponse.json(
@@ -418,6 +420,7 @@ export async function POST(request: Request, context: Context) {
           draftHeaderFields: header.values,
           draftHeaderEvidence: header.preview.fields,
           submittedPayload: created.submittedPayload,
+          draftLineSources: sourceLineGroups,
         },
         response: {
           DocEntry: docEntry,
@@ -440,6 +443,7 @@ export async function POST(request: Request, context: Context) {
         matched: true,
         baseDocuments: match.result.baseDocuments,
         decisions: match.state.decisions,
+        draftLineSources: sourceLineGroups,
         allocations: match.state.allocations,
         draftHeaderFields: header.values,
         draftHeaderEvidence: header.preview.fields,

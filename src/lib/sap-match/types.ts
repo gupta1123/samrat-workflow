@@ -53,6 +53,8 @@ export type MatchInvoiceLine = {
   rate: number | null;
   /** Taxable value of the line. */
   amount: number | null;
+  /** Decimal places explicitly retained in the printed taxable/line amount. */
+  amountDecimals?: number;
 };
 
 export type MatchInvoice = {

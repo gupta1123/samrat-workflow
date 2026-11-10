@@ -2,7 +2,7 @@
 // same posting-date and numbering-series fallbacks the single-document flow uses.
 // The payload builder is pure; the creator takes the Service Layer client.
 
-import type { PlannedPayload } from "@/lib/sap-match/types";
+import type { MatchInvoiceLine, PlannedPayload } from "@/lib/sap-match/types";
 import { sapTestPostingDateCandidates } from "./dates";
 import type { SapMatchDocument } from "./service-layer";
 import { serviceOpenBalance } from "@/lib/sap-service-balance";
@@ -17,6 +17,161 @@ export class MatchDraftError extends Error {
 }
 
 type BaseDocument = SapMatchDocument & { DocType?: string };
+type ItemDraftLine = {
+  BaseType: number;
+  BaseEntry: number;
+  BaseLine: number;
+  Quantity: number;
+  UnitPrice: number;
+};
+type ServiceDraftLine = {
+  BaseType: number;
+  BaseEntry: number;
+  BaseLine: number;
+  LineTotal: number;
+  AccountCode: string;
+};
+type DraftBaseLine = ItemDraftLine | ServiceDraftLine;
+
+/** SAP accepts a base line only once. Keep every source row in the audit plan;
+ * combine only the SAP representation, with proof that printed amounts survive. */
+function consolidateDraftBaseLines(
+  lines: DraftBaseLine[],
+  plan: PlannedPayload,
+  invoiceLines: MatchInvoiceLine[] = [],
+) {
+  const groups = new Map<
+    string,
+    Array<{ line: DraftBaseLine; invoiceLineIndex: number }>
+  >();
+  lines.forEach((line, index) => {
+    const key = `${line.BaseType}:${line.BaseEntry}:${line.BaseLine}`;
+    const group = groups.get(key) ?? [];
+    group.push({ line, invoiceLineIndex: plan.lines[index].invoiceLineIndex });
+    groups.set(key, group);
+  });
+  const sourceByIndex = new Map(invoiceLines.map((line) => [line.index, line]));
+  const documentLines: DraftBaseLine[] = [];
+  const sourceLineGroups: Array<{
+    draftLineIndex: number;
+    invoiceLineIndexes: number[];
+    baseType: number;
+    baseEntry: number;
+    baseLine: number;
+  }> = [];
+  const minor = (value: number, decimals: number) => {
+    const scaled = value * 10 ** decimals;
+    if (!Number.isFinite(scaled) || Math.abs(scaled) > Number.MAX_SAFE_INTEGER)
+      throw new MatchDraftError(
+        "The invoice amount exceeds safe precision for SAP line consolidation.",
+      );
+    return Math.round(
+      scaled + Math.min(1e-7, Number.EPSILON * Math.max(1, Math.abs(scaled))),
+    );
+  };
+  for (const group of groups.values()) {
+    const first = group[0].line;
+    let combined: DraftBaseLine = first;
+    if (group.length > 1 && "LineTotal" in first) {
+      if (
+        !group.every(
+          ({ line }) =>
+            "LineTotal" in line && line.AccountCode === first.AccountCode,
+        )
+      )
+        throw new MatchDraftError(
+          "Repeated SAP base lines have incompatible expense accounts.",
+        );
+      combined = {
+        ...first,
+        LineTotal:
+          minor(
+            group.reduce(
+              (sum, { line }) =>
+                sum + ("LineTotal" in line ? line.LineTotal : 0),
+              0,
+            ),
+            6,
+          ) / 1e6,
+      };
+    } else if (group.length > 1) {
+      const observed = group.map(({ line, invoiceLineIndex }) => {
+        const source = sourceByIndex.get(invoiceLineIndex);
+        if (
+          !("Quantity" in line) ||
+          !Number.isFinite(line.Quantity) ||
+          line.Quantity <= 0 ||
+          !source ||
+          source.quantity === null ||
+          source.quantity <= 0 ||
+          source.rate === null ||
+          source.amount === null ||
+          source.amount < 0 ||
+          !Number.isInteger(source.amountDecimals) ||
+          source.amountDecimals! < 0 ||
+          source.amountDecimals! > 6 ||
+          source.rate !== line.UnitPrice ||
+          line.Quantity > source.quantity + 0.0000005
+        )
+          throw new MatchDraftError(
+            "Repeated SAP receipt lines need their original printed quantities, rates, amounts and amount precision. Re-check the case before creating a draft; no price will be invented.",
+          );
+        const decimals = source.amountDecimals!;
+        if (
+          minor(source.quantity * source.rate, decimals) !==
+          minor(source.amount, decimals)
+        )
+          throw new MatchDraftError(
+            "The printed invoice quantity and unit price do not reproduce its row amount. Review the source before combining repeated SAP receipt lines.",
+          );
+        const amount =
+          Math.abs(line.Quantity - source.quantity) < 0.0000005
+            ? source.amount
+            : minor(line.Quantity * source.rate, decimals) / 10 ** decimals;
+        return { line, decimals, amount };
+      });
+      const quantity =
+        Math.round(
+          observed.reduce((sum, row) => sum + row.line.Quantity, 0) * 1e6,
+        ) / 1e6;
+      const decimals = Math.max(...observed.map((row) => row.decimals));
+      const expected = observed.reduce(
+        (sum, row) => sum + minor(row.amount, decimals),
+        0,
+      );
+      const prices = [
+        ...new Set(observed.map((row) => row.line.UnitPrice)),
+      ].filter(
+        (price) =>
+          observed.every(
+            (row) =>
+              minor(row.line.Quantity * price, row.decimals) ===
+              minor(row.amount, row.decimals),
+          ) && minor(quantity * price, decimals) === expected,
+      );
+      if (prices.length !== 1)
+        throw new MatchDraftError(
+          "SAP needs one row per receipt line, but these invoice rows cannot be combined at one unambiguous printed unit price while preserving every row amount. Review the invoice or split the receipt in SAP; no average price was substituted.",
+        );
+      combined = {
+        ...observed[0].line,
+        Quantity: quantity,
+        UnitPrice: prices[0],
+      };
+    }
+    sourceLineGroups.push({
+      draftLineIndex: documentLines.length,
+      invoiceLineIndexes: [
+        ...new Set(group.map((row) => row.invoiceLineIndex)),
+      ],
+      baseType: first.BaseType,
+      baseEntry: first.BaseEntry,
+      baseLine: first.BaseLine,
+    });
+    documentLines.push(combined);
+  }
+  return { documentLines, sourceLineGroups };
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object"
@@ -72,6 +227,7 @@ export function buildMatchedDraftPayload(params: {
   bases: Map<string, BaseDocument>;
   freightExpenseCode: number | null;
   invoiceRates?: Array<number | null>;
+  invoiceLines?: MatchInvoiceLine[];
   localCurrency?: string;
 }) {
   const { plan, bases } = params;
@@ -103,7 +259,7 @@ export function buildMatchedDraftPayload(params: {
   const reservedQuantities = new Map<string, number>();
   const reservedAmounts = new Map<string, number>();
 
-  const documentLines = plan.lines.map((line) => {
+  const rawDocumentLines: DraftBaseLine[] = plan.lines.map((line) => {
     const base = bases.get(`${line.baseType}:${line.baseEntry}`);
     if (!base)
       throw new MatchDraftError("A SAP base document could not be read again.");
@@ -209,6 +365,11 @@ export function buildMatchedDraftPayload(params: {
       UnitPrice: unitPrice,
     };
   });
+  const { documentLines, sourceLineGroups } = consolidateDraftBaseLines(
+    rawDocumentLines,
+    plan,
+    params.invoiceLines,
+  );
 
   const payload: Record<string, unknown> = {
     DocObjectCode: "18",
@@ -241,7 +402,7 @@ export function buildMatchedDraftPayload(params: {
       },
     ];
   }
-  return { payload, currency };
+  return { payload, currency, sourceLineGroups };
 }
 
 type DraftClient = {

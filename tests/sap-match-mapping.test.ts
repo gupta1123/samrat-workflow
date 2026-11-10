@@ -75,6 +75,7 @@ test("the engine invoice is built from the saved packet", () => {
   assert.equal(invoice.lines.length, 1);
   assert.equal(invoice.lines[0].quantity, 34.98);
   assert.equal(invoice.lines[0].rate, 68000);
+  assert.equal(invoice.lines[0].amountDecimals, 2);
   assert.deepEqual(invoice.poReferences, ["TGPO26-0412"]);
 });
 

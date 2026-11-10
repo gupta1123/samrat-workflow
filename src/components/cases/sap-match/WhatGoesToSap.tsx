@@ -71,6 +71,12 @@ export function WhatGoesToSap({
       line.lineTotal ?? (rate !== null ? rate * line.quantity : null);
     return { line, rate, value };
   });
+  const repeatedBases =
+    new Set(
+      plan.lines.map(
+        (line) => `${line.baseType}:${line.baseEntry}:${line.baseLine}`,
+      ),
+    ).size < plan.lines.length;
   const itemsTotal = rows.reduce((sum, row) => sum + (row.value ?? 0), 0);
   const differs = plan.difference !== null && Math.abs(plan.difference) > 0.005;
   const rounding = differs && Math.abs(plan.difference!) <= 1;
@@ -194,6 +200,13 @@ export function WhatGoesToSap({
               </table>
             </div>
 
+            {repeatedBases ? (
+              <p className="border-t border-[#ece6dc] px-4 py-2 text-[11px] text-[#71675e]">
+                Some invoice rows share a receipt or PO line. SAP will combine
+                them only if the printed net amounts can be preserved. Original
+                invoice rows remain in this case.
+              </p>
+            ) : null}
             <footer className="grid gap-4 border-t border-[#ece6dc] px-4 py-3 sm:grid-cols-[1fr_minmax(0,16rem)]">
               <div className="min-w-0">
                 {caseId && expanded ? (

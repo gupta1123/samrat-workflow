@@ -5,7 +5,10 @@ import {
   createMatchedDraft,
   MatchDraftError,
 } from "../src/server/sap/match-draft";
-import type { PlannedPayload } from "../src/lib/sap-match/types";
+import type {
+  MatchInvoiceLine,
+  PlannedPayload,
+} from "../src/lib/sap-match/types";
 import { openDocumentDraftFields } from "../src/server/sap/open-document-draft-fields";
 
 const receipt = (entry: number, open = 40) => ({
@@ -139,6 +142,215 @@ test("the same GRPO line cannot be over-allocated across invoice lines", () => {
       }),
     /no longer has 45 open across the selected invoice lines/,
   );
+});
+
+function repeatedReceiptRows(
+  rows: Array<{
+    quantity: number;
+    rate: number;
+    amount: number;
+    decimals?: number;
+  }>,
+) {
+  const invoiceLines: MatchInvoiceLine[] = rows.map((row, index) => ({
+    index,
+    vendorItemCode: "SOURCE",
+    description: "Source item",
+    hsnSac: null,
+    quantity: row.quantity,
+    unit: "MT",
+    rate: row.rate,
+    amount: row.amount,
+    amountDecimals: row.decimals,
+  }));
+  const p = plan({
+    freightExpense: null,
+    lines: rows.map((row, index) => ({
+      ...plan().lines[0],
+      invoiceLineIndex: index,
+      quantity: row.quantity,
+      unitPrice: row.rate,
+    })),
+  });
+  return { plan: p, invoiceLines };
+}
+
+test("repeated source rows become one SAP base line using an existing printed price and unchanged net amounts", () => {
+  const source = repeatedReceiptRows([
+    { quantity: 0.406, rate: 66558.99, amount: 27022.95, decimals: 2 },
+    { quantity: 10.144, rate: 66559, amount: 675174.5, decimals: 2 },
+  ]);
+  const before = JSON.stringify(source);
+  const { payload, sourceLineGroups } = buildMatchedDraftPayload({
+    caseId: "c",
+    ...source,
+    bases: bases(),
+    freightExpenseCode: null,
+  });
+  assert.deepEqual(payload.DocumentLines, [
+    {
+      BaseType: 20,
+      BaseEntry: 8431,
+      BaseLine: 0,
+      Quantity: 10.55,
+      UnitPrice: 66559,
+    },
+  ]);
+  assert.deepEqual(sourceLineGroups, [
+    {
+      draftLineIndex: 0,
+      invoiceLineIndexes: [0, 1],
+      baseType: 20,
+      baseEntry: 8431,
+      baseLine: 0,
+    },
+  ]);
+  assert.equal(
+    JSON.stringify(source),
+    before,
+    "Retain both original quantities, rates and source amounts",
+  );
+  assert.equal(
+    Math.round(10.55 * 66559 * 100),
+    Math.round((27022.95 + 675174.5) * 100),
+  );
+});
+
+test("equal-price repeated rows consolidate without losing the source-to-draft mapping", () => {
+  const source = repeatedReceiptRows([
+    { quantity: 1, rate: 100, amount: 100, decimals: 2 },
+    { quantity: 2, rate: 100, amount: 200, decimals: 2 },
+  ]);
+  const { payload } = buildMatchedDraftPayload({
+    caseId: "c",
+    ...source,
+    bases: bases(),
+    freightExpenseCode: null,
+  });
+  assert.deepEqual(payload.DocumentLines, [
+    { BaseType: 20, BaseEntry: 8431, BaseLine: 0, Quantity: 3, UnitPrice: 100 },
+  ]);
+});
+
+test("different prices, missing source precision and inconsistent printed amounts cannot be averaged into a draft", () => {
+  for (const source of [
+    repeatedReceiptRows([
+      { quantity: 1, rate: 100, amount: 100, decimals: 2 },
+      { quantity: 1, rate: 200, amount: 200, decimals: 2 },
+    ]),
+    repeatedReceiptRows([
+      { quantity: 1, rate: 100, amount: 100 },
+      { quantity: 1, rate: 100, amount: 100 },
+    ]),
+    repeatedReceiptRows([
+      { quantity: 1, rate: 100, amount: 101, decimals: 2 },
+      { quantity: 1, rate: 100, amount: 100, decimals: 2 },
+    ]),
+  ])
+    assert.throws(
+      () =>
+        buildMatchedDraftPayload({
+          caseId: "c",
+          ...source,
+          bases: bases(),
+          freightExpenseCode: null,
+        }),
+      MatchDraftError,
+    );
+});
+
+test("consolidation cannot change the sum through per-row rounding or choose an ambiguous printed rate", () => {
+  for (const rows of [
+    [
+      { quantity: 0.001, rate: 5, amount: 0.01, decimals: 2 },
+      { quantity: 0.001, rate: 5, amount: 0.01, decimals: 2 },
+    ],
+    [
+      { quantity: 0.001, rate: 10, amount: 0.01, decimals: 2 },
+      { quantity: 0.001, rate: 10.01, amount: 0.01, decimals: 2 },
+    ],
+  ])
+    assert.throws(
+      () =>
+        buildMatchedDraftPayload({
+          caseId: "c",
+          ...repeatedReceiptRows(rows),
+          bases: bases(),
+          freightExpenseCode: null,
+        }),
+      MatchDraftError,
+    );
+});
+
+test("the same displayed receipt number does not merge different SAP entries", () => {
+  const source = repeatedReceiptRows([
+    { quantity: 1, rate: 100, amount: 100, decimals: 2 },
+    { quantity: 2, rate: 200, amount: 400, decimals: 2 },
+  ]);
+  source.plan.lines[1].baseEntry = 8433;
+  source.plan.lines[1].baseDocNum = 431;
+  const sameNumbers = bases();
+  sameNumbers.get("20:8433")!.DocNum = 431;
+  const { payload } = buildMatchedDraftPayload({
+    caseId: "c",
+    ...source,
+    bases: sameNumbers,
+    freightExpenseCode: null,
+  });
+  assert.equal((payload.DocumentLines as unknown[]).length, 2);
+});
+
+test("repeated service PO rows combine their verified value without inventing quantities or prices", () => {
+  const p = plan({
+    freightExpense: null,
+    lines: [100, 200].map((amount, index) => ({
+      ...plan().lines[0],
+      invoiceLineIndex: index,
+      baseType: 22 as const,
+      baseEntry: 71091,
+      baseDocNum: 91,
+      documentType: "dDocument_Service" as const,
+      quantity: 1,
+      unitPrice: null,
+      lineTotal: amount,
+    })),
+  });
+  const b = new Map([
+    [
+      "22:71091",
+      {
+        DocEntry: 71091,
+        DocNum: 91,
+        CardCode: "V-TATA01",
+        DocCurrency: "INR",
+        DocType: "dDocument_Service",
+        DocumentLines: [
+          {
+            LineNum: 0,
+            LineStatus: "bost_Open",
+            OpenAmount: 1000,
+            AccountCode: "EXP-SERVICE",
+          },
+        ],
+      },
+    ],
+  ]);
+  const { payload } = buildMatchedDraftPayload({
+    caseId: "c",
+    plan: p,
+    bases: b,
+    freightExpenseCode: null,
+    localCurrency: "INR",
+  });
+  assert.deepEqual(payload.DocumentLines, [
+    {
+      BaseType: 22,
+      BaseEntry: 71091,
+      BaseLine: 0,
+      LineTotal: 300,
+      AccountCode: "EXP-SERVICE",
+    },
+  ]);
 });
 
 test("an explicit scanned unit price is sent even when the plan has no override", () => {
