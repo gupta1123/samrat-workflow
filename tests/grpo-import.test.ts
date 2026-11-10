@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { PDFDocument } from "pdf-lib";
 import { createHash } from "node:crypto";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from "undici";
 import { grpoPdfAvailability } from "../src/server/sap/grpo-pdf-availability";
 import { GET as listRoute } from "../src/app/api/sap-inspector/open-grpos/route";
@@ -17,6 +19,7 @@ import {
   GrpoAnalysisStartError,
 } from "../src/lib/grpo-import-client";
 import { createSupabaseAdminClient } from "../src/server/supabase/admin";
+import { GrpoDraftBadge } from "../src/components/sap/GrpoDraftBadge";
 
 // Raw JSON rows in the mock PostgREST server deliberately have dynamic columns.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,10 +72,13 @@ async function setup(t: TestContext) {
     badPdf: false,
     failSave: false,
     failEvents: false,
+    failDraftRead: false,
     assets: [] as MockRow[],
     events: [] as MockRow[],
     cases: [] as MockRow[],
     files: [] as MockRow[],
+    postings: [] as MockRow[],
+    postingReads: [] as URLSearchParams[],
     objects: new Map<string, Buffer>(),
     sapWrites: [] as string[],
   };
@@ -257,6 +263,12 @@ async function setup(t: TestContext) {
           : Response.json({ message: "missing" }, { status: 404 });
       }
       const table = url.pathname.split("/").at(-1);
+      if (table === "sap_postings") {
+        assert.equal(method, "GET", "Draft status must be read-only");
+        state.postingReads.push(url.searchParams);
+        if (state.failDraftRead)
+          return Response.json({ message: "Unavailable" }, { status: 500 });
+      }
       const rows =
         table === "storage_assets"
           ? state.assets
@@ -266,9 +278,11 @@ async function setup(t: TestContext) {
               ? state.files
               : table === "case_review_events"
                 ? state.events
-                : null;
+                : table === "sap_postings"
+                  ? state.postings
+                  : null;
       assert.ok(rows, `Unexpected data call ${url}`);
-      const visible =
+      const visible: MockRow[] =
         table === "packet_case_files" &&
         url.searchParams.get("select")?.includes("!inner")
           ? rows.map((r) => ({
@@ -276,7 +290,21 @@ async function setup(t: TestContext) {
               packet_cases: state.cases.find((c) => c.id === r.case_id),
             }))
           : rows;
-      const selected = visible.filter((r) => matches(r, url.searchParams));
+      const selected = visible
+        .filter((r) => matches(r, url.searchParams))
+        .map((r) =>
+          table === "sap_postings"
+            ? {
+                case_id: r.case_id,
+                status: r.status,
+                sap_docnum: r.sap_docnum,
+                documentType: r.payload?.documentType,
+                docEntry: r.response?.DocEntry,
+                draftDocEntry: r.response?.DraftDocEntry,
+                docNum: r.response?.DocNum,
+              }
+            : r,
+        );
       if (method === "PATCH") {
         for (const r of selected) Object.assign(r, body);
         return new Response(null, { status: 204 });
@@ -414,6 +442,138 @@ test("uploaded state respects company, owner, recycle bin and removed source fil
     await grpoUploadStates(db, owner, "COMPANY", [{ docEntry: "42" }]),
     {},
   );
+});
+
+async function draftStatusFixture(t: TestContext) {
+  const result = await setup(t);
+  const sha = digest(result.bytes);
+  result.state.cases.push({
+    id: caseId,
+    owner_user_id: owner,
+    status: "accepted",
+    deleted_at: null,
+  });
+  result.state.files.push({ case_id: caseId, content_sha256: sha });
+  result.state.events.push({
+    case_id: caseId,
+    owner_user_id: owner,
+    action: "sap_grpo_pdf_imported",
+    details: {
+      company: "COMPANY",
+      environment: "test",
+      docEntry: 42,
+      sha256s: [sha],
+    },
+  });
+  const posting = {
+    case_id: caseId,
+    owner_user_id: owner,
+    kind: "AP",
+    sap_env: "test",
+    status: "prepared",
+    sap_docnum: "237615",
+    payload: { documentType: "APInvoiceDraft" },
+    response: { DocEntry: 237615, DocNum: 813 },
+  };
+  const read = () =>
+    grpoUploadStates(createSupabaseAdminClient(), owner, "COMPANY", [
+      { docEntry: "42" },
+    ]);
+  return { ...result, posting, read };
+}
+
+test("uploaded API reports the confirmed SAP draft and number, separately from case status", async (t) => {
+  const { state, posting, read } = await draftStatusFixture(t);
+  assert.deepEqual((await read())[42].sapDraft, { status: "not_created" });
+  state.cases[0].status = "draft";
+  assert.deepEqual((await read())[42].sapDraft, { status: "not_created" });
+  state.postings.push(posting);
+  const response = await listRoute(
+    new Request(
+      "https://app.invalid/api/sap-inspector/open-grpos?uploaded=yes",
+      { headers: { Authorization: "Bearer " + jwt(owner) } },
+    ),
+  );
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.uploads[42].sapDraft, {
+    status: "created",
+    docEntry: "237615",
+    docNum: "813",
+  });
+  assert.equal(state.sapWrites.length, 0);
+});
+
+test("draft badges use only the linked owner's Test AP posting and never expose unrelated drafts", async (t) => {
+  const { state, posting, read } = await draftStatusFixture(t);
+  state.postings.push(
+    { ...posting, owner_user_id: other },
+    { ...posting, sap_env: "live" },
+    { ...posting, kind: "GRN" },
+    { ...posting, case_id: "44444444-4444-4444-8444-444444444444" },
+  );
+  assert.deepEqual((await read())[42].sapDraft, { status: "not_created" });
+  assert.equal(state.postingReads.length, 1);
+  const query = state.postingReads[0];
+  assert.equal(query.get("owner_user_id"), `eq.${owner}`);
+  assert.equal(query.get("sap_env"), "eq.test");
+  assert.equal(query.get("kind"), "eq.AP");
+  assert.equal(query.get("case_id"), `in.(${caseId})`);
+  assert.ok(
+    !query.get("select")?.split(",").includes("payload"),
+    "Do not fetch saved invoice contents for a badge",
+  );
+});
+
+test("unavailable or incomplete draft records do not falsely say Not drafted or Draft created", async (t) => {
+  const { state, posting, read } = await draftStatusFixture(t);
+  state.failDraftRead = true;
+  assert.deepEqual((await read())[42].sapDraft, { status: "unavailable" });
+  state.failDraftRead = false;
+  state.postings.push({
+    ...posting,
+    sap_docnum: null,
+    response: { DocEntry: 0 },
+  });
+  assert.deepEqual((await read())[42].sapDraft, { status: "unavailable" });
+  state.postings[0] = { ...posting, payload: { documentType: "APInvoice" } };
+  assert.deepEqual((await read())[42].sapDraft, { status: "unavailable" });
+  state.postings[0] = { ...posting, response: {} };
+  assert.deepEqual((await read())[42].sapDraft, {
+    status: "created",
+    docEntry: "237615",
+    docNum: undefined,
+  });
+});
+
+test("failed attempts are not drafts and historical posted invoices stay distinct", async (t) => {
+  const { state, posting, read } = await draftStatusFixture(t);
+  for (const status of ["failed", "blocked"]) {
+    state.postings[0] = { ...posting, status };
+    assert.deepEqual((await read())[42].sapDraft, { status: "not_created" });
+  }
+  state.postings[0] = {
+    ...posting,
+    status: "posted",
+    payload: { documentType: "APInvoice" },
+  };
+  assert.deepEqual((await read())[42].sapDraft, { status: "posted" });
+});
+
+test("draft badge displays a SAP number and keeps unavailable distinct from not drafted", () => {
+  const render = (draft?: Parameters<typeof GrpoDraftBadge>[0]["draft"]) =>
+    renderToStaticMarkup(createElement(GrpoDraftBadge, { draft }));
+  assert.match(
+    render({ status: "created", docEntry: "237615", docNum: "813" }),
+    /Draft created · 813/,
+  );
+  assert.match(
+    render({ status: "created", docEntry: "237615" }),
+    /Draft created · 237615/,
+  );
+  assert.match(render({ status: "not_created" }), />Not drafted</);
+  assert.match(render({ status: "posted" }), />Invoice posted</);
+  assert.match(render(), />Draft status unavailable</);
 });
 
 test("oversized or incomplete PDFs are rejected and attachment selection preserves SAP filenames", async () => {

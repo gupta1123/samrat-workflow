@@ -4,6 +4,8 @@
 
 Older manual uploads do not have an authoritative GRPO source link. On import, exact SHA-256 matches against active owned case files reuse a case containing those PDFs, including cases with additional documents. Names, invoice numbers, candidate SAP matches, and supplier similarity do not establish upload status.
 
+Uploaded receipts also show a SAP draft badge. Draft created (with the saved SAP number when available) requires the linked case's confirmed `sap_postings` record: kind AP, environment test, status prepared, document type APInvoiceDraft, and a valid SAP entry. A successful read with no saved draft shows Not drafted; historical posted invoices show Invoice posted. A failed status read or an incomplete prepared record shows Draft status unavailable. Case approval, analysis completion and the case's initial draft state do not establish a SAP draft. This reads the app's saved SAP result; it does not check for later manual deletion in SAP. Refresh reloads the status. No SAP write or new schema is involved.
+
 ## Source API
 
 The integration uses the existing server-only SAP Test Service Layer session and static egress proxy:

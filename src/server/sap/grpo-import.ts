@@ -100,7 +100,58 @@ export async function grpoUploadStates(
         caseId: c.id,
         status: c.status,
         deleted: !!c.deleted_at,
+        sapDraft: { status: "unavailable" },
       };
+  }
+  const linked = Object.values(states);
+  if (!linked.length) return states;
+  const postings = await db
+    .from("sap_postings")
+    .select(
+      "case_id,status,sap_docnum,documentType:payload->>documentType,docEntry:response->>DocEntry,draftDocEntry:response->>DraftDocEntry,docNum:response->>DocNum",
+    )
+    .eq("owner_user_id", user)
+    .eq("kind", "AP")
+    .eq("sap_env", "test")
+    .in("case_id", [...new Set(linked.map((state) => state.caseId))]);
+  // Missing posting data must never become a false "Not drafted" badge.
+  if (postings.error) {
+    console.error("Could not read SAP draft status for imported receipts");
+    return states;
+  }
+  const positiveId = (value: unknown) => {
+    const n =
+      typeof value === "number" || typeof value === "string"
+        ? Number(value)
+        : NaN;
+    return Number.isSafeInteger(n) && n > 0 ? String(n) : undefined;
+  };
+  const byCase = new Map(
+    postings.data?.map((posting) => [posting.case_id, posting]),
+  );
+  for (const state of linked) {
+    const posting = byCase.get(state.caseId);
+    if (!posting || ["failed", "blocked"].includes(posting.status)) {
+      state.sapDraft = { status: "not_created" };
+      continue;
+    }
+    const docEntry =
+      positiveId(posting.draftDocEntry) ??
+      positiveId(posting.docEntry) ??
+      positiveId(posting.sap_docnum);
+    if (!docEntry) continue;
+    if (posting.status === "posted") {
+      state.sapDraft = { status: "posted" };
+    } else if (
+      posting.status === "prepared" &&
+      posting.documentType === "APInvoiceDraft"
+    ) {
+      state.sapDraft = {
+        status: "created",
+        docEntry,
+        docNum: positiveId(posting.docNum),
+      };
+    }
   }
   return states;
 }

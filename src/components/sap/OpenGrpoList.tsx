@@ -14,6 +14,7 @@ import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { GrpoDraftBadge } from "@/components/sap/GrpoDraftBadge";
 import type { SapInspectorLine, SapInspectorRecord } from "@/lib/sap-inspector";
 import type { GrpoInspectorPage } from "@/lib/sap-grpo-inspector";
 
@@ -287,6 +288,7 @@ function GrpoRows({
               <td rowSpan={span} className={`${CELL} min-w-[185px]`}>
                 {upload ? (
                   <div className="space-y-2">
+                    <GrpoDraftBadge draft={upload.sapDraft} />
                     <p className="text-xs text-[#81766b]">
                       {upload.deleted
                         ? "In Recycle Bin"

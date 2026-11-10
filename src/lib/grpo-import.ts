@@ -1,7 +1,14 @@
+export type GrpoSapDraftState = {
+  status: "created" | "not_created" | "posted" | "unavailable";
+  docEntry?: string;
+  docNum?: string;
+};
+
 export type GrpoUploadState = {
   caseId: string;
   status: string;
   deleted: boolean;
+  sapDraft?: GrpoSapDraftState;
 };
 export type GrpoImportSource = {
   environment: "test";
