@@ -2931,6 +2931,159 @@ for (const repairable of [true, false]) {
   });
 }
 
+for (const repairable of [true, false]) {
+  test(`duplicate-copy row and GST conflicts ${repairable ? "recover from their own source pages" : "stay blocked after bounded source rechecks"}`, async (t) => {
+    const { reviewExtractedDocumentsInStages } =
+      await import("../src/server/processing/staged-review");
+    const original: CaseDoc = {
+      ...documents[0],
+      fields: {
+        invoiceNumber: "INV-42",
+        vendorName: "Aster",
+        supplierGstin: "29ABCDE1234F1Z5",
+        currency: "INR",
+      },
+      lineItems: [
+        {
+          description: "Steel bars",
+          quantity: "2",
+          unit: "MT",
+          rate: "100",
+          lineTotal: "200",
+          sourcePage: 1,
+        },
+      ],
+      md: "Invoice INV-42. Supplier Aster GSTIN 29ABCDE1234F1Z5. Steel bars 2 MT 100 200 INR.",
+    };
+    const copy: CaseDoc = {
+      ...original,
+      id: documents[1].id,
+      sourcePageNumbers: [2],
+      fields: { ...original.fields, supplierGstin: "29ZZZZZ1234F1Z5" },
+      lineItems: [{ ...original.lineItems![0], quantity: "3", sourcePage: 2 }],
+    };
+    const correctedCopy: CaseDoc = {
+      ...copy,
+      fields: { ...original.fields },
+      lineItems: [{ ...original.lineItems![0], sourcePage: 2 }],
+    };
+    const audits = await Promise.all(
+      [original, copy, correctedCopy].map(compact),
+    );
+    const calls = [0, 0];
+    let packetCalls = 0;
+    const checkpoints = new Map<string, string>();
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        const name = body.response_format.json_schema.name;
+        const context = JSON.parse(body.messages[1].content[0].text);
+        if (name === "source_document_review") {
+          const index = context.sourcePageNumbers[0] - 1;
+          calls[index]++;
+          if (context.recheckReason) {
+            assert.match(context.recheckReason, /conflicting supplierGstin/);
+            assert.match(
+              context.recheckReason,
+              /duplicate.*billing table exactly/,
+            );
+            const images = body.messages[1].content.filter(
+              (v: { type: string }) => v.type === "image_url",
+            );
+            assert.equal(images.length, 1);
+            assert.equal(images[0].image_url.url, pages[index].image);
+          }
+          return response(
+            audits[
+              index === 1 && context.recheckReason && repairable ? 2 : index
+            ],
+          );
+        }
+        if (name === "packet_reconciliation") {
+          packetCalls++;
+          return response({
+            ...packet(),
+            invoiceAssemblies: [
+              {
+                invoiceNumber: "INV-42",
+                reason:
+                  "Original and duplicate tax-invoice copy verified against their printed tables.",
+                fieldSources: Object.keys(original.fields).map((field) => ({
+                  field,
+                  docId: "d1",
+                })),
+                documents: [
+                  { docId: "d1", role: "billing", duplicateOfDocId: null },
+                  { docId: "d2", role: "duplicate", duplicateOfDocId: "d1" },
+                ],
+              },
+            ],
+            packetGroups: [
+              {
+                ...packet().packetGroups[0],
+                caseSummary: {
+                  counterpartySource: { docId: "d1", field: "vendorName" },
+                  invoiceNumber: "INV-42",
+                  poNumber: "",
+                  primaryReference: "INV-42",
+                  packetCategory: "goods",
+                },
+              },
+            ],
+          });
+        }
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (c: { mismatchId: string }) => ({
+              mismatchId: c.mismatchId,
+              status: "dismissed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "No source discrepancy.",
+            }),
+          ),
+        });
+      },
+    );
+    const result = await reviewExtractedDocumentsInStages([original, copy], {
+      sourcePages: pages,
+      checkpoints: {
+        read: async (key) => checkpoints.get(key) ?? null,
+        write: async (key, raw) => {
+          checkpoints.set(key, raw);
+        },
+      },
+    });
+    assert.deepEqual(calls, [2, 2]);
+    assert.equal(packetCalls, 2);
+    assert.equal(
+      result.authoritativeReview.invoiceAssemblies?.length,
+      repairable ? 1 : 0,
+    );
+    assert.equal(
+      result.reviewIssues.some(
+        (issue) => issue.id === "evidence-review-workflow-packet",
+      ),
+      !repairable,
+    );
+    assert.equal(
+      [...checkpoints.keys()].filter((key) => key.startsWith("packet/")).length,
+      repairable ? 1 : 0,
+    );
+    assert.equal(
+      result.documents[1].fields.supplierGstin,
+      repairable ? "29ABCDE1234F1Z5" : "29ZZZZZ1234F1Z5",
+    );
+    assert.equal(
+      result.documents[1].lineItems?.[0].quantity,
+      repairable ? "2" : "3",
+    );
+    if (!repairable) assert.equal(result.review.verdict, "needs_review");
+  });
+}
+
 test("corrupt extraction snapshots cannot bypass source-page provenance", async () => {
   const { parseExtractionCheckpoint } =
     await import("../src/server/processing/extraction-checkpoint");

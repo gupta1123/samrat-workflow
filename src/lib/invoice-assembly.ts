@@ -27,6 +27,7 @@ export class InvoiceAssemblySourceConflict extends Error {
   constructor(
     readonly documentIds: string[],
     message: string,
+    readonly recheckReason = message,
   ) {
     super(message);
     this.name = "InvoiceAssemblySourceConflict";
@@ -172,7 +173,12 @@ export function parseInvoiceAssemblies(
     throw new Error("Invoice assemblies must be an array.");
   const byId = new Map(documents.map((doc) => [doc.id, doc]));
   const assigned = new Set<string>();
-  return raw.map((value) => {
+  const sourceConflicts: Array<{
+    documentIds: string[];
+    message: string;
+    reason: string;
+  }> = [];
+  const assemblies = raw.map((value) => {
     const entry = obj(value);
     if (
       Object.keys(entry).some(
@@ -245,16 +251,23 @@ export function parseInvoiceAssemblies(
           candidate.docId === member.duplicateOfDocId &&
           candidate.role === "billing",
       );
+      if (!original)
+        throw new Error(
+          "An excluded duplicate must name an included billing source.",
+        );
       if (
-        !original ||
         !sameRows(
           byId.get(member.docId)!.lineItems ?? [],
           byId.get(original.docId)!.lineItems ?? [],
         )
       )
-        throw new Error(
-          "An excluded duplicate must reproduce an included billing table exactly.",
-        );
+        sourceConflicts.push({
+          documentIds: [original.docId, member.docId],
+          message:
+            "An excluded duplicate must reproduce an included billing table exactly.",
+          reason:
+            "An excluded duplicate must reproduce an included billing table exactly. Independently reread this page's complete commercial table, including descriptions, codes, quantities, units, prices, taxes and row references. Preserve its literal values and all billed rows; never copy another page or change values to make copies agree. The packet reviewer must distinguish genuine duplicates from continued billing using the original pages.",
+        });
     }
     const selected = new Set<string>();
     const fieldSources = entry.fieldSources.map((value) => {
@@ -307,10 +320,16 @@ export function parseInvoiceAssemblies(
         field === "currency" && values.size > 1
           ? equivalentPrintedCurrency(values)
           : null;
-      if (values.size > 1 && !equivalentCurrency)
-        throw new Error(
-          `Invoice pages have conflicting ${field}; source review is required.`,
-        );
+      if (values.size > 1 && !equivalentCurrency) {
+        sourceConflicts.push({
+          documentIds: members
+            .filter((member) => byId.get(member.docId)!.fields[field]?.trim())
+            .map((member) => member.docId),
+          message: `Invoice pages have conflicting ${field}; source review is required.`,
+          reason: `Invoice pages have conflicting ${field}; source review is required. Independently reread this page's printed ${field} in its stated supplier/buyer/currency role. Preserve every literal character and its own-page evidence. Do not harmonize it with another page, a majority value, or SAP. If the printed sources genuinely conflict, retain the conflict for manual review.`,
+        });
+        continue;
+      }
       if (values.size && !selected.has(field))
         throw new Error(
           `Invoice assembly omitted the retained ${field} source.`,
@@ -333,10 +352,12 @@ export function parseInvoiceAssemblies(
       }),
     );
     if (kinds.size > 1)
-      throw new InvoiceAssemblySourceConflict(
-        members.map((member) => member.docId),
-        "Invoice pages have conflicting supply classifications. Independently reread each page's actual billed scope; generic header/program wording must remain unknown when it does not establish goods or services. Do not infer from document absence or SAP inventory status.",
-      );
+      sourceConflicts.push({
+        documentIds: members.map((member) => member.docId),
+        message: "Invoice pages have conflicting supply classifications.",
+        reason:
+          "Invoice pages have conflicting supply classifications. Independently reread each page's actual billed scope; generic header/program wording must remain unknown when it does not establish goods or services. Do not infer from document absence or SAP inventory status.",
+      });
     return {
       invoiceNumber: entry.invoiceNumber,
       fieldSources,
@@ -344,6 +365,17 @@ export function parseInvoiceAssemblies(
       reason: entry.reason,
     };
   });
+  if (sourceConflicts.length)
+    throw new InvoiceAssemblySourceConflict(
+      [...new Set(sourceConflicts.flatMap((conflict) => conflict.documentIds))],
+      [...new Set(sourceConflicts.map((conflict) => conflict.message))].join(
+        " ",
+      ),
+      [...new Set(sourceConflicts.map((conflict) => conflict.reason))].join(
+        " ",
+      ),
+    );
+  return assemblies;
 }
 
 export function assembledInvoice(

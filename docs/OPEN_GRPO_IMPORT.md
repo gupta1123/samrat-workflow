@@ -6,6 +6,8 @@ Older manual uploads do not have an authoritative GRPO source link. On import, e
 
 Uploaded receipts also show a SAP draft badge. Draft created (with the saved SAP number when available) requires the linked case's confirmed `sap_postings` record: kind AP, environment test, status prepared, document type APInvoiceDraft, and a valid SAP entry. A successful read with no saved draft shows Not drafted; historical posted invoices show Invoice posted. A failed status read or an incomplete prepared record shows Draft status unavailable. Case approval, analysis completion and the case's initial draft state do not establish a SAP draft. This reads the app's saved SAP result; it does not check for later manual deletion in SAP. Refresh reloads the status. No SAP write or new schema is involved.
 
+An active uploaded case with confirmed Not drafted status has Delete case. After confirmation, `DELETE /api/sap-inspector/grpos/:docEntry/import` rechecks the current source link, owner, Test company, saved draft status and case status. Drafted, posted, unknown-status and processing cases are rejected. A successful request uses the existing `decide_case` recycle action, preserves the PDFs, and shows Restore case linking to Recycle Bin. It never deletes a SAP document. This rechecks saved state at request time; it does not add a database lock around a simultaneous SAP draft creation.
+
 ## Source API
 
 The integration uses the existing server-only SAP Test Service Layer session and static egress proxy:
@@ -34,6 +36,6 @@ No schema migration, new tables, or SQL execution is required. The feature uses 
 
 ## PDF availability and navigation
 
-The sidebar includes Open GRPOs. Before enabling Download & analyze, the list reads SAP's `AttachmentEntry` and attachment metadata, with at most four concurrent metadata reads and a shared read for repeated attachment entries. Confirmed missing PDFs show No PDF attached and a disabled button. A failed or omitted metadata response instead shows PDF check unavailable; Refresh retries the check. The import endpoint still rechecks the receipt and attachments when clicked.
+The sidebar includes Unbilled Receipts. Its Add Folder button opens the existing `/workspace` PDF/image upload page; Add Case is removed from the sidebar. Before enabling Download & analyze, the list reads SAP's `AttachmentEntry` and attachment metadata, with at most four concurrent metadata reads and a shared read for repeated attachment entries. Confirmed missing PDFs show No PDF attached and a disabled button. A failed or omitted metadata response instead shows PDF check unavailable; Refresh retries the check. The import endpoint still rechecks the receipt and attachments when clicked.
 
 After upload and a confirmed analysis enqueue, imports and analysis retries navigate to `/cases/:id`, the same progress page used after manual uploads. The existing polling and results flow continue there. An enqueue failure leaves a saved case with the existing retry action.

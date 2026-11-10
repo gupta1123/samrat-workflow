@@ -7,9 +7,11 @@ import type { GrpoPdfAvailability, GrpoUploadState } from "@/lib/grpo-import";
 import {
   GrpoAnalysisStartError,
   importGrpoAndAnalyze,
+  recycleImportedGrpo,
 } from "@/lib/grpo-import-client";
 import { enqueueCaseAnalysis } from "@/lib/case-persistence";
-import { ChevronRight, Loader2, RefreshCw, Search } from "lucide-react";
+import { ChevronRight, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
+import { CaseConfirmDialog } from "@/components/cases/CaseConfirmDialog";
 
 import { apiFetch } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
@@ -178,6 +180,7 @@ function GrpoRows({
   progress,
   onImport,
   onRetry,
+  onDelete,
 }: {
   record: SapInspectorRecord;
   upload?: GrpoUploadState;
@@ -186,6 +189,7 @@ function GrpoRows({
   progress: string | null;
   onImport: () => void;
   onRetry: () => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const refs = referencesOf(record);
@@ -307,6 +311,23 @@ function GrpoRows({
                       {upload.deleted ? "Restore case" : "Open case"}
                     </Link>
                     {!upload.deleted &&
+                    upload.sapDraft?.status === "not_created" ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                        disabled={busy || upload.status === "processing"}
+                        title={
+                          upload.status === "processing"
+                            ? "Wait for analysis to finish before deleting."
+                            : undefined
+                        }
+                        onClick={onDelete}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete case
+                      </Button>
+                    ) : null}
+                    {!upload.deleted &&
                     ["draft", "failed"].includes(upload.status) ? (
                       <Button
                         disabled={busy}
@@ -399,6 +420,32 @@ export function OpenGrpoList() {
   const [progress, setProgress] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionCase, setActionCase] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    entry: string;
+    caseId: string;
+    number: string;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const deleteReceiptCase = async () => {
+    if (!pendingDelete || deleting || busyEntry) return;
+    setDeleting(true);
+    setBusyEntry(pendingDelete.entry);
+    setActionError(null);
+    try {
+      await recycleImportedGrpo(pendingDelete.entry, pendingDelete.caseId);
+      setPendingDelete(null);
+      setRefresh((v) => v + 1);
+    } catch (error) {
+      setPendingDelete(null);
+      setActionError(
+        error instanceof Error ? error.message : "Could not delete the case.",
+      );
+      setRefresh((v) => v + 1);
+    } finally {
+      setDeleting(false);
+      setBusyEntry(null);
+    }
+  };
   const changeTab = (next: "no" | "yes") => {
     setData(null);
     setTab(next);
@@ -569,8 +616,9 @@ export function OpenGrpoList() {
       ) : null}
       {busyEntry ? (
         <p role="status" className="mb-3 text-sm">
-          {progress ?? "Starting analysis…"} Keep this page open until the case
-          is saved.
+          {deleting
+            ? "Moving case to Recycle Bin…"
+            : `${progress ?? "Starting analysis…"} Keep this page open until the case is saved.`}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-3">
@@ -655,6 +703,15 @@ export function OpenGrpoList() {
                   if (upload)
                     void retryAnalysis(String(record.docEntry), upload.caseId);
                 }}
+                onDelete={() => {
+                  const upload = data?.uploads[String(record.docEntry)];
+                  if (upload)
+                    setPendingDelete({
+                      entry: String(record.docEntry),
+                      caseId: upload.caseId,
+                      number: record.docNumber ?? String(record.docEntry),
+                    });
+                }}
               />
             ))
           )}
@@ -725,6 +782,21 @@ export function OpenGrpoList() {
           </nav>
         </footer>
       ) : null}
+      <CaseConfirmDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setPendingDelete(null);
+        }}
+        title="Delete this case?"
+        description={
+          pendingDelete
+            ? `The case for receipt ${pendingDelete.number} will be moved to Recycle Bin. You can restore it there.`
+            : ""
+        }
+        confirmLabel="Move to Recycle Bin"
+        loading={deleting}
+        onConfirm={deleteReceiptCase}
+      />
     </section>
   );
 }

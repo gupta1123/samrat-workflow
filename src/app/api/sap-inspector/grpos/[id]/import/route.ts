@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { ApiError, jsonBody, uuid, withUser } from "@/server/api/helpers";
+import {
+  ApiError,
+  dbCheck,
+  jsonBody,
+  uuid,
+  withUser,
+} from "@/server/api/helpers";
 import { grpoEntry, withGrpoPdfs } from "@/server/sap/grpo-pdf";
 import {
   attachGrpoPdfs,
@@ -12,6 +18,51 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+export async function DELETE(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  return withUser(request, async (db, user) => {
+    const entry = grpoEntry((await context.params).id);
+    const body = await jsonBody(request);
+    const caseId = uuid(body?.caseId);
+    const company = process.env.SAP_SL_TEST_COMPANY_DB;
+    if (!company)
+      throw new ApiError("SAP Test company is not configured.", 503);
+    const prior = (
+      await grpoUploadStates(db, user, company, [{ docEntry: String(entry) }])
+    )[String(entry)];
+    if (!prior || prior.caseId !== caseId)
+      throw new ApiError(
+        "The uploaded case has changed. Refresh before deleting.",
+        409,
+      );
+    if (prior.deleted) return { caseId, deleted: true };
+    if (prior.sapDraft?.status !== "not_created")
+      throw new ApiError(
+        "Only cases confirmed as not drafted can be deleted here. Refresh the draft status.",
+        409,
+      );
+    if (prior.status === "processing")
+      throw new ApiError(
+        "Wait for analysis to finish before deleting this case.",
+        409,
+      );
+    const recycled = await db.rpc("decide_case", {
+      p_user: user,
+      p_case: caseId,
+      p_action: "recycle",
+    });
+    dbCheck(recycled.error);
+    if (!recycled.data?.deleted_at)
+      throw new ApiError(
+        "The case could not be confirmed in Recycle Bin. Refresh and check before retrying.",
+        503,
+      );
+    return { caseId, deleted: true };
+  });
+}
 
 export async function POST(
   request: Request,

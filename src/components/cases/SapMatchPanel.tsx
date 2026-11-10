@@ -552,15 +552,25 @@ export function SapMatchPanel({
               </div>
             ) : null}
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2.5 text-[11px]"
-            onClick={() => void recheck()}
-          >
-            <RefreshCw className="h-3 w-3" />{" "}
-            {needsReanalysis ? "Check SAP again" : "Try again"}
-          </Button>
+          {needsReanalysis ? (
+            <Button
+              asChild
+              size="sm"
+              variant="outline"
+              className="h-7 px-2.5 text-[11px]"
+            >
+              <Link href={`/cases/${caseId}`}>Review case</Link>
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2.5 text-[11px]"
+              onClick={() => void recheck()}
+            >
+              <RefreshCw className="h-3 w-3" /> Try again
+            </Button>
+          )}
         </div>
       </div>
     );

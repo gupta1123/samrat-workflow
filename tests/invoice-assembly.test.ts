@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   parseInvoiceAssemblies,
   type InvoiceAssembly,
+  InvoiceAssemblySourceConflict,
 } from "../src/lib/invoice-assembly";
 import { FIELD_DEFINITIONS } from "../src/server/document-schema";
 import { serializeFieldsWithLineItems } from "../src/server/line-items";
@@ -294,6 +295,40 @@ test("excluded copies require explicit duplicate decisions and identical billing
     lineItems: [{ ...copy.lineItems[0], quantity: "2" }],
   };
   assert.ok(match([header, annex, changed], [plan])?.extractionIssue);
+});
+
+test("duplicate rows and identity conflicts request one targeted reread of every affected page", () => {
+  const copy = {
+    ...annex,
+    id: "copy",
+    fields: { ...annex.fields, supplierGstin: "29ZZZZZ1234F1Z5" },
+    lineItems: [{ ...annex.lineItems![0], quantity: "2", sourcePage: 3 }],
+  };
+  const plan = assembly();
+  plan.documents.push({
+    docId: "copy",
+    role: "duplicate",
+    duplicateOfDocId: "annex",
+  });
+  assert.throws(
+    () => parseInvoiceAssemblies([plan], [header, annex, copy], fields),
+    (error) => {
+      assert.ok(error instanceof InvoiceAssemblySourceConflict);
+      assert.deepEqual(
+        new Set(error.documentIds),
+        new Set(["header", "annex", "copy"]),
+      );
+      assert.equal(error.documentIds.length, 3);
+      assert.match(error.message, /duplicate.*billing table exactly/);
+      assert.match(error.message, /conflicting supplierGstin/);
+      assert.match(error.recheckReason, /never copy another page/);
+      assert.match(error.recheckReason, /manual review/);
+      assert.doesNotMatch(error.message, /Independently reread/);
+      return true;
+    },
+  );
+  assert.equal(copy.fields.supplierGstin, "29ZZZZZ1234F1Z5");
+  assert.equal(copy.lineItems[0].quantity, "2");
 });
 
 test("a printed currency code and its unambiguous standard symbol agree without changing source values", () => {

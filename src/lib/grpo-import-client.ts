@@ -8,6 +8,29 @@ type Prepared = Partial<GrpoImportResult> & {
   manifest?: string;
   session?: string;
 };
+
+export async function recycleImportedGrpo(
+  entry: string,
+  caseId: string,
+  fetcher = apiFetch,
+) {
+  const response = await fetcher(
+    `/api/sap-inspector/grpos/${encodeURIComponent(entry)}/import`,
+    {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ caseId }),
+    },
+  );
+  const body = await response.json();
+  if (!response.ok)
+    throw new Error(body.error || "Could not move the case to Recycle Bin.");
+  if (body.caseId !== caseId || body.deleted !== true)
+    throw new Error(
+      "Deletion could not be confirmed. Refresh to check the case.",
+    );
+}
+
 export async function importGrpoAndAnalyze(
   entry: string,
   progress: (label: string) => void,

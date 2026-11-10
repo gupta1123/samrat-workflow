@@ -32,6 +32,18 @@ packet groups, clauses, and all mismatch decisions in one response.
    This establishes shipment groups, buyer-facing versus upstream invoice roles,
    case references, explicit clauses, and new grounded findings. A concrete
    contradiction requests a recheck of the affected source, not silent edits.
+   Invoice-copy row disagreements and conflicting supplier/buyer GSTINs or
+   currencies use the same typed source-recheck path as conflicting supply
+   classifications. All affected pages and conflict types are collected before
+   scheduling one bounded reread, so a row defect cannot hide a second identity
+   defect. Each source is read only against its own pages, with no expected
+   replacement value, SAP lookup, majority vote or numeric harmonization.
+   Reconciliation then runs again. Duplicates still require explicitly reviewed
+   roles and identical verified rows; continued billing rows remain included.
+   Persisting source conflicts exhaust the bounded retry and retain a review
+   block. A proposal accepted only to schedule a reread is never checkpointed as
+   a verified assembly. The v25 review contract prevents earlier review
+   checkpoints from bypassing these rules.
 4. Adjudicate candidate mismatches in small batches. Every batch still sees the
    full packet and the accepted reconciliation; only its requested decisions
    belong in its response.

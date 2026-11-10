@@ -7,7 +7,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from "undici";
 import { grpoPdfAvailability } from "../src/server/sap/grpo-pdf-availability";
 import { GET as listRoute } from "../src/app/api/sap-inspector/open-grpos/route";
-import { POST as importRoute } from "../src/app/api/sap-inspector/grpos/[id]/import/route";
+import {
+  POST as importRoute,
+  DELETE as deleteImportRoute,
+} from "../src/app/api/sap-inspector/grpos/[id]/import/route";
 import {
   pdfAttachments,
   readBoundedPdf,
@@ -17,6 +20,7 @@ import { importAssetId, grpoUploadStates } from "../src/server/sap/grpo-import";
 import {
   importGrpoAndAnalyze,
   GrpoAnalysisStartError,
+  recycleImportedGrpo,
 } from "../src/lib/grpo-import-client";
 import { createSupabaseAdminClient } from "../src/server/supabase/admin";
 import { GrpoDraftBadge } from "../src/components/sap/GrpoDraftBadge";
@@ -79,6 +83,7 @@ async function setup(t: TestContext) {
     files: [] as MockRow[],
     postings: [] as MockRow[],
     postingReads: [] as URLSearchParams[],
+    caseMutations: [] as MockRow[],
     objects: new Map<string, Buffer>(),
     sapWrites: [] as string[],
   };
@@ -240,6 +245,16 @@ async function setup(t: TestContext) {
           }
         }
         return Response.json({ case: state.cases[0] });
+      }
+      if (url.pathname === "/rest/v1/rpc/decide_case") {
+        assert.equal(body.p_action, "recycle");
+        const c = state.cases.find(
+          (c) => c.id === body.p_case && c.owner_user_id === body.p_user,
+        );
+        assert.ok(c, "Only an owned imported case can be recycled");
+        state.caseMutations.push(body);
+        c.deleted_at = new Date().toISOString();
+        return Response.json(c);
       }
       if (url.pathname.startsWith("/storage/v1/object/")) {
         const path = decodeURIComponent(url.pathname).replace(
@@ -574,6 +589,104 @@ test("draft badge displays a SAP number and keeps unavailable distinct from not 
   assert.match(render({ status: "not_created" }), />Not drafted</);
   assert.match(render({ status: "posted" }), />Invoice posted</);
   assert.match(render(), />Draft status unavailable</);
+});
+
+function deleteReceipt(
+  caseToDelete = caseId,
+  headers: Record<string, string> = {},
+) {
+  return deleteImportRoute(
+    new Request("https://app.invalid/api/sap-inspector/grpos/42/import", {
+      method: "DELETE",
+      headers: {
+        Authorization: "Bearer " + jwt(owner),
+        Origin: "https://app.invalid",
+        "Content-Type": "application/json",
+        ...headers,
+      },
+      body: JSON.stringify({ caseId: caseToDelete }),
+    }),
+    { params: Promise.resolve({ id: "42" }) },
+  );
+}
+
+test("delete uploaded receipt rechecks the draft and moves only its case to Recycle Bin", async (t) => {
+  const { state, read } = await draftStatusFixture(t);
+  const result = await deleteReceipt();
+  assert.equal(result.status, 200);
+  assert.deepEqual(await result.json(), { caseId, deleted: true });
+  assert.equal(state.caseMutations.length, 1);
+  assert.equal((await read())[42].deleted, true);
+  assert.equal(state.files.length, 1, "Soft deletion preserves source files");
+  assert.equal(state.sapWrites.length, 0);
+  assert.equal((await deleteReceipt()).status, 200);
+  assert.equal(
+    state.caseMutations.length,
+    1,
+    "A repeated confirmation is idempotent",
+  );
+});
+
+test("a newly saved SAP draft, a posted invoice, or an unavailable check blocks stale delete clicks", async (t) => {
+  const { state, posting, read } = await draftStatusFixture(t);
+  assert.equal((await read())[42].sapDraft?.status, "not_created");
+  state.postings.push(posting);
+  assert.equal((await deleteReceipt()).status, 409);
+  state.postings[0].status = "posted";
+  assert.equal((await deleteReceipt()).status, 409);
+  state.postings = [];
+  state.failDraftRead = true;
+  assert.equal((await deleteReceipt()).status, 409);
+  assert.equal(state.caseMutations.length, 0);
+  assert.equal(state.cases[0].deleted_at, null);
+});
+
+test("deletion rejects processing, changed, unlinked, cross-account and cross-origin cases", async (t) => {
+  const { state } = await draftStatusFixture(t);
+  state.cases[0].status = "processing";
+  assert.equal((await deleteReceipt()).status, 409);
+  state.cases[0].status = "completed";
+  assert.equal(
+    (await deleteReceipt("44444444-4444-4444-8444-444444444444")).status,
+    409,
+  );
+  assert.ok(
+    [401, 403].includes(
+      (await deleteReceipt(caseId, { Origin: "https://foreign.invalid" }))
+        .status,
+    ),
+  );
+  assert.ok(
+    [401, 403].includes(
+      (await deleteReceipt(caseId, { Authorization: "Basic invalid" })).status,
+    ),
+  );
+  state.cases[0].owner_user_id = other;
+  assert.equal((await deleteReceipt()).status, 409);
+  state.cases[0].owner_user_id = owner;
+  state.files = [];
+  assert.equal((await deleteReceipt()).status, 409);
+  assert.equal(state.caseMutations.length, 0);
+});
+
+test("delete client only accepts a confirmed recycled case and reports server rejection", async () => {
+  await recycleImportedGrpo("42", caseId, async (url, init) => {
+    assert.equal(url, "/api/sap-inspector/grpos/42/import");
+    assert.equal(init?.method, "DELETE");
+    assert.deepEqual(JSON.parse(String(init?.body)), { caseId });
+    return Response.json({ caseId, deleted: true });
+  });
+  await assert.rejects(
+    () =>
+      recycleImportedGrpo("42", caseId, async () =>
+        Response.json({ error: "Draft already saved" }, { status: 409 }),
+      ),
+    /Draft already saved/,
+  );
+  await assert.rejects(
+    () => recycleImportedGrpo("42", caseId, async () => Response.json({})),
+    /Deletion could not be confirmed/,
+  );
 });
 
 test("oversized or incomplete PDFs are rejected and attachment selection preserves SAP filenames", async () => {
