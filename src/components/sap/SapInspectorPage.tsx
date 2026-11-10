@@ -416,7 +416,7 @@ export function SapInspectorPage() {
                 a packet cannot find or use that record.
               </p>
               <Link href="/sap-inspector/open-grpos" className="mt-2 inline-block text-sm font-semibold text-[#6b3d20] underline">
-                Open GRPO Inspector
+                Unbilled Receipts
               </Link>
             </div>
             {activeTab !== "items" && activeTab !== "business-partners" && activeTab !== "grpo" ? <div className="flex items-center gap-2">

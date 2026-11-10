@@ -44,7 +44,7 @@ const sections = [
       { href: "/cases", label: "All Cases", icon: FolderOpen },
       {
         href: "/sap-inspector/open-grpos",
-        label: "Open GRPOs",
+        label: "Unbilled Receipts",
         icon: PackageOpen,
       },
     ],

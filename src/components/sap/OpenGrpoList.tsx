@@ -568,7 +568,7 @@ export function OpenGrpoList() {
         <label className="flex h-11 min-w-0 flex-[1_1_280px] items-center gap-2 rounded-xl border border-[#ddd4c8] bg-white px-3.5 focus-within:border-[#b9a78f] focus-within:ring-4 focus-within:ring-[#6b3d20]/10">
           <Search className="h-4 w-4 shrink-0 text-[#9a8f84]" />
           <input
-            aria-label="Search open GRPOs"
+            aria-label="Search unbilled receipts"
             placeholder="Search supplier, invoice, truck or GRPO no."
             maxLength={100}
             value={text}
@@ -658,7 +658,7 @@ export function OpenGrpoList() {
             ? "No matching GRPOs on this page. Choose Older to keep looking."
             : search
               ? "Nothing found. Try another word."
-              : "No matching open GRPOs on this page."}
+              : "No matching unbilled receipts on this page."}
         </p>
       ) : null}
 
