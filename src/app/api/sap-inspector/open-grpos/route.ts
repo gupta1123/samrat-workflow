@@ -24,7 +24,7 @@ export async function GET(request: Request) {
       throw new ApiError("Invalid GRPO search.");
     }
     const tab = params.get("uploaded") ?? "no";
-    if (tab !== "yes" && tab !== "no")
+    if (tab !== "yes" && tab !== "no" && tab !== "all")
       throw new ApiError("Invalid upload tab.");
     const config = sapFieldConfig();
     const company = process.env.SAP_SL_TEST_COMPANY_DB;
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
           consumed++;
           const saved = states[String(record.docEntry)];
           const upload = saved?.deleted ? undefined : saved;
-          if (Boolean(upload) === (tab === "yes")) {
+          if (tab === "all" || Boolean(upload) === (tab === "yes")) {
             records.push(record);
             if (upload) uploads[String(record.docEntry)] = upload;
           }
@@ -81,13 +81,36 @@ export async function GET(request: Request) {
             .map((l) => l.baseEntry!),
         ),
       ];
-      const purchaseOrders = poEntries.length
-        ? await client.listPurchaseOrdersByEntries(poEntries)
-        : [];
-      const pdfs = await grpoPdfAvailability(
-        records.filter((r) => !uploads[String(r.docEntry)]),
-        (entry) => client.getAttachmentMetadata(entry),
-      );
+      const unuploaded = records.filter((r) => !uploads[String(r.docEntry)]);
+      const readPdfs = async () => {
+        if (tab !== "all") {
+          return grpoPdfAvailability(unuploaded, client.getAttachmentMetadata);
+        }
+        const attachmentEntries = [
+          ...new Set(
+            unuploaded.flatMap(({ raw }) => {
+              const entry = raw.AttachmentEntry;
+              return typeof entry === "number" &&
+                Number.isSafeInteger(entry) &&
+                entry > 0
+                ? [entry]
+                : [];
+            }),
+          ),
+        ];
+        const attachments =
+          await client.listAttachmentMetadataByEntries(attachmentEntries);
+        return grpoPdfAvailability(
+          unuploaded,
+          async (entry) => attachments.get(entry) ?? {},
+        );
+      };
+      const [purchaseOrders, pdfs] = await Promise.all([
+        poEntries.length
+          ? client.listPurchaseOrdersByEntries(poEntries, tab === "all" ? 40 : 15)
+          : [],
+        readPdfs(),
+      ]);
       return {
         pdfs,
         records: normalizeSapInspectorRecords(

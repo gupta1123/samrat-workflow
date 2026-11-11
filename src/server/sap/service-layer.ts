@@ -186,6 +186,9 @@ export async function withTestServiceLayer<T>(
       query: ItemsQuery,
     ) => Promise<Record<string, unknown>[]>;
     getAttachmentMetadata: (entry: number) => Promise<Record<string, unknown>>;
+    listAttachmentMetadataByEntries: (
+      entries: number[],
+    ) => Promise<Map<number, Record<string, unknown>>>;
     listInspectorGrposPage: (
       query: GrpoInspectorQuery,
       fields: GrpoReferenceFields,
@@ -216,6 +219,7 @@ export async function withTestServiceLayer<T>(
     ) => Promise<SapMatchDocument[]>;
     listPurchaseOrdersByEntries: (
       entries: number[],
+      batchSize?: 15 | 40,
     ) => Promise<SapMatchDocument[]>;
     listItemsByCodes: (codes: string[]) => Promise<SapItemRow[]>;
     searchItems: (query: string) => Promise<SapItemRow[]>;
@@ -333,13 +337,17 @@ export async function withTestServiceLayer<T>(
     return Number.isInteger(body.Series) ? [body as SapNumberingSeries] : [];
   }
 
-  async function pageAll<T>(path: string, max: number): Promise<T[]> {
+  async function pageAll<T>(
+    path: string,
+    max: number,
+    init?: RequestInit,
+  ): Promise<T[]> {
     try {
       return await readODataCollection<T>({
         initialPath: path,
         baseUrl: config.baseUrl,
         max,
-        read: async (nextPath) => (await request(nextPath)).body,
+        read: async (nextPath) => (await request(nextPath, init)).body,
       });
     } catch (error) {
       const entity = path.split("?", 1)[0];
@@ -737,10 +745,40 @@ export async function withTestServiceLayer<T>(
           throw new Error("Invalid SAP attachment entry.");
         return (await request(`/Attachments2(${entry})`)).body;
       },
+      async listAttachmentMetadataByEntries(entries) {
+        const attachments = new Map<number, Record<string, unknown>>();
+        for (let start = 0; start < entries.length; start += 40) {
+          const batch = entries.slice(start, start + 40);
+          const params = new URLSearchParams({
+            $select: "AbsoluteEntry,Attachments2_Lines",
+            $filter: batch
+              .map((entry) => `AbsoluteEntry eq ${entry}`)
+              .join(" or "),
+          });
+          try {
+            const rows = await pageAll<Record<string, unknown>>(
+              `/Attachments2?${params}`,
+              batch.length,
+              { headers: { Prefer: "odata.maxpagesize=100" } },
+            );
+            for (const row of rows) {
+              if (
+                typeof row.AbsoluteEntry === "number" &&
+                batch.includes(row.AbsoluteEntry)
+              )
+                attachments.set(row.AbsoluteEntry, row);
+            }
+          } catch {
+            // Missing responses are shown as unavailable by the receipt list.
+          }
+        }
+        return attachments;
+      },
       async listInspectorGrposPage(query, fields) {
         return pageAll<Record<string, unknown>>(
           grpoInspectorReadPath(query, fields),
           query.limit + 1,
+          { headers: { Prefer: "odata.maxpagesize=100" } },
         );
       },
       async searchSuppliers(query) {
@@ -911,19 +949,23 @@ export async function withTestServiceLayer<T>(
           1000,
         );
       },
-      async listPurchaseOrdersByEntries(entries) {
+      async listPurchaseOrdersByEntries(entries, batchSize = 15) {
         const unique = [...new Set(entries.filter(Number.isInteger))];
         const documents: SapMatchDocument[] = [];
-        for (let start = 0; start < unique.length; start += 15) {
+        for (let start = 0; start < unique.length; start += batchSize) {
           const filter = unique
-            .slice(start, start + 15)
+            .slice(start, start + batchSize)
             .map((entry) => `DocEntry eq ${entry}`)
             .join(" or ");
+          const path = `/PurchaseOrders?$filter=${encodeURIComponent(filter)}`;
           documents.push(
-            ...(await collectionOnce<SapMatchDocument>(
-              `/PurchaseOrders?$filter=${encodeURIComponent(filter)}`,
-              15,
-            )),
+            ...(batchSize === 40
+              ? await pageAll<SapMatchDocument>(
+                  path,
+                  Math.min(batchSize, unique.length - start),
+                  { headers: { Prefer: "odata.maxpagesize=100" } },
+                )
+              : await collectionOnce<SapMatchDocument>(path, batchSize)),
           );
         }
         return documents;

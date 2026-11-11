@@ -1,6 +1,75 @@
 import { apiFetch } from "./api-client";
 import { enqueueCaseAnalysis } from "./case-persistence";
-import type { GrpoImportResult } from "./grpo-import";
+import type {
+  GrpoImportResult,
+  GrpoPdfAvailability,
+  GrpoUploadState,
+} from "./grpo-import";
+import type { SapInspectorRecord } from "./sap-inspector";
+
+type OpenReceiptSnapshot = {
+  records: SapInspectorRecord[];
+  uploads: Record<string, GrpoUploadState>;
+  pdfs: Record<string, GrpoPdfAvailability>;
+};
+
+export async function fetchOpenReceiptSnapshot(
+  signal: AbortSignal,
+  onProgress: (count: number) => void,
+  fetcher = apiFetch,
+): Promise<OpenReceiptSnapshot> {
+  const records = new Map<string, SapInspectorRecord>();
+  const uploads: OpenReceiptSnapshot["uploads"] = {};
+  const pdfs: OpenReceiptSnapshot["pdfs"] = {};
+  const params = new URLSearchParams({ uploaded: "all", limit: "70" });
+  let cursor: number | null = null;
+
+  do {
+    signal.throwIfAborted();
+    if (cursor !== null) params.set("before", String(cursor));
+    const response = await fetcher(`/api/sap-inspector/open-grpos?${params}`, {
+      cache: "no-store",
+      signal,
+    });
+    const body = (await response.json().catch(() => null)) as
+      | (OpenReceiptSnapshot & { nextCursor: number | null; error?: string })
+      | null;
+    signal.throwIfAborted();
+    if (!response.ok) {
+      throw new Error(
+        body?.error || "Could not load unbilled receipts from SAP.",
+      );
+    }
+    if (
+      !body ||
+      !Array.isArray(body.records) ||
+      !body.uploads ||
+      !body.pdfs ||
+      (body.nextCursor !== null &&
+        (!Number.isSafeInteger(body.nextCursor) ||
+          body.nextCursor <= 0 ||
+          (cursor !== null && body.nextCursor >= cursor)))
+    ) {
+      throw new Error("SAP returned an incomplete receipt list. Try again.");
+    }
+    for (const record of body.records) {
+      if (!record.docEntry) {
+        throw new Error("SAP returned a receipt without a document entry.");
+      }
+      records.set(record.docEntry, record);
+      const upload = body.uploads[record.docEntry];
+      const pdf = body.pdfs[record.docEntry];
+      if (upload) uploads[record.docEntry] = upload;
+      else delete uploads[record.docEntry];
+      if (pdf) pdfs[record.docEntry] = pdf;
+      else delete pdfs[record.docEntry];
+    }
+    cursor = body.nextCursor;
+    onProgress(records.size);
+  } while (cursor !== null);
+
+  return { records: [...records.values()], uploads, pdfs };
+}
 
 type Prepared = Partial<GrpoImportResult> & {
   files?: Array<{ index: number; name: string }>;

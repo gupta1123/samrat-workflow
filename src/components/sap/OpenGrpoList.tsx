@@ -6,19 +6,21 @@ import { useRouter } from "next/navigation";
 import type { GrpoPdfAvailability, GrpoUploadState } from "@/lib/grpo-import";
 import {
   GrpoAnalysisStartError,
+  fetchOpenReceiptSnapshot,
   importGrpoAndAnalyze,
   recycleImportedGrpo,
 } from "@/lib/grpo-import-client";
-import { enqueueCaseAnalysis } from "@/lib/case-persistence";
+import {
+  enqueueCaseAnalysis,
+  fetchCaseAnalysisStatus,
+} from "@/lib/case-persistence";
 import { ChevronRight, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
 import { CaseConfirmDialog } from "@/components/cases/CaseConfirmDialog";
 
-import { apiFetch } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { GrpoDraftBadge } from "@/components/sap/GrpoDraftBadge";
 import type { SapInspectorLine, SapInspectorRecord } from "@/lib/sap-inspector";
-import type { GrpoInspectorPage } from "@/lib/sap-grpo-inspector";
 
 const PAGE_SIZE = 10;
 const number = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 6 });
@@ -74,6 +76,29 @@ function referencesOf(record: SapInspectorRecord) {
     eWayBill: all("eWayBill"),
     lorryReceipt: all("lorryReceipt"),
   };
+}
+
+function matchesSearch(record: SapInspectorRecord, search: string) {
+  if (!search) return true;
+  const documentSearch = search.replace(/^0+(?=\d)/, "");
+  if (record.docNumber === documentSearch || record.docEntry === documentSearch)
+    return true;
+  const refs = referencesOf(record);
+  const truckSearch = search.replace(/[\s-]/g, "");
+  if (
+    truckSearch &&
+    refs.truck.some((truck) => truck.toLowerCase().includes(truckSearch))
+  )
+    return true;
+  return [
+    record.vendorName,
+    record.vendorCode,
+    record.vendorReference,
+    record.comments,
+    ...refs.invoice,
+    ...refs.eWayBill,
+    ...refs.lorryReceipt,
+  ].some((value) => value?.toLowerCase().includes(search));
 }
 
 const HEAD =
@@ -400,21 +425,14 @@ function SkeletonRows() {
 export function OpenGrpoList() {
   const router = useRouter();
   const [text, setText] = useState("");
-  const [search, setSearch] = useState("");
-  const [cursors, setCursors] = useState<Array<number | null>>([null]);
   const [page, setPage] = useState(0);
   const [refresh, setRefresh] = useState(0);
-  const [data, setData] = useState<
-    | (GrpoInspectorPage & {
-        uploads: Record<string, GrpoUploadState>;
-        pdfs: Record<string, GrpoPdfAvailability>;
-        company: string;
-      })
-    | null
-  >(null);
+  const [data, setData] = useState<Awaited<
+    ReturnType<typeof fetchOpenReceiptSnapshot>
+  > | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadedCount, setLoadedCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const cursor = cursors[page];
   const [tab, setTab] = useState<"no" | "yes">("no");
   const [busyEntry, setBusyEntry] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
@@ -426,6 +444,10 @@ export function OpenGrpoList() {
     number: string;
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const refreshReceipts = () => {
+    setPage(0);
+    setRefresh((value) => value + 1);
+  };
   const deleteReceiptCase = async () => {
     if (!pendingDelete || deleting || busyEntry) return;
     setDeleting(true);
@@ -436,23 +458,21 @@ export function OpenGrpoList() {
       setPendingDelete(null);
       setActionCase(null);
       changeTab("no");
-      setRefresh((v) => v + 1);
+      refreshReceipts();
     } catch (error) {
       setPendingDelete(null);
       setActionError(
         error instanceof Error ? error.message : "Could not delete the case.",
       );
-      setRefresh((v) => v + 1);
+      refreshReceipts();
     } finally {
       setDeleting(false);
       setBusyEntry(null);
     }
   };
   const changeTab = (next: "no" | "yes") => {
-    setData(null);
     setTab(next);
     setPage(0);
-    setCursors([null]);
   };
   const importReceipt = async (entry: string) => {
     if (busyEntry) return;
@@ -469,7 +489,7 @@ export function OpenGrpoList() {
       if (error instanceof GrpoAnalysisStartError) {
         setActionCase(error.caseId);
         changeTab("yes");
-        setRefresh((v) => v + 1);
+        refreshReceipts();
       }
     } finally {
       setBusyEntry(null);
@@ -492,64 +512,21 @@ export function OpenGrpoList() {
     }
   };
   useEffect(() => {
-    if (
-      tab !== "yes" ||
-      !data?.records.some(
-        (r) => data.uploads[String(r.docEntry)]?.status === "processing",
-      )
-    )
-      return;
-    const timer = setTimeout(() => setRefresh((v) => v + 1), 15000);
-    return () => clearTimeout(timer);
-  }, [tab, data]);
-
-  // Search while typing, without a request for every keystroke.
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const next = text.trim();
-      if (next === search) return;
-      setSearch(next);
-      setPage(0);
-      setCursors([null]);
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [text, search]);
-
-  useEffect(() => {
     let active = true;
     const controller = new AbortController();
     setData(null);
     setError(null);
     setLoading(true);
-    const params = new URLSearchParams({
-      q: search,
-      supplier: "",
-      status: "open",
-      uploaded: tab,
-      limit: String(PAGE_SIZE),
-    });
-    if (cursor !== null) params.set("before", String(cursor));
+    setLoadedCount(0);
     void (async () => {
       try {
-        const response = await apiFetch(
-          `/api/sap-inspector/open-grpos?${params}`,
-          {
-            cache: "no-store",
-            signal: controller.signal,
+        const snapshot = await fetchOpenReceiptSnapshot(
+          controller.signal,
+          (count) => {
+            if (active) setLoadedCount(count);
           },
         );
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "Could not read SAP.");
-        if (!Array.isArray(body.records))
-          throw new Error("SAP sent an unexpected answer.");
-        if (active) {
-          setData(body);
-          setCursors((current) => {
-            if (body.nextCursor === null) return current.slice(0, page + 1);
-            if (current[page + 1] === body.nextCursor) return current;
-            return [...current.slice(0, page + 1), body.nextCursor];
-          });
-        }
+        if (active) setData(snapshot);
       } catch (failure) {
         if (active && !controller.signal.aborted)
           setError(
@@ -563,15 +540,75 @@ export function OpenGrpoList() {
       active = false;
       controller.abort();
     };
-  }, [search, cursor, refresh, tab, page]);
+  }, [refresh]);
 
+  const search = text.trim().toLowerCase();
   const stillOpen = useMemo(
     () =>
-      data?.records.filter((record) =>
-        record.lines.some((line) => isOpen(line) || line.openQuantity === null),
+      data?.records.filter(
+        (record) =>
+          Boolean(data.uploads[String(record.docEntry)]) === (tab === "yes") &&
+          record.lines.some(
+            (line) => isOpen(line) || line.openQuantity === null,
+          ) &&
+          matchesSearch(record, search),
       ) ?? [],
-    [data],
+    [data, search, tab],
   );
+  const pageCount = Math.ceil(stillOpen.length / PAGE_SIZE);
+  const firstRow = page * PAGE_SIZE;
+  const visibleReceipts = useMemo(
+    () => stillOpen.slice(firstRow, firstRow + PAGE_SIZE),
+    [stillOpen, firstRow],
+  );
+
+  useEffect(() => {
+    if (!data || tab !== "yes" || loading) return;
+    const caseIds = new Set(
+      visibleReceipts.flatMap((receipt) => {
+        const upload = data.uploads[String(receipt.docEntry)];
+        return upload?.status === "processing" ? [upload.caseId] : [];
+      }),
+    );
+    if (!caseIds.size) return;
+
+    let active = true;
+    const poll = async () => {
+      const results = await Promise.allSettled(
+        [...caseIds].map(async (caseId) => {
+          const { caseStatus } = await fetchCaseAnalysisStatus(caseId);
+          return [caseId, caseStatus] as const;
+        }),
+      );
+      if (!active) return;
+      const changed = new Map(
+        results.flatMap((result) =>
+          result.status === "fulfilled" && result.value[1] !== "processing"
+            ? [result.value]
+            : [],
+        ),
+      );
+      if (!changed.size) {
+        timer = setTimeout(poll, 15000);
+        return;
+      }
+      setData((current) => {
+        if (current !== data) return current;
+        const uploads = { ...data.uploads };
+        for (const [entry, upload] of Object.entries(uploads)) {
+          const status = changed.get(upload.caseId);
+          if (status && upload.status === "processing")
+            uploads[entry] = { ...upload, status };
+        }
+        return { ...data, uploads };
+      });
+    };
+    let timer = setTimeout(poll, 15000);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [data, tab, loading, visibleReceipts]);
 
   return (
     <section className="mt-6">
@@ -631,7 +668,10 @@ export function OpenGrpoList() {
             placeholder="Search supplier, invoice, truck or GRPO no."
             maxLength={100}
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => {
+              setText(event.target.value);
+              setPage(0);
+            }}
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#9a8f84]"
           />
         </label>
@@ -639,11 +679,7 @@ export function OpenGrpoList() {
           variant="outline"
           className="h-11 rounded-xl border-[#ddd4c8] bg-white px-4 text-sm"
           disabled={loading}
-          onClick={() => {
-            setPage(0);
-            setCursors([null]);
-            setRefresh((value) => value + 1);
-          }}
+          onClick={refreshReceipts}
         >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -654,6 +690,12 @@ export function OpenGrpoList() {
         </Button>
       </div>
 
+      {loading && loadedCount > 0 ? (
+        <p role="status" className="mt-3 text-sm text-[#81766b]">
+          Loading receipts from SAP… {number.format(loadedCount)} received
+        </p>
+      ) : null}
+
       {error ? (
         <div
           role="alert"
@@ -663,7 +705,7 @@ export function OpenGrpoList() {
           <Button
             variant="outline"
             className="h-9 bg-white"
-            onClick={() => setRefresh((value) => value + 1)}
+            onClick={refreshReceipts}
           >
             Try again
           </Button>
@@ -691,7 +733,7 @@ export function OpenGrpoList() {
           {loading ? (
             <SkeletonRows />
           ) : (
-            stillOpen.map((record) => (
+            visibleReceipts.map((record) => (
               <GrpoRows
                 key={record.id}
                 record={record}
@@ -722,19 +764,20 @@ export function OpenGrpoList() {
 
       {data && !loading && !stillOpen.length && !error ? (
         <p className="mt-10 text-center text-sm text-[#81766b]">
-          {data.nextCursor !== null
-            ? "No matching GRPOs on this page. Choose Next to keep looking."
-            : search
-              ? "Nothing found. Try another word."
-              : "No matching unbilled receipts on this page."}
+          {search
+            ? "Nothing found. Try another word."
+            : "No unbilled receipts in this tab."}
         </p>
       ) : null}
 
-      {data ? (
+      {data && stillOpen.length > 0 ? (
         <footer className="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-[#81766b]">
           <span>
-            {stillOpen.length} {stillOpen.length === 1 ? "receipt" : "receipts"}{" "}
-            · {PAGE_SIZE} per page
+            {number.format(firstRow + 1)}–
+            {number.format(firstRow + visibleReceipts.length)}
+            {" of "}
+            {number.format(stillOpen.length)}{" "}
+            {stillOpen.length === 1 ? "receipt" : "receipts"}
           </span>
           <nav
             aria-label="Receipt pagination"
@@ -748,13 +791,13 @@ export function OpenGrpoList() {
             >
               Previous
             </Button>
-            {cursors.map((_, index) => {
+            {Array.from({ length: pageCount }, (_, index) => {
               const visible =
                 index === 0 ||
-                index === cursors.length - 1 ||
+                index === pageCount - 1 ||
                 Math.abs(index - page) <= 2;
               if (!visible)
-                return index === 1 || index === cursors.length - 2 ? (
+                return index === 1 || index === pageCount - 2 ? (
                   <span key={index} className="px-1">
                     …
                   </span>
@@ -776,7 +819,7 @@ export function OpenGrpoList() {
             <Button
               variant="outline"
               className="h-9 bg-white"
-              disabled={data.nextCursor === null || loading}
+              disabled={page + 1 >= pageCount || loading}
               onClick={() => setPage((value) => value + 1)}
             >
               Next

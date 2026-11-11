@@ -18,6 +18,7 @@ import {
 } from "../src/server/sap/grpo-pdf";
 import { importAssetId, grpoUploadStates } from "../src/server/sap/grpo-import";
 import {
+  fetchOpenReceiptSnapshot,
   importGrpoAndAnalyze,
   GrpoAnalysisStartError,
   recycleImportedGrpo,
@@ -164,6 +165,31 @@ async function setup(t: TestContext) {
           },
         ]),
         responseOptions: { headers: { "content-type": "application/zip" } },
+      };
+    })
+    .persist();
+  sap
+    .intercept({ path: /^\/b1s\/v1\/Attachments2\?/, method: "GET" })
+    .reply((options) => {
+      const filter = new URL(
+        String(options.path),
+        "https://sap.invalid",
+      ).searchParams.get("$filter");
+      assert.ok(filter);
+      return {
+        statusCode: 200,
+        data: JSON.stringify({
+          value: filter.includes("AbsoluteEntry eq 9")
+            ? [
+                {
+                  AbsoluteEntry: 9,
+                  Attachments2_Lines: [
+                    { FileName: "invoice", FileExtension: "pdf" },
+                  ],
+                },
+              ]
+            : [],
+        }),
       };
     })
     .persist();
@@ -1148,4 +1174,77 @@ test("receipt list defaults to ten receipts and continues without dropping recor
     new Set([...first.records, ...second.records].map((r) => r.docEntry)).size,
     16,
   );
+});
+
+test("the receipt snapshot loads both tabs across SAP batches before returning", async (t) => {
+  const { call, session, listRows } = await setup(t);
+  const s = await session();
+  await call({ ...s, action: "file", index: 0 });
+  await call({ ...s, action: "finish" });
+  for (let id = 80; id >= 1; id--) {
+    if (id >= 41 && id <= 45) continue;
+    listRows.push({
+      ...listRows[0],
+      DocEntry: id,
+      DocNum: 100 + id,
+      AttachmentEntry: id === 1 ? 10 : null,
+    });
+  }
+  listRows.sort((a, b) => b.DocEntry - a.DocEntry);
+  const requestedCursors: Array<string | null> = [];
+  const progress: number[] = [];
+  const snapshot = await fetchOpenReceiptSnapshot(
+    new AbortController().signal,
+    (count) => progress.push(count),
+    async (path, init) => {
+      const url = new URL(path, "https://app.invalid");
+      requestedCursors.push(url.searchParams.get("before"));
+      return listRoute(
+        new Request(url, {
+          ...init,
+          headers: { Authorization: "Bearer " + jwt(owner) },
+        }),
+      );
+    },
+  );
+  assert.deepEqual(requestedCursors, [null, "11"]);
+  assert.deepEqual(progress, [70, 80]);
+  assert.deepEqual(
+    snapshot.records.map((record) => Number(record.docEntry)),
+    listRows.map((row) => row.DocEntry),
+  );
+  assert.equal(snapshot.uploads[42].caseId, caseId);
+  assert.equal(snapshot.pdfs[42], undefined);
+  assert.equal(snapshot.pdfs[45].status, "available");
+  assert.equal(snapshot.pdfs[44].status, "missing");
+  assert.equal(snapshot.pdfs[1].status, "unavailable");
+});
+
+test("a failed or repeated continuation never returns a partial receipt snapshot", async () => {
+  for (const repeated of [false, true]) {
+    let requests = 0;
+    await assert.rejects(
+      fetchOpenReceiptSnapshot(
+        new AbortController().signal,
+        () => {},
+        async () => {
+          requests++;
+          if (requests === 1 || repeated) {
+            return Response.json({
+              records: [{ docEntry: "80" }],
+              uploads: {},
+              pdfs: {},
+              nextCursor: 80,
+            });
+          }
+          return Response.json(
+            { error: "SAP is unavailable." },
+            { status: 502 },
+          );
+        },
+      ),
+      repeated ? /incomplete receipt list/ : /SAP is unavailable/,
+    );
+    assert.equal(requests, 2);
+  }
 });

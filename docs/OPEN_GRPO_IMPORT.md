@@ -30,7 +30,7 @@ The existing attachment RPC serializes case creation by owner and prevents exact
 
 After saving, the client calls the normal analysis-enqueue API. That API retains existing quotas, worker leases, retries and review rules. A failed enqueue leaves the case in Draft with a Start analysis action in Uploaded. Completed or processing cases are not re-enqueued by the import workflow. Keep the page open until the save/enqueue finishes; after enqueue, the background worker continues independently.
 
-The list endpoint `/api/sap-inspector/open-grpos` filters the upload tab on the server, reading up to five SAP pages per request and returning a continuation cursor for sparse results. It never treats an empty scanned page as proof that no older matches exist.
+Unbilled Receipts loads both tabs with `uploaded=all` and follows the list endpoint's continuation cursor until the full list is ready. The browser filters and paginates that list at ten receipts per page. Refresh reloads it, and processing cases use the case status endpoint for updates. The list endpoint still accepts `uploaded=yes` and `uploaded=no` for callers that need server-side tab filtering.
 
 No schema migration, new tables, or SQL execution is required. The feature uses existing `storage_assets`, `packet_case_files`, `packet_cases`, and `case_review_events` plus the existing processing queue. It creates no SAP receipt, invoice, or draft, and imports do not override analysis or SAP matching decisions.
 
@@ -40,7 +40,7 @@ No schema migration, new tables, or SQL execution is required. The feature uses 
 
 ## PDF availability and navigation
 
-The sidebar includes Add Case, opening the existing `/workspace` PDF/image upload page. Unbilled Receipts is omitted from the desktop and mobile sidebar, but remains accessible at `/sap-inspector/open-grpos`, including its existing Add Folder button. Before enabling Download & analyze, the list reads SAP's `AttachmentEntry` and attachment metadata, with at most four concurrent metadata reads and a shared read for repeated attachment entries. Confirmed missing PDFs show No PDF attached and a disabled button. A failed or omitted metadata response instead shows PDF check unavailable; Refresh retries the check. The import endpoint still rechecks the receipt and downloads the actual archive when clicked.
+The sidebar includes Add Case, opening the existing `/workspace` PDF/image upload page. Unbilled Receipts is omitted from the desktop and mobile sidebar, but remains accessible at `/sap-inspector/open-grpos`, including its existing Add Folder button. Before enabling Download & analyze, the list checks each distinct SAP attachment entry. The combined list reads attachment metadata in batches. Confirmed missing PDFs show No PDF attached and a disabled button. A failed or omitted metadata response instead shows PDF check unavailable; Refresh retries the check. The import endpoint still rechecks the receipt and downloads the actual archive when clicked.
 
 After upload and a confirmed analysis enqueue, imports and analysis retries navigate to `/cases/:id`, the same progress page used after manual uploads. The existing polling and results flow continue there. An enqueue failure leaves a saved case with the existing retry action.
 
