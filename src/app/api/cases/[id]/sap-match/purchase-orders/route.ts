@@ -1,3 +1,8 @@
+import { sapCaseOrigin } from "@/server/sap/config";
+import {
+  isSapMatchForEnvironment,
+  requireActiveSapCase,
+} from "@/server/sap/case-environment";
 import {
   ApiError,
   dbCheck,
@@ -5,11 +10,10 @@ import {
   uuid,
   withUser,
 } from "@/server/api/helpers";
-import { readSapEnvironment } from "@/server/sap/config";
 import { readSapMatchJob } from "@/server/sap/match-job";
 import { postedSapDetails } from "@/lib/sap-posted-details";
 import { fetchSapOpenPOs } from "@/server/sap/client";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 import {
   selectedOrderEntries,
   supplierOrders,
@@ -28,9 +32,10 @@ export async function GET(
 ) {
   return withUser(request, async (db, user) => {
     const { id } = await context.params;
-    await ownedCase(db, user, id);
-    if (readSapEnvironment() !== "test")
-      throw new ApiError("Supplier POs are available for SAP Test.", 409);
+    const row = await ownedCase(db, user, id);
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
     const job = await readSapMatchJob(db, user, id);
     const posting = await db
       .from("sap_postings")
@@ -38,12 +43,16 @@ export async function GET(
       .eq("case_id", uuid(id))
       .eq("owner_user_id", user)
       .eq("kind", "AP")
-      .eq("sap_env", "test")
+      .eq("sap_env", sapEnv)
       .in("status", ["prepared", "posted"])
       .maybeSingle();
     dbCheck(posting.error);
     const saved = posting.data ? postedSapDetails(posting.data).match : null;
-    const match = saved ?? (job?.result?.available ? job.result : null);
+    const match =
+      saved ??
+      (job?.result?.available && isSapMatchForEnvironment(job.result, sapEnv)
+        ? job.result
+        : null);
     if (!match?.vendor)
       throw new ApiError(
         "Identify the supplier in SAP matching before viewing its POs.",
@@ -52,7 +61,7 @@ export async function GET(
     const { vendor, result } = match;
     if (new URL(request.url).searchParams.get("invoiceReferences") === "1") {
       try {
-        return await withTestServiceLayer(async (client) => {
+        return await withSapServiceLayer(async (client) => {
           const [receipts, invoices] = await Promise.allSettled([
             client.listSupplierInvoiceDocuments(vendor.cardCode, "grpo"),
             client.listSupplierInvoiceDocuments(vendor.cardCode, "ap-invoice"),
@@ -94,7 +103,7 @@ export async function GET(
     }
     const entries = selectedOrderEntries(result.lines);
     const reads = await Promise.allSettled([
-      withTestServiceLayer(async (client) => {
+      withSapServiceLayer(async (client) => {
         const [open, linked] = await Promise.all([
           client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
           entries.length
@@ -106,7 +115,7 @@ export async function GET(
         );
         return { rows: [...unique.values()], limited: open.length >= 1000 };
       }),
-      fetchSapOpenPOs("test"),
+      fetchSapOpenPOs(sapEnv),
     ]);
     const [service, report] = reads;
     if (service.status === "rejected" && report.status === "rejected")

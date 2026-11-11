@@ -7,7 +7,7 @@ import { readSapConnection } from "./config";
 import { sapAttachmentDownload } from "./http";
 
 // Supplied by the SAP team for Test. Never derive this from a browser URL or
-// SAP_API_ENV: the matching/import workflow is explicitly SAP Test only.
+// SAP_API_ENV. This client is only used for Test receipt downloads.
 const endpoint = "https://sbivan.samratgroup.com:5061/api/Grpo";
 const maxBytes = 50 * 1024 * 1024;
 

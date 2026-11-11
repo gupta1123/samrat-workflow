@@ -1,3 +1,9 @@
+import {
+  readSapEnvironment,
+  sapCaseEnvironment,
+  sapCaseOrigin,
+  type SapEnvironment,
+} from "./config";
 import { createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
 import { ApiError, dbCheck } from "@/server/api/helpers";
@@ -48,6 +54,7 @@ export async function grpoUploadStates(
   user: string,
   company: string,
   records: Pick<SapInspectorRecord, "docEntry">[],
+  environment: SapEnvironment = readSapEnvironment(),
 ) {
   const entries = records
     .map((r) => r.docEntry)
@@ -59,14 +66,14 @@ export async function grpoUploadStates(
     .select("case_id,details")
     .eq("owner_user_id", user)
     .eq("action", "sap_grpo_pdf_imported")
-    .contains("details", { company, environment: "test" })
+    .contains("details", { company, environment })
     .in("details->>docEntry", entries)
     .order("created_at", { ascending: false });
   dbCheck(events.error);
   if (!events.data?.length) return states;
   const cases = await db
     .from("packet_cases")
-    .select("id,status,deleted_at")
+    .select("id,status,deleted_at,created_at,processing_meta")
     .eq("owner_user_id", user)
     .in("id", [...new Set(events.data.map((e) => e.case_id))]);
   dbCheck(cases.error);
@@ -90,6 +97,8 @@ export async function grpoUploadStates(
     );
     if (
       !c ||
+      sapCaseEnvironment(sapCaseOrigin(c.created_at, c.processing_meta)) !==
+        environment ||
       !Array.isArray(hashes) ||
       !hashes.length ||
       !hashes.every((h) => typeof h === "string" && stored.has(h))
@@ -108,11 +117,11 @@ export async function grpoUploadStates(
   const postings = await db
     .from("sap_postings")
     .select(
-      "case_id,status,sap_docnum,documentType:payload->>documentType,docEntry:response->>DocEntry,draftDocEntry:response->>DraftDocEntry,docNum:response->>DocNum",
+      "case_id,status,sap_docnum,draftSubmissionPending:payload->>draftSubmissionPending,documentType:payload->>documentType,docEntry:response->>DocEntry,draftDocEntry:response->>DraftDocEntry,docNum:response->>DocNum",
     )
     .eq("owner_user_id", user)
     .eq("kind", "AP")
-    .eq("sap_env", "test")
+    .eq("sap_env", environment)
     .in("case_id", [...new Set(linked.map((state) => state.caseId))]);
   // Missing posting data must never become a false "Not drafted" badge.
   if (postings.error) {
@@ -131,6 +140,7 @@ export async function grpoUploadStates(
   );
   for (const state of linked) {
     const posting = byCase.get(state.caseId);
+    if (posting?.draftSubmissionPending === "true") continue;
     if (!posting || ["failed", "blocked"].includes(posting.status)) {
       state.sapDraft = { status: "not_created" };
       continue;
@@ -245,8 +255,14 @@ export async function attachGrpoPdfs(
   db: Db,
   user: string,
   ids: string[],
-  source: { company: string; docEntry: number; docNum: number },
+  source: {
+    company: string;
+    docEntry: number;
+    docNum: number;
+    environment?: SapEnvironment;
+  },
 ) {
+  const environment = source.environment ?? readSapEnvironment();
   await verifyUploads(db, user, ids);
   const imported = await db
     .from("storage_assets")
@@ -258,27 +274,48 @@ export async function attachGrpoPdfs(
   const candidates = await db
     .from("packet_case_files")
     .select(
-      "case_id,content_sha256,packet_cases!inner(owner_user_id,deleted_at)",
+      "case_id,content_sha256,packet_cases!inner(owner_user_id,deleted_at,created_at,processing_meta)",
     )
     .eq("packet_cases.owner_user_id", user)
     .is("packet_cases.deleted_at", null)
     .in("content_sha256", hashes);
   dbCheck(candidates.error);
+  const matchingFiles = (candidates.data ?? []).filter((file) => {
+    const related: unknown = file.packet_cases;
+    const joined = Array.isArray(related) ? related[0] : related;
+    const row = joined as {
+      created_at: unknown;
+      processing_meta: unknown;
+    } | null;
+    if (!row) return false;
+    return (
+      sapCaseEnvironment(sapCaseOrigin(row.created_at, row.processing_meta)) ===
+      environment
+    );
+  });
   // Exact byte matches also recognize a manually uploaded case containing extra documents.
-  let caseId = [...new Set(candidates.data!.map((f) => f.case_id))].find((id) =>
+  let caseId = [...new Set(matchingFiles.map((f) => f.case_id))].find((id) =>
     hashes.every((h) =>
-      candidates.data!.some((f) => f.case_id === id && f.content_sha256 === h),
+      matchingFiles.some((f) => f.case_id === id && f.content_sha256 === h),
     ),
   );
   if (!caseId) {
-    const attached = await db.rpc("attach_case_uploads", {
-      p_user: user,
-      p_upload_ids: ids,
-      p_case_id: null,
-      p_mode: "append",
-      p_allow_duplicate: false,
-    });
+    const attach = (allowDuplicate: boolean) =>
+      db.rpc("attach_case_uploads", {
+        p_user: user,
+        p_upload_ids: ids,
+        p_case_id: null,
+        p_mode: "append",
+        p_allow_duplicate: allowDuplicate,
+      });
+    let attached = await attach(false);
     dbCheck(attached.error);
+    const duplicate = attached.data?.duplicateCase;
+    if (duplicate && sapCaseEnvironment(duplicate.createdAt) !== environment) {
+      // The same deterministic receipt batch is serialized by the existing RPC.
+      attached = await attach(true);
+      dbCheck(attached.error);
+    }
     caseId = attached.data?.case?.id ?? attached.data?.duplicateCase?.id;
   }
   if (!caseId)
@@ -288,7 +325,7 @@ export async function attachGrpoPdfs(
     );
   const owned = await db
     .from("packet_cases")
-    .select("id,status,deleted_at")
+    .select("id,status,deleted_at,created_at,processing_meta")
     .eq("id", caseId)
     .eq("owner_user_id", user)
     .maybeSingle();
@@ -296,6 +333,15 @@ export async function attachGrpoPdfs(
   if (!owned.data || owned.data.deleted_at)
     throw new ApiError(
       "This case is in Recycle Bin. Restore it before continuing.",
+      409,
+    );
+  if (
+    sapCaseEnvironment(
+      sapCaseOrigin(owned.data.created_at, owned.data.processing_meta),
+    ) !== environment
+  )
+    throw new ApiError(
+      "This PDF belongs to a case from another SAP environment. Start a fresh import.",
       409,
     );
   const files = await db
@@ -314,7 +360,7 @@ export async function attachGrpoPdfs(
     action: "sap_grpo_pdf_imported",
     details: {
       ...source,
-      environment: "test",
+      environment,
       uploadIds: ids,
       sha256s: hashes,
     },

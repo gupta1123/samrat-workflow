@@ -1,4 +1,9 @@
 import {
+  readSapEnvironment,
+  sapCaseEnvironment,
+  sapCaseOrigin,
+} from "@/server/sap/config";
+import {
   ApiError,
   dbCheck,
   jsonBody,
@@ -88,20 +93,71 @@ export async function POST(request: Request) {
   return withUser(request, async (db, user) => {
     const body = await jsonBody(request);
     const ids = await verifyUploads(db, user, body.uploadIds);
-    const { data, error } = await db.rpc("attach_case_uploads", {
-      p_user: user,
-      p_upload_ids: ids,
-      p_case_id: null,
-      p_mode: "append",
-      p_allow_duplicate: body.allowDuplicate === true,
-    });
-    dbCheck(error);
-    if (data.duplicateCase)
+    const attach = (allowDuplicate: boolean) =>
+      db.rpc("attach_case_uploads", {
+        p_user: user,
+        p_upload_ids: ids,
+        p_case_id: null,
+        p_mode: "append",
+        p_allow_duplicate: allowDuplicate,
+      });
+    let result = await attach(body.allowDuplicate === true);
+    dbCheck(result.error);
+    let duplicate = result.data.duplicateCase;
+    if (duplicate && readSapEnvironment() === "live") {
+      const historic = await db
+        .from("packet_cases")
+        .select("created_at,processing_meta,upload_fingerprint")
+        .eq("id", duplicate.id)
+        .eq("owner_user_id", user)
+        .single();
+      dbCheck(historic.error);
+      if (!historic.data)
+        throw new ApiError("The existing case changed. Retry the upload.", 409);
+      if (
+        sapCaseEnvironment(
+          sapCaseOrigin(
+            historic.data.created_at,
+            historic.data.processing_meta,
+          ),
+        ) === "test"
+      ) {
+        const sameFiles = await db
+          .from("packet_cases")
+          .select("id,display_name,status,created_at,processing_meta")
+          .eq("owner_user_id", user)
+          .eq("upload_fingerprint", historic.data.upload_fingerprint)
+          .is("deleted_at", null)
+          .gte("created_at", process.env.SAP_LIVE_CASES_FROM!)
+          .order("created_at");
+        dbCheck(sameFiles.error);
+        const current = sameFiles.data?.find(
+          (row) =>
+            sapCaseEnvironment(
+              sapCaseOrigin(row.created_at, row.processing_meta),
+            ) === "live",
+        );
+        if (current) {
+          duplicate = {
+            id: current.id,
+            displayName: current.display_name,
+            status: current.status,
+            createdAt: current.created_at,
+          };
+        } else {
+          result = await attach(true);
+          dbCheck(result.error);
+          duplicate = result.data.duplicateCase;
+        }
+      }
+    }
+    if (duplicate)
       throw new ApiError(
         "These documents already belong to a saved case.",
         409,
-        { duplicateCase: data.duplicateCase },
+        { duplicateCase: duplicate },
       );
+    const { data } = result;
     return {
       case: mapCase(data.case),
       files: await listDraftCaseFiles(db, data.case.id),

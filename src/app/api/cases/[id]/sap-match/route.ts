@@ -1,4 +1,8 @@
 import {
+  isSapMatchForEnvironment,
+  requireActiveSapCase,
+} from "@/server/sap/case-environment";
+import {
   ApiError,
   dbCheck,
   jsonBody,
@@ -6,7 +10,12 @@ import {
   uuid,
   withUser,
 } from "@/server/api/helpers";
-import { readSapEnvironment } from "@/server/sap/config";
+import {
+  sapCaseOrigin,
+  readSapEnvironment,
+  sapCaseEnvironment,
+  sapEnvironmentLabel,
+} from "@/server/sap/config";
 import {
   loadMatchState,
   saveItemMapping,
@@ -19,7 +28,7 @@ import {
   recomputeFromSnapshot,
 } from "@/server/sap/match-job";
 import { buildMatchInvoice, vendorKeys } from "@/server/sap/match-mapping";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 import { findPostedApInvoice } from "@/lib/sap-match-progress";
 import { readPostedSapDetails } from "@/server/sap/posted-details";
 import { postedSapDetails } from "@/lib/sap-posted-details";
@@ -57,17 +66,21 @@ export async function GET(request: Request, context: Context) {
   return withUser(request, async (db, user) => {
     const { id } = await context.params;
     const row = await ownedCase(db, user, id);
-    const sapEnv = readSapEnvironment();
+    const sapEnv = sapCaseEnvironment(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
     const savedPostings = await postings(db, user, id);
     const base = {
       sapEnv,
       caseStatus: row.status,
-      postable: row.status === "accepted",
-      postings: savedPostings.map(({ payload, response, ...posting }) => {
-        void payload;
-        void response;
-        return posting;
-      }),
+      postable: row.status === "accepted" && sapEnv === readSapEnvironment(),
+      postings: savedPostings
+        .filter((posting) => posting.sap_env === sapEnv)
+        .map(({ payload, response, ...posting }) => {
+          void payload;
+          void response;
+          return posting;
+        }),
     };
     const posted = findPostedApInvoice(savedPostings, sapEnv);
     if (posted) {
@@ -107,18 +120,23 @@ export async function GET(request: Request, context: Context) {
         reason: "Analyze the case before matching it to SAP.",
       };
     }
-    if (sapEnv !== "test") {
+    if (sapEnv !== readSapEnvironment()) {
       return {
         ...base,
         available: false,
-        reason:
-          "SAP matching is available only against the SAP Test company for now.",
+        reason: `This case belongs to ${sapEnvironmentLabel(sapEnv)}. Its SAP history is read-only.`,
       };
     }
     try {
       const force = new URL(request.url).searchParams.get("refresh") === "1";
       let job = await readSapMatchJob(db, user, id);
-      if (!job || force) job = await enqueueSapMatch(db, user, id, force);
+      if (
+        !job ||
+        force ||
+        (job.status === "succeeded" &&
+          !isSapMatchForEnvironment(job.result, sapEnv))
+      )
+        job = await enqueueSapMatch(db, user, id, Boolean(job));
       const matchJob = {
         status: job.status,
         stage: job.stage,
@@ -172,6 +190,9 @@ export async function POST(request: Request, context: Context) {
   return withUser(request, async (db, user) => {
     const { id } = await context.params;
     const row = await ownedCase(db, user, id);
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
     if (!REVIEWABLE.includes(row.status)) {
       throw new ApiError("Analyze the case before matching it to SAP.", 409);
     }
@@ -181,7 +202,7 @@ export async function POST(request: Request, context: Context) {
     const existing = (await postings(db, user, id)).find(
       (posting) =>
         posting.kind === "AP" &&
-        posting.sap_env === "test" &&
+        posting.sap_env === sapEnv &&
         (posting.status === "prepared" || posting.status === "posted"),
     );
     if (existing && action !== "map-item" && action !== "map-vendor") {
@@ -296,24 +317,23 @@ export async function POST(request: Request, context: Context) {
           "Choose the vendor material and the SAP item to link.",
         );
       }
-      if (readSapEnvironment() !== "test") {
-        throw new ApiError(
-          "SAP matching is available only against the SAP Test company for now.",
-          409,
-        );
-      }
-      const found = await withTestServiceLayer((client) =>
-        client.listItemsByCodes([sapItemCode]),
+      const found = await withSapServiceLayer(
+        (client) => client.listItemsByCodes([sapItemCode]),
+        sapEnv,
       );
       const item = found.find((entry) => entry.ItemCode === sapItemCode);
       if (!item) throw new ApiError("That item does not exist in SAP.", 409);
-      await saveItemMapping(db, {
-        vendorCardCode,
-        vendorItemKey: mappingKey,
-        sapItemCode,
-        sapItemName: item.ItemName ?? null,
-        userId: user,
-      });
+      await saveItemMapping(
+        db,
+        {
+          vendorCardCode,
+          vendorItemKey: mappingKey,
+          sapItemCode,
+          sapItemName: item.ItemName ?? null,
+          userId: user,
+        },
+        sapEnv,
+      );
       await audit("sap_item_linked", {
         vendorCardCode,
         mappingKey,
@@ -328,12 +348,6 @@ export async function POST(request: Request, context: Context) {
         typeof body.cardCode === "string" ? body.cardCode.trim() : "";
       if (!cardCode || cardCode.length > 50)
         throw new ApiError("Choose the SAP vendor to link.");
-      if (readSapEnvironment() !== "test") {
-        throw new ApiError(
-          "SAP matching is available only against the SAP Test company for now.",
-          409,
-        );
-      }
       const documents = await db
         .from("packet_documents")
         .select("document_type, extracted_fields")
@@ -350,8 +364,9 @@ export async function POST(request: Request, context: Context) {
           "This case has no numbered vendor invoice to link.",
           409,
         );
-      const supplier = await withTestServiceLayer((client) =>
-        client.getSupplier(cardCode),
+      const supplier = await withSapServiceLayer(
+        (client) => client.getSupplier(cardCode),
+        sapEnv,
       );
       if (!supplier)
         throw new ApiError(
@@ -366,12 +381,16 @@ export async function POST(request: Request, context: Context) {
       };
       await saveMatchState(db, id, user, state);
       if (keys.length) {
-        await saveVendorMapping(db, {
-          vendorKeys: keys,
-          cardCode: supplier.CardCode,
-          cardName: supplier.CardName,
-          userId: user,
-        });
+        await saveVendorMapping(
+          db,
+          {
+            vendorKeys: keys,
+            cardCode: supplier.CardCode,
+            cardName: supplier.CardName,
+            userId: user,
+          },
+          sapEnv,
+        );
       }
       await audit("sap_vendor_linked", { cardCode: supplier.CardCode, keys });
       await requeue();

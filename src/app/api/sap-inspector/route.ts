@@ -4,12 +4,9 @@ import {
   type SapInspectorResponse,
 } from "@/lib/sap-inspector";
 import { ApiError, withUser } from "@/server/api/helpers";
-import {
-  clearSapCache,
-  fetchSapOpenPOs,
-} from "@/server/sap/client";
+import { clearSapCache, fetchSapOpenPOs } from "@/server/sap/client";
 import { readSapEnvironment } from "@/server/sap/config";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,7 +44,9 @@ export async function GET(request: Request) {
     const dataset = datasetFrom(search.get("dataset"));
     const limit = readLimit(search.get("limit"));
     const poReferenceFields = configuredPoReferenceFields();
-    const vehicleField = (process.env.SAP_GRPO_VEHICLE_FIELD ?? "U_VEHNO").trim();
+    const vehicleField = (
+      process.env.SAP_GRPO_VEHICLE_FIELD ?? "U_VEHNO"
+    ).trim();
 
     try {
       if (dataset === "open-po") {
@@ -83,13 +82,13 @@ export async function GET(request: Request) {
                 "U_PONO",
               ].filter(Boolean)
             : [];
-      const rows = await withTestServiceLayer((client) =>
+      const rows = await withSapServiceLayer((client) =>
         client.listInspectorDocuments(dataset, limit, additionalFields),
       );
       const response: SapInspectorResponse = {
         dataset,
         source: "SAP Business One Service Layer",
-        environment: "test",
+        environment: readSapEnvironment(),
         fetchedAt: new Date().toISOString(),
         limit,
         truncated: rows.length >= limit,

@@ -767,6 +767,22 @@ test("a missing exchange rate falls back to an earlier posting date, keeping the
   assert.equal(calls[0].TaxDate, "2026-06-24");
 });
 
+test("Production requires the exchange rate for the exact posting date", async () => {
+  const { client, calls } = fakeClient({ missingRateOn: ["2026-06-24"] });
+  await assert.rejects(
+    createMatchedDraft(client, {
+      payload: { DocDate: "2026-06-24", TaxDate: "2026-06-24" },
+      currency: "INR",
+      postingDate: "2026-06-24",
+      taxDate: "2026-06-24",
+      baseDocument: base,
+      environment: "live",
+    }),
+    /posting date was not changed/,
+  );
+  assert.equal(calls.length, 0);
+});
+
 test("no fallback is used when booking on a date other than the invoice date", async () => {
   const { client } = fakeClient({ missingRateOn: ["2026-09-28"] });
   await assert.rejects(

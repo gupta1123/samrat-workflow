@@ -93,7 +93,7 @@ export function BusinessPartnersTab() {
         <div>
           <h2 className="text-[12px] font-semibold">Business Partners</h2>
           <p className="mt-1 text-[11px] text-[#81766b]">
-            Supplier, customer and lead master data · SAP Test · Read only
+            Supplier, customer and lead master data · Read only
           </p>
         </div>
         <Button

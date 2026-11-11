@@ -1,5 +1,6 @@
+import { readSapEnvironment } from "@/server/sap/config";
 import { ApiError, withUser } from "@/server/api/helpers";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 import {
   businessPartnerPage,
   parseBusinessPartnerQuery,
@@ -21,13 +22,13 @@ export async function GET(request: Request) {
       );
     }
     try {
-      const rows = await withTestServiceLayer((client) =>
+      const rows = await withSapServiceLayer((client) =>
         client.listBusinessPartnersPage(query),
       );
       return {
         ...businessPartnerPage(rows, query.limit),
         pageSize: query.limit,
-        environment: "test",
+        environment: readSapEnvironment(),
         fetchedAt: new Date().toISOString(),
       };
     } catch (error) {
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
         error instanceof Error ? error.message : String(error),
       );
       throw new ApiError(
-        "Could not read Business Partners from SAP Test. Retry or check the SAP connection.",
+        "Could not read Business Partners from SAP. Retry or check the SAP connection.",
         502,
       );
     }

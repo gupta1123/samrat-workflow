@@ -42,11 +42,17 @@ const jwt = (sub: string) =>
     .map((v) => Buffer.from(JSON.stringify(v)).toString("base64url"))
     .join(".") + ".dGVzdA";
 const digest = (v: Uint8Array) => createHash("sha256").update(v).digest("hex");
-async function setup(t: TestContext) {
+async function setup(t: TestContext, production = false) {
   const cfg = {
     SUPABASE_INTERNAL_URL: "https://store.invalid",
     SUPABASE_PUBLISHABLE_KEY: "public",
     SUPABASE_SERVICE_ROLE_KEY: "secret",
+    SAP_API_ENV: production ? "live" : "test",
+    SAP_LIVE_CASES_FROM: production ? "2026-01-02T00:00:00Z" : "",
+    SAP_SL_LIVE_BASE_URL: "https://production.invalid/b1s/v1",
+    SAP_SL_LIVE_COMPANY_DB: "PRODUCTION",
+    SAP_SL_LIVE_USERNAME: "prod-user",
+    SAP_SL_LIVE_PASSWORD: "prod-password",
     SAP_SL_TEST_BASE_URL: "https://sap.invalid/b1s/v1",
     SAP_SL_TEST_COMPANY_DB: "COMPANY",
     SAP_SL_TEST_USERNAME: "user",
@@ -105,9 +111,23 @@ async function setup(t: TestContext) {
       { LineNum: 0, ItemCode: "ITEM", Quantity: 5, RemainingOpenQuantity: 3 },
     ],
   }));
-  const sap = mock.get("https://sap.invalid");
+  const sap = mock.get(
+    production ? "https://production.invalid" : "https://sap.invalid",
+  );
   sap
-    .intercept({ path: "/b1s/v1/Login", method: "POST" })
+    .intercept({
+      path: "/b1s/v1/Login",
+      method: "POST",
+      ...(production
+        ? {
+            body: JSON.stringify({
+              CompanyDB: "PRODUCTION",
+              UserName: "prod-user",
+              Password: "prod-password",
+            }),
+          }
+        : {}),
+    })
     .reply(200, { SessionId: "session" })
     .persist();
   sap
@@ -141,6 +161,23 @@ async function setup(t: TestContext) {
       }),
     }))
     .persist();
+  if (production) {
+    sap
+      .intercept({
+        path: /^\/b1s\/v1\/Attachments2\(9\)\/\$value\?/,
+        method: "GET",
+      })
+      .reply((options) => {
+        assert.equal(
+          new URL(options.path, "https://production.invalid").searchParams.get(
+            "filename",
+          ),
+          "'Original.pdf'",
+        );
+        return { statusCode: 200, data: bytes };
+      })
+      .persist();
+  }
   mock
     .get("https://sbivan.samratgroup.com:5061")
     .intercept({
@@ -484,16 +521,11 @@ test("attachment API failures cannot fall back to a different PDF source", async
   assert.equal(state.cases.length, 0);
 });
 
-test("GRPO downloads retain Test credentials even when the general SAP environment is live", async (t) => {
-  const prior = process.env.SAP_API_ENV;
-  t.after(() => {
-    if (prior === undefined) delete process.env.SAP_API_ENV;
-    else process.env.SAP_API_ENV = prior;
-  });
-  process.env.SAP_API_ENV = "live";
-  const { state, session } = await setup(t);
-  await session();
-  assert.deepEqual(state.attachmentApiCalls, ["/api/Grpo/42/download-attachments"]);
+test("Production GRPO downloads use the Production company and native attachment route", async (t) => {
+  const { state, session } = await setup(t, true);
+  const result = await session();
+  assert.equal(result.files[0].name, "Original.pdf");
+  assert.deepEqual(state.attachmentApiCalls, []);
   assert.equal(state.cases.length, 0);
 });
 

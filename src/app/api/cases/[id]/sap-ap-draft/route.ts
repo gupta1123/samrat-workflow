@@ -1,3 +1,4 @@
+import { requireActiveSapCase } from "@/server/sap/case-environment";
 import { NextResponse } from "next/server";
 
 import {
@@ -19,7 +20,7 @@ import {
   sapDocumentNumber,
   selectUniqueExactOpenPurchaseOrder,
 } from "@/lib/sap-exact-po-match";
-import { readSapEnvironment } from "@/server/sap/config";
+import { sapCaseOrigin, readSapEnvironment } from "@/server/sap/config";
 import { invoiceCurrencyMatchesSap } from "@/server/sap/currency";
 import {
   buildApInvoiceDraft,
@@ -31,7 +32,7 @@ import {
   sapTestPostingDateCandidates,
 } from "@/server/sap/dates";
 import {
-  fetchTestOpenGrpoRows,
+  fetchSapOpenGrpoRows,
   withTestServiceLayer,
 } from "@/server/sap/service-layer";
 
@@ -47,6 +48,7 @@ export async function POST(request: Request, context: Context) {
     }
     const { id } = await context.params;
     const row = await ownedCase(db, user, id);
+    requireActiveSapCase(sapCaseOrigin(row.created_at, row.processing_meta));
     if (row.status !== "accepted") {
       throw new ApiError("Approve the case before creating an SAP draft.", 409);
     }
@@ -195,7 +197,7 @@ export async function POST(request: Request, context: Context) {
 
     const openRows =
       baseKind === "GRPO"
-        ? await fetchTestOpenGrpoRows({
+        ? await fetchSapOpenGrpoRows({
             basePoDocNum: classification.poNumber,
           })
         : [];

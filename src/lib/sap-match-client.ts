@@ -153,7 +153,7 @@ export async function createMatchedSapDraft(
       typeof body.message === "string" && body.message
         ? body.message
         : response.ok
-          ? "SAP Test AP Invoice Draft created. No invoice was posted."
+          ? "SAP A/P Invoice Draft created. No invoice was posted."
           : errorText(body, "Draft creation failed."),
   };
 }

@@ -1,3 +1,12 @@
+import {
+  isSapMatchForEnvironment,
+  requireActiveSapCase,
+} from "./case-environment";
+import {
+  sapCaseOrigin,
+  readSapEnvironment,
+  type SapEnvironment,
+} from "./config";
 import { randomUUID } from "node:crypto";
 
 import { dbCheck } from "@/server/api/helpers";
@@ -6,7 +15,7 @@ import { evaluateMatch } from "@/lib/sap-match/engine";
 import { reviewFlowOf } from "@/lib/sap-match/review-flow";
 import { computeCaseMatch, loadMatchState, type CaseMatch } from "./match-data";
 import { settleLogisticsForPoLineCase } from "./settle-logistics";
-import { withTestServiceLayer } from "./service-layer";
+import { withSapServiceLayer } from "./service-layer";
 
 export type SapMatchJobStatus =
   "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -17,7 +26,7 @@ export type SapMatchJobRow = {
   version: number;
   status: SapMatchJobStatus;
   stage: string;
-  result: CaseMatch | null;
+  result: (CaseMatch & { sapEnv?: SapEnvironment }) | null;
   error: string | null;
   attempt_count: number;
   requested_at: string;
@@ -98,7 +107,7 @@ export async function processSapMatchJob(caseId: string) {
     const row = await db
       .from("packet_cases")
       .select(
-        "id,owner_user_id,invoice_number,po_number,status,processing_meta",
+        "id,owner_user_id,invoice_number,po_number,status,processing_meta,created_at",
       )
       .eq("id", caseId)
       .eq("owner_user_id", job.owner_user_id)
@@ -107,9 +116,20 @@ export async function processSapMatchJob(caseId: string) {
     dbCheck(row.error);
     if (!row.data) throw new Error("Case no longer exists.");
 
-    const result = await withTestServiceLayer((client) =>
-      computeCaseMatch({ db, client, caseRow: row.data! }),
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.data.created_at, row.data.processing_meta),
     );
+    const match = await withSapServiceLayer(
+      (client) =>
+        computeCaseMatch({
+          db,
+          client,
+          caseRow: row.data!,
+          environment: sapEnv,
+        }),
+      sapEnv,
+    );
+    const result = { ...match, sapEnv };
     if ("timings" in result && result.timings)
       console.info("SAP match timings", { caseId, timings: result.timings });
     const complete = await db.rpc("complete_sap_match_job", {
@@ -124,7 +144,7 @@ export async function processSapMatchJob(caseId: string) {
   } catch (error) {
     const detail = jobErrorMessage(error);
     const terminal =
-      /not configured|no numbered vendor invoice|no invoice line items/i.test(
+      /not configured|SAP history is read-only|no numbered vendor invoice|no invoice line items/i.test(
         detail,
       );
     const failed = await db.rpc("fail_sap_match_job", {
@@ -184,7 +204,13 @@ export async function recomputeFromSnapshot(
 ) {
   const job = await readSapMatchJob(db, userId, caseId);
   const match = job?.result;
-  if (!job || job.status !== "succeeded" || !match?.available || !match.context)
+  if (
+    !job ||
+    job.status !== "succeeded" ||
+    !match?.available ||
+    !match.context ||
+    !isSapMatchForEnvironment(match, readSapEnvironment())
+  )
     return false;
   const readAt = Date.parse(match.context.checkedAt ?? "");
   if (!Number.isFinite(readAt) || now - readAt > SNAPSHOT_MAX_AGE_MS)
@@ -197,7 +223,7 @@ export async function recomputeFromSnapshot(
     rules: match.rules,
     state,
   });
-  const next: CaseMatch = {
+  const next: NonNullable<SapMatchJobRow["result"]> = {
     ...match,
     state,
     result,

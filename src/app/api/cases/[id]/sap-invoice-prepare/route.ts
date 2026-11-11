@@ -1,11 +1,12 @@
+import { sapCaseOrigin } from "@/server/sap/config";
+import { requireActiveSapCase } from "@/server/sap/case-environment";
 import { NextResponse } from "next/server";
 import { dbCheck, ownedCase, withUser } from "@/server/api/helpers";
 import { readStoredLineItems } from "@/server/line-items";
 import { fetchSapOpenPOs } from "@/server/sap/client";
-import { readSapEnvironment } from "@/server/sap/config";
 import {
-  fetchTestOpenGrpoRows,
-  withTestServiceLayer,
+  fetchSapOpenGrpoRows,
+  withSapServiceLayer,
   type SapReadDocument,
 } from "@/server/sap/service-layer";
 import { selectSapLine } from "@/lib/sap-line-match";
@@ -423,6 +424,9 @@ export async function GET(request: Request, context: Context) {
   return withUser(request, async (db, user) => {
     const { id } = await context.params;
     const row = await ownedCase(db, user, id);
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
 
     const documentsResult = await db
       .from("packet_documents")
@@ -458,7 +462,7 @@ export async function GET(request: Request, context: Context) {
       .eq("case_id", id)
       .eq("owner_user_id", user)
       .eq("kind", "AP")
-      .eq("sap_env", "test")
+      .eq("sap_env", sapEnv)
       .maybeSingle();
     dbCheck(postingResult.error);
     const storedPosting = postingResult.data;
@@ -491,7 +495,6 @@ export async function GET(request: Request, context: Context) {
       });
     }
 
-    const sapEnv = readSapEnvironment();
     const vendorName = extractVendorName(documents);
     const poNumber = extractPoNumber(row.po_number, documents);
     const invoiceDocuments = (documentsResult.data ?? []).filter(
@@ -537,9 +540,7 @@ export async function GET(request: Request, context: Context) {
     let poRows: Record<string, unknown>[] = [];
     try {
       [grpoRows, poRows] = await Promise.all([
-        sapEnv === "test"
-          ? fetchTestOpenGrpoRows({ basePoDocNum: poNumber })
-          : Promise.resolve([]),
+        fetchSapOpenGrpoRows({ basePoDocNum: poNumber }),
         fetchSapOpenPOs(sapEnv).catch(() => []),
       ]);
     } catch (error) {
@@ -571,9 +572,9 @@ export async function GET(request: Request, context: Context) {
       scored.length > 0 &&
       (scored.length === 1 || scored[0].score > scored[1].score);
 
-    if (sapEnv === "test") {
+    {
       try {
-        const inspection = await withTestServiceLayer(async (client) => {
+        const inspection = await withSapServiceLayer(async (client) => {
           const requestedPo = sapDocumentNumber(poNumber);
           if (
             !unambiguousGrpo &&
@@ -696,11 +697,11 @@ export async function GET(request: Request, context: Context) {
           return NextResponse.json({ matched: false, ...inspection });
         }
       } catch (error) {
-        console.error("SAP Test document inspection failed:", error);
+        console.error("SAP document inspection failed:", error);
         return NextResponse.json({ matched: false, reason: "sap_unavailable" });
       }
     }
-    if (bestPo && sapEnv === "test" && !bestPo.docEntry) bestPo = null;
+    if (bestPo && !bestPo.docEntry) bestPo = null;
     if (!unambiguousGrpo && !bestPo) {
       return NextResponse.json({ matched: false, reason: "no_match" });
     }

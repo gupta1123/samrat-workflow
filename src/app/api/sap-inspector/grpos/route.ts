@@ -1,5 +1,5 @@
 import { ApiError, withUser } from "@/server/api/helpers";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 import { sapFieldConfig } from "@/server/sap/match-data";
 import { normalizeSapInspectorRecords } from "@/lib/sap-inspector";
 import {
@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     }
     const config = sapFieldConfig();
     try {
-      return await withTestServiceLayer(async (client) => {
+      return await withSapServiceLayer(async (client) => {
         const page = grpoPageRows(
           await client.listInspectorGrposPage(query, {
             invoice: config.invoiceRefField ?? "",
@@ -69,7 +69,7 @@ export async function GET(request: Request) {
         error instanceof Error ? error.message : String(error),
       );
       throw new ApiError(
-        "Could not read GRPOs and their linked Purchase Orders from SAP Test. Retry or check the SAP connection.",
+        "Could not read GRPOs and their linked Purchase Orders from SAP. Retry or check the SAP connection.",
         502,
       );
     }

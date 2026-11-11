@@ -427,7 +427,8 @@ export function SapMatchPanel({
       ) : (
         <div className="space-y-3 px-4 py-3">
           <p className="text-[12px] font-semibold text-[#111827]">
-            A/P Invoice Draft {ap.sap_docnum} saved in SAP {data.sapEnv}
+            A/P Invoice Draft {ap.sap_docnum} saved in SAP{" "}
+            {data.sapEnv === "live" ? "Production" : "Test"}
           </p>
           <p className="text-[11px] leading-4 text-[#6b5d50]">
             The matching evidence was not saved when this draft was created. A
@@ -443,7 +444,11 @@ export function SapMatchPanel({
             </p>
           ) : null}
           <SavedPostingCard caseId={caseId} details={data.draftDetails} />
-          <FinalPostSection status="prepared" documentNumber={ap.sap_docnum!} />
+          <FinalPostSection
+            status="prepared"
+            documentNumber={ap.sap_docnum!}
+            environment={data.sapEnv}
+          />
         </div>
       );
     }
@@ -534,6 +539,7 @@ export function SapMatchPanel({
           <FinalPostSection
             status={ap.status as "prepared" | "posted"}
             documentNumber={ap.sap_docnum!}
+            environment={data.sapEnv}
           />
         ) : null}
         <div className="flex items-start gap-2.5 rounded-lg border border-[#e0d8cc] bg-[#fbfaf8] px-4 py-3">
@@ -903,6 +909,7 @@ function Matched({
           <DraftHeaderFields
             caseId={caseId}
             confirming
+            environment={data.sapEnv}
             numberingSeriesRetry={draftMessage?.numberingSeriesRequired}
             busy={creating || busy || validationRequired}
             onConfirm={onCreateDraft}
@@ -916,7 +923,8 @@ function Matched({
             onClick={() => onConfirmDraft(true)}
           >
             <Send className="mr-1.5 h-3 w-3" />
-            Create A/P Invoice Draft in SAP Test
+            Create A/P Invoice Draft in SAP{" "}
+            {data.sapEnv === "live" ? "Production" : "Test"}
           </Button>
         )
       ) : (
@@ -1110,6 +1118,7 @@ function Matched({
         <FinalPostSection
           status={ap.status as "prepared" | "posted"}
           documentNumber={ap.sap_docnum!}
+          environment={data.sapEnv}
         />
       ) : !result.payload ? (
         draftActions

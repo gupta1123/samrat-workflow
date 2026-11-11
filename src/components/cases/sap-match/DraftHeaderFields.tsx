@@ -15,6 +15,7 @@ import { PostingFieldGrid } from "./PostingFieldGrid";
 /** Only fetch SAP field definitions when the user opens the posting review. */
 export function DraftHeaderFields({
   caseId,
+  environment = "test",
   confirming = false,
   busy = false,
   onConfirm,
@@ -22,6 +23,7 @@ export function DraftHeaderFields({
   numberingSeriesRetry = false,
 }: {
   caseId: string;
+  environment?: string;
   confirming?: boolean;
   busy?: boolean;
   onConfirm?: (choices: DraftFieldChoices) => void;
@@ -252,7 +254,10 @@ export function DraftHeaderFields({
           >
             Cancel
           </Button>
-          <span className="text-[#8a7f72]">Creates a draft in SAP Test.</span>
+          <span className="text-[#8a7f72]">
+            Creates a draft in SAP{" "}
+            {environment === "live" ? "Production" : "Test"}.
+          </span>
         </div>
       ) : null}
     </div>

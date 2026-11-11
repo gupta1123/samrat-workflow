@@ -61,8 +61,7 @@ export function ItemsInspectorTab() {
         <div>
           <h2 className="font-semibold">Items — SAP Item Master</h2>
           <p className="mt-1 text-[#81766b]">
-            All items, including inactive and frozen items · SAP Test · Read
-            only
+            All items, including inactive and frozen items · Read only
           </p>
         </div>
         <Button
@@ -212,8 +211,7 @@ export function ItemsInspectorTab() {
             </div>
           </footer>
           <p className="px-3 pb-2 text-[10px] text-[#81766b]">
-            Read from SAP Test at{" "}
-            {new Date(data.fetchedAt).toLocaleString("en-IN")}
+            Read from SAP at {new Date(data.fetchedAt).toLocaleString("en-IN")}
           </p>
         </div>
       ) : null}

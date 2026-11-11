@@ -1,3 +1,8 @@
+import { submitProductionDraft } from "@/server/sap/draft-submission";
+import {
+  isSapMatchForEnvironment,
+  requireActiveSapCase,
+} from "@/server/sap/case-environment";
 import { NextResponse } from "next/server";
 
 import {
@@ -8,7 +13,7 @@ import {
   uuid,
   withUser,
 } from "@/server/api/helpers";
-import { readSapEnvironment } from "@/server/sap/config";
+import { sapCaseOrigin, sapEnvironmentLabel } from "@/server/sap/config";
 import { invoiceCurrencyMatchesSap } from "@/server/sap/currency";
 import { fetchSapOpenGRPOs, fetchSapOpenPOs } from "@/server/sap/client";
 import { openDocumentDraftFields } from "@/server/sap/open-document-draft-fields";
@@ -33,7 +38,7 @@ import {
   revalidateNonStockPoItems,
 } from "@/server/sap/match-draft";
 import {
-  withTestServiceLayer,
+  withSapServiceLayer,
   type SapMatchDocument,
 } from "@/server/sap/service-layer";
 
@@ -41,7 +46,7 @@ type Context = { params: Promise<{ id: string }> };
 
 async function loadHeader(
   db: Parameters<Parameters<typeof withUser>[1]>[0],
-  client: Parameters<Parameters<typeof withTestServiceLayer>[0]>[0],
+  client: Parameters<Parameters<typeof withSapServiceLayer>[0]>[0],
   caseId: string,
   match: Extract<
     NonNullable<Awaited<ReturnType<typeof readSapMatchJob>>>["result"],
@@ -88,14 +93,16 @@ async function loadHeader(
 /** Read-only preview; available before approval so the user can review PDF gaps. */
 export async function GET(request: Request, context: Context) {
   return withUser(request, async (db, user) => {
-    if (readSapEnvironment() !== "test")
-      throw new ApiError("Draft creation is enabled only for SAP Test.", 409);
     const { id } = await context.params;
-    await ownedCase(db, user, id);
+    const row = await ownedCase(db, user, id);
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
     const job = await readSapMatchJob(db, user, id);
     if (
       job?.status !== "succeeded" ||
       !job.result?.available ||
+      !isSapMatchForEnvironment(job.result, sapEnv) ||
       !job.result.result.payload
     ) {
       throw new ApiError(
@@ -104,7 +111,7 @@ export async function GET(request: Request, context: Context) {
       );
     }
     const match = job.result;
-    const header = await withTestServiceLayer(async (client) => {
+    const header = await withSapServiceLayer(async (client) => {
       const header = await loadHeader(db, client, id, match);
       const preview: DraftHeaderPreview = header.preview;
       if (new URL(request.url).searchParams.get("series") === "1") {
@@ -127,7 +134,7 @@ export async function GET(request: Request, context: Context) {
         };
       }
       return { ...header, preview };
-    });
+    }, sapEnv);
     return { ok: true, preview: header.preview };
   });
 }
@@ -137,18 +144,17 @@ function freightExpenseCode(): number | null {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-// Creates the SAP Test A/P Invoice DRAFT from the current match. Nothing is
-// posted: the existing final-post route re-checks the draft before that.
+// Creates only an A/P Invoice draft in the case’s SAP company.
 export async function POST(request: Request, context: Context) {
   return withUser(request, async (db, user) => {
-    if (readSapEnvironment() !== "test") {
-      throw new ApiError(
-        "AP Invoice Draft creation is enabled only for the SAP Test company.",
-        409,
-      );
-    }
     const { id } = await context.params;
     const row = await ownedCase(db, user, id);
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
+    const sapName = sapEnvironmentLabel(sapEnv);
+    if (sapEnv === "live" && process.env.SAP_LIVE_DRAFTS_ENABLED !== "true")
+      throw new ApiError("SAP Production draft creation is paused.", 503);
     if (row.status !== "accepted") {
       throw new ApiError("Approve the case before creating an SAP draft.", 409);
     }
@@ -177,7 +183,7 @@ export async function POST(request: Request, context: Context) {
       .eq("case_id", uuid(id))
       .eq("owner_user_id", user)
       .eq("kind", "AP")
-      .eq("sap_env", "test")
+      .eq("sap_env", sapEnv)
       .maybeSingle();
     dbCheck(existing.error);
     if (
@@ -191,7 +197,7 @@ export async function POST(request: Request, context: Context) {
         docEntry: existing.data.sap_docnum,
         message:
           existing.data.status === "prepared"
-            ? `SAP Test AP Invoice Draft ${existing.data.sap_docnum} already exists for this case.`
+            ? `${sapName} A/P Invoice Draft ${existing.data.sap_docnum} already exists for this case.`
             : "An AP invoice was already posted for this case; no draft was created.",
       };
     }
@@ -200,11 +206,17 @@ export async function POST(request: Request, context: Context) {
     if (
       !matchJob ||
       matchJob.status === "failed" ||
-      matchJob.status === "cancelled"
+      matchJob.status === "cancelled" ||
+      (matchJob.status === "succeeded" &&
+        !isSapMatchForEnvironment(matchJob.result, sapEnv))
     ) {
       matchJob = await enqueueSapMatch(db, user, id, true);
     }
-    if (matchJob.status !== "succeeded" || !matchJob.result) {
+    if (
+      matchJob.status !== "succeeded" ||
+      !matchJob.result ||
+      !isSapMatchForEnvironment(matchJob.result, sapEnv)
+    ) {
       throw new ApiError(
         "The latest SAP re-check is still running. Wait for the SAP tab to finish, then create the draft.",
         409,
@@ -214,7 +226,7 @@ export async function POST(request: Request, context: Context) {
 
     let outcome;
     try {
-      outcome = await withTestServiceLayer(async (client) => {
+      outcome = await withSapServiceLayer(async (client) => {
         const match = cachedMatch;
         if (!match.available) throw new ApiError(match.reason, 409);
         const plan = match.result.payload;
@@ -318,10 +330,10 @@ export async function POST(request: Request, context: Context) {
         Object.assign(payload, header.values);
         const [grpos, pos] = await Promise.all([
           plan.lines.some((line) => line.baseType === 20)
-            ? fetchSapOpenGRPOs("test", true)
+            ? fetchSapOpenGRPOs(sapEnv, true)
             : Promise.resolve([]),
           plan.lines.some((line) => line.baseType === 22)
-            ? fetchSapOpenPOs("test", true)
+            ? fetchSapOpenPOs(sapEnv, true)
             : Promise.resolve([]),
         ]);
         Object.assign(payload, openDocumentDraftFields(plan, { grpos, pos }));
@@ -341,23 +353,41 @@ export async function POST(request: Request, context: Context) {
           Series?: number;
           BPL_IDAssignedToInvoice?: number | null;
         };
-        const created = await createMatchedDraft(client, {
+        const draftClient =
+          sapEnv === "live"
+            ? {
+                ...client,
+                createDraft: (draft: Record<string, unknown>) =>
+                  submitProductionDraft(
+                    db,
+                    {
+                      caseId: id,
+                      userId: user,
+                      vendor: plan.cardCode,
+                      invoice: plan.numAtCard,
+                    },
+                    () => client.createDraft(draft),
+                  ),
+              }
+            : client;
+        const created = await createMatchedDraft(draftClient, {
           payload,
           currency,
           postingDate: plan.docDate,
           taxDate: plan.taxDate,
           baseDocument: first,
           numberingSeries: body?.numberingSeries,
+          environment: sapEnv,
         });
         return { match, plan, created, header, sourceLineGroups };
-      });
+      }, sapEnv);
     } catch (error) {
       if (error instanceof ApiError) throw error;
       if (error instanceof MatchDraftError)
         throw new ApiError(error.message, 409, {
           numberingSeriesRequired: error.numberingSeriesRequired,
         });
-      console.error("SAP Test matched AP draft creation failed", {
+      console.error("SAP matched AP draft creation failed", {
         caseId: id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -367,7 +397,7 @@ export async function POST(request: Request, context: Context) {
           error:
             error instanceof Error
               ? error.message
-              : "SAP Test draft creation failed.",
+              : "SAP draft creation failed.",
         },
         { status: 502 },
       );
@@ -393,7 +423,7 @@ export async function POST(request: Request, context: Context) {
         owner_user_id: user,
         kind: "AP",
         status: "prepared",
-        sap_env: "test",
+        sap_env: sapEnv,
         sap_docnum: String(docEntry),
         payload: {
           documentType: "APInvoiceDraft",
@@ -438,7 +468,7 @@ export async function POST(request: Request, context: Context) {
       owner_user_id: user,
       action: "sap_ap_draft_created",
       details: {
-        sapEnv: "test",
+        sapEnv,
         docEntry,
         matched: true,
         baseDocuments: match.result.baseDocuments,
@@ -463,8 +493,8 @@ export async function POST(request: Request, context: Context) {
       invoiceDate: plan.taxDate,
       usedHistoricalTestPostingDate: created.usedHistoricalPostingDate,
       message: created.usedHistoricalPostingDate
-        ? `SAP Test AP Invoice Draft ${docEntry} created with posting date ${created.postingDate}. The vendor invoice date ${plan.taxDate} was kept; SAP Test had no reporting rate for it. No invoice was posted.`
-        : `SAP Test AP Invoice Draft ${docEntry} created. No invoice was posted.`,
+        ? `${sapName} A/P Invoice Draft ${docEntry} created with posting date ${created.postingDate}. The vendor invoice date ${plan.taxDate} was kept; SAP Test had no reporting rate for it. No invoice was posted.`
+        : `${sapName} A/P Invoice Draft ${docEntry} created. No invoice was posted.`,
     };
   });
 }

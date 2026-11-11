@@ -1,3 +1,4 @@
+import type { SapEnvironment } from "./config";
 // Builds the SAP A/P Invoice draft from a "ready" match, and creates it with the
 // same posting-date and numbering-series fallbacks the single-document flow uses.
 // The payload builder is pure; the creator takes the Service Layer client.
@@ -434,6 +435,7 @@ export async function createMatchedDraft(
     postingDate: string;
     taxDate: string;
     numberingSeries?: number;
+    environment?: SapEnvironment;
     baseDocument: BaseDocument & {
       Series?: number;
       BPL_IDAssignedToInvoice?: number | null;
@@ -453,7 +455,7 @@ export async function createMatchedDraft(
   const currencies = await client.getAdminCurrencies();
   if (!currencies.LocalCurrency || !currencies.SystemCurrency) {
     throw new MatchDraftError(
-      "SAP Test did not return its local and system currencies; no draft was created.",
+      "SAP did not return its local and system currencies; no draft was created.",
     );
   }
   const required = [currencies.SystemCurrency, params.currency].filter(
@@ -481,7 +483,7 @@ export async function createMatchedDraft(
 
   const missing = await missingRatesFor(postingDate);
   if (missing.length) {
-    if (params.numberingSeries !== undefined)
+    if (params.environment === "live" || params.numberingSeries !== undefined)
       throw new MatchDraftError(
         `SAP has no required reporting-currency rate for ${postingDate}. Ask the SAP team to add it; the posting date was not changed.`,
       );
@@ -556,7 +558,7 @@ export async function createMatchedDraft(
     );
     if (!series) {
       throw new MatchDraftError(
-        `SAP Test has no usable GST A/P Invoice numbering series for ${postingDate}. No draft was created.`,
+        `SAP has no usable GST A/P Invoice numbering series for ${postingDate}. No draft was created.`,
         true,
       );
     }
@@ -566,7 +568,7 @@ export async function createMatchedDraft(
     } catch (retryError) {
       if (/10000521|define the numbering series/i.test(String(retryError))) {
         throw new MatchDraftError(
-          `SAP Test rejected its existing GST A/P Invoice series ${series} for posting date ${postingDate}. No draft was created.`,
+          `SAP rejected its existing GST A/P Invoice series ${series} for posting date ${postingDate}. No draft was created.`,
           true,
         );
       }

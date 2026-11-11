@@ -1,3 +1,4 @@
+import { sapCaseOrigin } from "./sap/config";
 import { randomUUID } from "node:crypto";
 import type {
   CaseAnalysisMode,
@@ -372,17 +373,25 @@ async function processJob(jobId: string) {
     const options = record(job.result);
     const mode: CaseAnalysisMode =
       options.analysisMode === "smart_split" ? "smart_split" : "standard";
-    const [config, current] = await measure("loadConfigurationMs", async () =>
-      Promise.all([
-        getPersistedPacketFieldConfiguration(),
-        db
-          .from("packet_documents")
-          .select(
-            "client_document_id,source_file_name,source_hint,document_type,title,extracted_fields",
-          )
-          .eq("case_id", job.case_id),
-      ]),
+    const [config, current, caseOrigin] = await measure(
+      "loadConfigurationMs",
+      async () =>
+        Promise.all([
+          getPersistedPacketFieldConfiguration(),
+          db
+            .from("packet_documents")
+            .select(
+              "client_document_id,source_file_name,source_hint,document_type,title,extracted_fields",
+            )
+            .eq("case_id", job.case_id),
+          db
+            .from("packet_cases")
+            .select("created_at,processing_meta")
+            .eq("id", job.case_id)
+            .single(),
+        ]),
     );
+    if (caseOrigin.error) throw caseOrigin.error;
     if (current.error) throw current.error;
     const manifest = await readManifest();
     const manifestDigest = reviewInputDigest(manifest);
@@ -669,6 +678,10 @@ async function processJob(jobId: string) {
         summary,
         displayName,
         meta: {
+          sapOriginCreatedAt: sapCaseOrigin(
+            caseOrigin.data.created_at,
+            caseOrigin.data.processing_meta,
+          ),
           caseCategory: summary.category,
           packetCategory: summary.packetCategory,
           documentTypes: summary.documentTypes,

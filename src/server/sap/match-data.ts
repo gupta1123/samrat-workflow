@@ -1,3 +1,8 @@
+import {
+  readSapEnvironment,
+  sapCompanyKey,
+  type SapEnvironment,
+} from "./config";
 import { dbCheck } from "@/server/api/helpers";
 import {
   evaluateMatch,
@@ -29,10 +34,10 @@ import {
   vendorKeys,
   type SapFieldConfig,
 } from "./match-mapping";
-import type { withTestServiceLayer } from "./service-layer";
+import type { withSapServiceLayer } from "./service-layer";
 
 type Db = ReturnType<typeof createSupabaseAdminClient>;
-type Client = Parameters<Parameters<typeof withTestServiceLayer>[0]>[0];
+type Client = Parameters<Parameters<typeof withSapServiceLayer>[0]>[0];
 
 type StoredMismatchAttribution = {
   field_name: unknown;
@@ -140,11 +145,14 @@ export function sapFieldConfig(): SapFieldConfig {
   };
 }
 
-export async function loadMatchRules(db: Db): Promise<MatchRules> {
+export async function loadMatchRules(
+  db: Db,
+  environment = readSapEnvironment(),
+): Promise<MatchRules> {
   const { data, error } = await db
     .from("sap_match_rules")
     .select("*")
-    .eq("organization_id", "default")
+    .eq("organization_id", sapCompanyKey("default", environment))
     .maybeSingle();
   dbCheck(error);
   return rulesFromRow(data);
@@ -153,7 +161,7 @@ export async function loadMatchRules(db: Db): Promise<MatchRules> {
 export async function saveMatchRules(db: Db, rules: MatchRules) {
   const { error } = await db.from("sap_match_rules").upsert(
     {
-      organization_id: "default",
+      organization_id: sapCompanyKey("default"),
       qty_tolerance_pct: rules.qtyTolerancePct,
       rate_tolerance_pct: rules.rateTolerancePct,
       freight_policy: rules.freightPolicy,
@@ -211,12 +219,19 @@ export async function saveMatchState(
   dbCheck(error);
 }
 
-async function loadVendorMapping(db: Db, keys: string[]) {
+async function loadVendorMapping(
+  db: Db,
+  keys: string[],
+  environment: SapEnvironment,
+) {
   if (!keys.length) return null;
   const { data, error } = await db
     .from("sap_vendor_mappings")
     .select("vendor_key, sap_card_code, sap_card_name")
-    .in("vendor_key", keys);
+    .in(
+      "vendor_key",
+      keys.map((key) => sapCompanyKey(key, environment)),
+    );
   dbCheck(error);
   const matched = data ?? [];
   if (!matched.length) return null;
@@ -238,10 +253,11 @@ export async function saveVendorMapping(
     cardName: string | null;
     userId: string;
   },
+  environment = readSapEnvironment(),
 ) {
   const { error } = await db.from("sap_vendor_mappings").upsert(
     input.vendorKeys.map((vendorKey) => ({
-      vendor_key: vendorKey,
+      vendor_key: sapCompanyKey(vendorKey, environment),
       sap_card_code: input.cardCode,
       sap_card_name: input.cardName,
       created_by: input.userId,
@@ -251,21 +267,30 @@ export async function saveVendorMapping(
   dbCheck(error);
 }
 
-async function loadItemMappings(db: Db, vendorCardCode: string) {
+async function loadItemMappings(
+  db: Db,
+  vendorCardCode: string,
+  environment: SapEnvironment,
+) {
+  const shared = sapCompanyKey("*", environment);
   const { data, error } = await db
     .from("sap_item_mappings")
     .select("vendor_item_key, sap_item_code, vendor_card_code")
-    .in("vendor_card_code", [vendorCardCode, "*"]);
+    .in("vendor_card_code", [
+      sapCompanyKey(vendorCardCode, environment),
+      shared,
+    ]);
   dbCheck(error);
   const map: Record<string, string> = {};
   const scopes: NonNullable<MatchContext["itemMappingScopes"]> = {};
   for (const row of [...(data ?? [])].sort(
     (a, b) =>
-      Number(a.vendor_card_code !== "*") - Number(b.vendor_card_code !== "*"),
+      Number(a.vendor_card_code !== shared) -
+      Number(b.vendor_card_code !== shared),
   )) {
     map[String(row.vendor_item_key)] = String(row.sap_item_code);
     scopes[String(row.vendor_item_key)] =
-      row.vendor_card_code === "*" ? "shared" : "supplier";
+      row.vendor_card_code === shared ? "shared" : "supplier";
   }
   return { map, scopes };
 }
@@ -279,10 +304,11 @@ export async function saveItemMapping(
     sapItemName: string | null;
     userId: string;
   },
+  environment = readSapEnvironment(),
 ) {
   const { error } = await db.from("sap_item_mappings").upsert(
     {
-      vendor_card_code: input.vendorCardCode,
+      vendor_card_code: sapCompanyKey(input.vendorCardCode, environment),
       vendor_item_key: input.vendorItemKey,
       sap_item_code: input.sapItemCode,
       sap_item_name: input.sapItemName,
@@ -300,6 +326,7 @@ export async function saveItemMapping(
 export async function computeCaseMatch(params: {
   db: Db;
   client: Client;
+  environment?: SapEnvironment;
   caseRow: {
     id: string;
     invoice_number: unknown;
@@ -307,7 +334,7 @@ export async function computeCaseMatch(params: {
     processing_meta?: unknown;
   };
 }): Promise<CaseMatch> {
-  const { db, caseRow } = params;
+  const { db, caseRow, environment = readSapEnvironment() } = params;
   const timings: Timings = [];
   const runStarted = Date.now();
   const client = timedClient(params.client, timings);
@@ -366,7 +393,7 @@ export async function computeCaseMatch(params: {
 
   mark("db.packet", packetStarted);
   const [rules, state] = await Promise.all([
-    loadMatchRules(db),
+    loadMatchRules(db, environment),
     loadMatchState(db, caseRow.id),
   ]);
   const config = sapFieldConfig();
@@ -415,7 +442,7 @@ export async function computeCaseMatch(params: {
   }
   // A prior explicit link may be reused only for the same exact GSTIN and
   // vendor material code (or the same exact name when no GSTIN was available).
-  const linked = vendor ? null : await loadVendorMapping(db, keys);
+  const linked = vendor ? null : await loadVendorMapping(db, keys, environment);
   if (linked) {
     const supplier = await client.getSupplier(linked.cardCode);
     if (supplier) {
@@ -631,7 +658,7 @@ export async function computeCaseMatch(params: {
         ? Promise.resolve([])
         : client.listOpenReceiptDocumentsForVendor(vendor.cardCode),
       client.listOpenPurchaseOrdersForVendor(vendor.cardCode),
-      loadItemMappings(db, vendor.cardCode),
+      loadItemMappings(db, vendor.cardCode, environment),
     ]);
     itemMap = loadedItemMap.map;
     itemMappingScopes = loadedItemMap.scopes;

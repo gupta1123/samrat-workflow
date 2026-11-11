@@ -82,7 +82,7 @@ export function GrpoInspectorTab({
         <div>
           <h2 className="text-[12px] font-semibold">Goods Receipt PO (GRPO)</h2>
           <p className="mt-1 text-[#81766b]">
-            SAP Test · Read only ·{" "}
+            SAP · Read only ·{" "}
             {openOnly ? "Open receipts only" : "Open GRPOs shown by default"}
           </p>
         </div>

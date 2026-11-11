@@ -1,5 +1,9 @@
+import {
+  readSapEnvironment,
+  readSapServiceConnection,
+} from "@/server/sap/config";
 import { ApiError, withUser } from "@/server/api/helpers";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 import { sapFieldConfig } from "@/server/sap/match-data";
 import { normalizeSapInspectorRecords } from "@/lib/sap-inspector";
 import {
@@ -27,10 +31,9 @@ export async function GET(request: Request) {
     if (tab !== "yes" && tab !== "no" && tab !== "all")
       throw new ApiError("Invalid upload tab.");
     const config = sapFieldConfig();
-    const company = process.env.SAP_SL_TEST_COMPANY_DB;
-    if (!company)
-      throw new ApiError("SAP Test company is not configured.", 503);
-    return withTestServiceLayer(async (client) => {
+    const environment = readSapEnvironment();
+    const { company } = readSapServiceConnection(environment);
+    return withSapServiceLayer(async (client) => {
       const records: SapInspectorRecord[] = [];
       const uploads: Record<string, GrpoUploadState> = {};
       let cursor = query.before;
@@ -107,7 +110,10 @@ export async function GET(request: Request) {
       };
       const [purchaseOrders, pdfs] = await Promise.all([
         poEntries.length
-          ? client.listPurchaseOrdersByEntries(poEntries, tab === "all" ? 40 : 15)
+          ? client.listPurchaseOrdersByEntries(
+              poEntries,
+              tab === "all" ? 40 : 15,
+            )
           : [],
         readPdfs(),
       ]);
@@ -129,6 +135,7 @@ export async function GET(request: Request) {
         nextCursor,
         fetchedAt: new Date().toISOString(),
         company,
+        environment,
       };
     });
   });

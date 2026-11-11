@@ -11,7 +11,7 @@ export type GrpoUploadState = {
   sapDraft?: GrpoSapDraftState;
 };
 export type GrpoImportSource = {
-  environment: "test";
+  environment: "test" | "live";
   company: string;
   docEntry: number;
   docNum: number;

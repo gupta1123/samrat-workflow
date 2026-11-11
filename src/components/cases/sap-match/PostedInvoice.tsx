@@ -68,7 +68,7 @@ export function PostedInvoice({
             {details?.invoiceNumber
               ? `Vendor Ref. No. ${details.invoiceNumber} · `
               : ""}
-            SAP {environment === "test" ? "Test" : "Live"}
+            SAP {environment === "live" ? "Production" : "Test"}
           </p>
           <p className="mt-1 text-[11px] text-[#2c6a4f]">
             This invoice has been posted. Do not create or post it again.

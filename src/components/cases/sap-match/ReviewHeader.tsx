@@ -378,7 +378,7 @@ export function ReviewHeader({
         </h2>
         <div className="ml-auto flex items-center gap-2">
           <span className="rounded-md bg-[#fdf1dc] px-2 py-1 text-[10.5px] font-semibold uppercase tracking-[0.04em] text-[#8a5207]">
-            SAP {env === "test" ? "Test" : env}
+            SAP {env === "live" ? "Production" : "Test"}
           </span>
           {savedLabel ? (
             <span className="text-[11px] text-[#6b5d50]">{savedLabel}</span>

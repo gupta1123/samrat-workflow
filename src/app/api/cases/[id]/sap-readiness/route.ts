@@ -1,7 +1,8 @@
+import { sapCaseOrigin } from "@/server/sap/config";
+import { requireActiveSapCase } from "@/server/sap/case-environment";
 import { dbCheck, ownedCase, uuid, withUser } from "@/server/api/helpers";
 import { fetchSapOpenGRPOs, fetchSapOpenPOs } from "@/server/sap/client";
-import { readSapEnvironment } from "@/server/sap/config";
-import { fetchTestOpenGrpoRows } from "@/server/sap/service-layer";
+import { fetchSapOpenGrpoRows } from "@/server/sap/service-layer";
 import {
   classifySapCase,
   matchSapReference,
@@ -47,14 +48,16 @@ export async function GET(request: Request, context: Context) {
       documents,
     });
 
-    const sapEnv = readSapEnvironment();
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
     let openPOs: Record<string, unknown>[] = [];
     let openGRPOs: Record<string, unknown>[] = [];
     let sapError: string | null = null;
     const [poResult, grpoResult] = await Promise.allSettled([
       fetchSapOpenPOs(sapEnv),
       sapEnv === "test"
-        ? fetchTestOpenGrpoRows({
+        ? fetchSapOpenGrpoRows({
             basePoDocNum: classification.poNumber,
           })
         : fetchSapOpenGRPOs(sapEnv),

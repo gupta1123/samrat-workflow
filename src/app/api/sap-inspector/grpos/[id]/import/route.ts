@@ -1,3 +1,4 @@
+import { readSapServiceConnection } from "@/server/sap/config";
 import { createHash, randomUUID } from "node:crypto";
 import {
   ApiError,
@@ -27,9 +28,7 @@ export async function DELETE(
     const entry = grpoEntry((await context.params).id);
     const body = await jsonBody(request);
     const caseId = uuid(body?.caseId);
-    const company = process.env.SAP_SL_TEST_COMPANY_DB;
-    if (!company)
-      throw new ApiError("SAP Test company is not configured.", 503);
+    const { company } = readSapServiceConnection();
     const prior = (
       await grpoUploadStates(db, user, company, [{ docEntry: String(entry) }])
     )[String(entry)];
@@ -73,14 +72,21 @@ export async function POST(
     const body = await jsonBody(request);
     if (!["prepare", "file", "finish"].includes(body.action))
       throw new ApiError("Invalid import step.");
-    const company = process.env.SAP_SL_TEST_COMPANY_DB ?? "";
+    const { company } = readSapServiceConnection();
     const prior = (
       await grpoUploadStates(db, user, company, [{ docEntry: String(entry) }])
     )[String(entry)];
     if (prior && !prior.deleted) return { existing: true, ...prior };
     return withGrpoPdfs(entry, async (source) => {
       const manifest = createHash("sha256")
-        .update(JSON.stringify(source.files))
+        .update(
+          JSON.stringify([
+            source.environment,
+            source.company,
+            source.docNum,
+            source.files,
+          ]),
+        )
         .digest("hex");
       if (body.action === "prepare")
         return {
@@ -94,7 +100,16 @@ export async function POST(
       const day = importDay(body.day);
       const session = uuid(body.session);
       const assetId = (index: number) =>
-        importAssetId(user, source.company, entry, day, index, session);
+        importAssetId(
+          user,
+          source.company,
+          entry,
+          day,
+          index,
+          source.environment === "live"
+            ? `live:${manifest}:${prior?.deleted ? prior.caseId : ""}`
+            : session,
+        );
       if (body.action === "file") {
         if (!Number.isInteger(body.index) || !source.files[body.index])
           throw new ApiError("Invalid PDF selection.");
@@ -110,7 +125,12 @@ export async function POST(
         db,
         user,
         source.files.map((f) => assetId(f.index)),
-        { company: source.company, docEntry: entry, docNum: source.docNum },
+        {
+          environment: source.environment,
+          company: source.company,
+          docEntry: entry,
+          docNum: source.docNum,
+        },
       );
     });
   });

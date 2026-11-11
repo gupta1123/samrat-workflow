@@ -4,10 +4,13 @@ import { CheckCircle2 } from "lucide-react";
 export function FinalPostSection({
   status,
   documentNumber,
+  environment = "test",
 }: {
   status: "prepared" | "posted";
   documentNumber: string;
+  environment?: string;
 }) {
+  const company = environment === "live" ? "SAP Production" : "SAP Test";
   const savedDraft = status === "prepared";
   return (
     <div
@@ -19,12 +22,12 @@ export function FinalPostSection({
         <div>
           <div className="text-[12px] font-semibold">
             {savedDraft
-              ? "Completed - A/P Invoice Draft saved in SAP Test"
+              ? `Completed - A/P Invoice Draft saved in ${company}`
               : "A/P Invoice previously posted in SAP"}
           </div>
           <div className="mt-0.5 text-[11px] leading-4">
             {savedDraft
-              ? `Draft Entry No. ${documentNumber} is saved in SAP Test. This is the final step in this app. No A/P Invoice has been posted.`
+              ? `Draft Entry No. ${documentNumber} is saved in ${company}. This is the final step in this app. No A/P Invoice has been posted.`
               : `A/P Invoice ${documentNumber} was already posted. This historical record is read-only.`}
           </div>
           {savedDraft ? (

@@ -26,7 +26,7 @@ export type BusinessPartnerPage = {
   records: BusinessPartnerRecord[];
   nextCursor: string | null;
   pageSize: number;
-  environment: "test";
+  environment: "test" | "live";
   fetchedAt: string;
 };
 

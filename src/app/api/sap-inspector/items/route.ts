@@ -1,5 +1,6 @@
+import { readSapEnvironment } from "@/server/sap/config";
 import { ApiError, withUser } from "@/server/api/helpers";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 import {
   parseItemsQuery,
   itemsPage,
@@ -21,12 +22,12 @@ export async function GET(request: Request) {
       );
     }
     try {
-      const rows = await withTestServiceLayer((client) =>
+      const rows = await withSapServiceLayer((client) =>
         client.listInspectorItemsPage(query),
       );
       return {
         ...itemsPage(rows, query.limit),
-        environment: "test",
+        environment: readSapEnvironment(),
         fetchedAt: new Date().toISOString(),
       };
     } catch (error) {
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
         error instanceof Error ? error.message : String(error),
       );
       throw new ApiError(
-        "Could not read items from SAP Test. Retry or check the SAP connection.",
+        "Could not read items from SAP. Retry or check the SAP connection.",
         502,
       );
     }

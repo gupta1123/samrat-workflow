@@ -1,3 +1,8 @@
+import {
+  readSapEnvironment,
+  readSapServiceConnection,
+  type SapEnvironment,
+} from "./config";
 import { sapFetch } from "./http";
 import type { SapGrpo } from "./ap-draft";
 import {
@@ -124,27 +129,20 @@ export type SapReadDocument = Omit<SapGrpo, "DocumentLines"> & {
   >;
 };
 
-export type SapInspectorServiceLayerDataset = "po" | "grpo" | "ap-invoice";
-
-function testConfig() {
-  const baseUrl = (process.env.SAP_SL_TEST_BASE_URL ?? "")
-    .trim()
-    .replace(/\/+$/, "");
-  const company = (process.env.SAP_SL_TEST_COMPANY_DB ?? "").trim();
-  const username = (process.env.SAP_SL_TEST_USERNAME ?? "").trim();
-  const password = (process.env.SAP_SL_TEST_PASSWORD ?? "").trim();
-  if (!baseUrl || !company || !username || !password) {
-    throw new Error("SAP Test Service Layer is not configured on the server.");
-  }
-  if (!baseUrl.startsWith("https://") || !baseUrl.endsWith("/b1s/v1")) {
-    throw new Error(
-      "SAP Test Service Layer URL must be an HTTPS /b1s/v1 endpoint.",
+export class SapServiceLayerError extends Error {
+  constructor(
+    public status: number,
+    public sapDetail: string | undefined,
+  ) {
+    super(
+      `SAP Service Layer returned HTTP ${status}${sapDetail ? `: ${sapDetail.slice(0, 300)}` : ""}.`,
     );
   }
-  return { baseUrl, company, username, password };
 }
 
-export async function withTestServiceLayer<T>(
+export type SapInspectorServiceLayerDataset = "po" | "grpo" | "ap-invoice";
+
+export async function withSapServiceLayer<T>(
   action: (client: {
     listOpenGrpos: () => Promise<SapGrpo[]>;
     listOpenGrposForPurchaseOrders: (
@@ -264,8 +262,9 @@ export async function withTestServiceLayer<T>(
       additionalHeaderFields?: string[],
     ) => Promise<Record<string, unknown>[]>;
   }) => Promise<T>,
+  environment: SapEnvironment = readSapEnvironment(),
 ): Promise<T> {
-  const config = testConfig();
+  const config = readSapServiceConnection(environment);
   let cookie = "";
   async function request(
     path: string,
@@ -277,6 +276,7 @@ export async function withTestServiceLayer<T>(
     try {
       const response = await sapFetch(`${config.baseUrl}${path}`, {
         ...init,
+        redirect: "error",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
@@ -294,8 +294,9 @@ export async function withTestServiceLayer<T>(
         const sapError = body.error as
           { message?: { value?: string } } | undefined;
         const detail = sapError?.message?.value;
-        throw new Error(
-          `SAP Service Layer returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ""}.`,
+        throw new SapServiceLayerError(
+          response.status,
+          typeof detail === "string" ? detail : undefined,
         );
       }
       return { response, body };
@@ -1049,7 +1050,7 @@ export async function withTestServiceLayer<T>(
           : [];
         if (fields.length > 1) {
           throw new Error(
-            `SAP Test exposes more than one ${description} field on ${tableName}; final posting is blocked until the SAP metadata is unambiguous.`,
+            `SAP exposes more than one ${description} field on ${tableName}; final posting is blocked until the SAP metadata is unambiguous.`,
           );
         }
         return fields[0] ?? null;
@@ -1115,10 +1116,18 @@ export async function withTestServiceLayer<T>(
   }
 }
 
-export async function fetchTestOpenGrpoRows(options?: {
+// Keep maintenance scripts explicitly on Test, even after the app cutover.
+export function withTestServiceLayer<T>(
+  action: Parameters<typeof withSapServiceLayer<T>>[0],
+) {
+  return withSapServiceLayer(action, "test");
+}
+
+export async function fetchSapOpenGrpoRows(options?: {
   basePoDocNum?: string | number | null;
+  environment?: SapEnvironment;
 }): Promise<Record<string, unknown>[]> {
-  return withTestServiceLayer(async (client) => {
+  return withSapServiceLayer(async (client) => {
     const requestedPo = sapDocumentNumber(options?.basePoDocNum);
     const purchaseOrders =
       requestedPo === null
@@ -1180,5 +1189,5 @@ export async function fetchTestOpenGrpoRows(options?: {
           Price: line.Price,
         })),
     );
-  });
+  }, options?.environment);
 }

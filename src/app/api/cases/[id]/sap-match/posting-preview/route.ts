@@ -1,3 +1,5 @@
+import { sapCaseOrigin } from "@/server/sap/config";
+import { requireActiveSapCase } from "@/server/sap/case-environment";
 import {
   ApiError,
   dbCheck,
@@ -5,8 +7,7 @@ import {
   uuid,
   withUser,
 } from "@/server/api/helpers";
-import { readSapEnvironment } from "@/server/sap/config";
-import { withTestServiceLayer } from "@/server/sap/service-layer";
+import { withSapServiceLayer } from "@/server/sap/service-layer";
 import { postedSapDetails } from "@/lib/sap-posted-details";
 import {
   assertSapPostingIdentity,
@@ -21,16 +22,17 @@ export async function GET(
 ) {
   return withUser(request, async (db, user) => {
     const { id } = await context.params;
-    await ownedCase(db, user, id);
-    if (readSapEnvironment() !== "test")
-      throw new ApiError("SAP preview is available for SAP Test.", 409);
+    const row = await ownedCase(db, user, id);
+    const sapEnv = requireActiveSapCase(
+      sapCaseOrigin(row.created_at, row.processing_meta),
+    );
     const result = await db
       .from("sap_postings")
       .select("status, sap_docnum, payload, response, updated_at")
       .eq("case_id", uuid(id))
       .eq("owner_user_id", user)
       .eq("kind", "AP")
-      .eq("sap_env", "test")
+      .eq("sap_env", sapEnv)
       .maybeSingle();
     dbCheck(result.error);
     const posting = result.data;
@@ -52,7 +54,7 @@ export async function GET(
         409,
       );
     try {
-      const document = await withTestServiceLayer((client) =>
+      const document = await withSapServiceLayer((client) =>
         draft ? client.getDraft(entry) : client.getPurchaseInvoice(entry),
       );
       assertSapPostingIdentity(document, {

@@ -1,3 +1,7 @@
+import {
+  readSapEnvironment,
+  sapEnvironmentLabel,
+} from "../src/server/sap/config";
 import { processCaseJob } from "../src/server/process-job";
 import { processSapMatchJob } from "../src/server/sap/match-job";
 import { createSupabaseAdminClient } from "../src/server/supabase/admin";
@@ -100,8 +104,16 @@ async function runMaintenanceIfDue() {
 async function run() {
   console.log("Local case worker ready.");
 
+  let currentEnvironment: ReturnType<typeof readSapEnvironment> | undefined;
   while (!stopping) {
     try {
+      const environment = readSapEnvironment();
+      if (environment !== currentEnvironment) {
+        console.log(
+          `[sap-match-worker] Active company: ${sapEnvironmentLabel(environment)}`,
+        );
+        currentEnvironment = environment;
+      }
       await runMaintenanceIfDue();
       const jobId = await nextQueuedJobId();
       if (jobId) {

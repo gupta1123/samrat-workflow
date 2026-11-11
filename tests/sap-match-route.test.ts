@@ -33,6 +33,7 @@ function setup(
     ownsCase?: boolean;
     validSession?: boolean;
     environment?: string;
+    createdAt?: string;
     nextCases?: string[];
     postedCases?: string[];
     historyError?: boolean;
@@ -43,6 +44,8 @@ function setup(
     SUPABASE_PUBLISHABLE_KEY: "test-publishable-key",
     SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key",
     SAP_API_ENV: options.environment ?? "test",
+    SAP_LIVE_CASES_FROM:
+      options.environment === "live" ? "2026-09-30T00:00:00Z" : "",
   };
   const previous = Object.fromEntries(
     Object.keys(env).map((key) => [key, process.env[key]]),
@@ -95,7 +98,14 @@ function setup(
         return Response.json(
           options.ownsCase === false
             ? []
-            : [{ id: caseId, status: "accepted", deleted_at: null }],
+            : [
+                {
+                  id: caseId,
+                  status: "accepted",
+                  deleted_at: null,
+                  created_at: options.createdAt ?? "2026-10-01T00:00:00Z",
+                },
+              ],
         );
       }
       if (
@@ -188,6 +198,21 @@ test("posted invoice in the live company also returns without starting test matc
   assert.equal(result.status, 200);
   assert.equal((await result.json()).reason, "Posted as A/P invoice 848");
   assert.equal(calls.length, 5);
+});
+
+test("an old Test case cannot enqueue a Production match", async (t) => {
+  const calls = setup(t, {
+    environment: "live",
+    createdAt: "2026-09-29",
+    postings: [],
+  });
+  const result = await read(true);
+  assert.equal(result.status, 200);
+  const body = await result.json();
+  assert.equal(body.sapEnv, "test");
+  assert.equal(body.postable, false);
+  assert.match(body.reason, /SAP Test.*read-only/);
+  assert.equal(calls.at(-1), "/rest/v1/sap_postings");
 });
 
 for (const [name, postings] of [

@@ -1,3 +1,9 @@
+import { createHash } from "node:crypto";
+import {
+  readSapEnvironment,
+  readSapServiceConnection,
+  type SapEnvironment,
+} from "./config";
 import { ApiError } from "@/server/api/helpers";
 import { sapFetch } from "./http";
 import { downloadGrpoPdfs } from "./grpo-attachments-api";
@@ -73,26 +79,24 @@ export async function readBoundedPdf(response: Response) {
   return bytes;
 }
 
-/** Verify the live SAP Test receipt; download only from the SAP team's attachment API. */
+/** Verify the open receipt and download PDFs from the same SAP company. */
 export async function withGrpoPdfs<T>(
   entry: number,
   action: (source: {
+    environment: SapEnvironment;
     company: string;
     docNum: number;
     files: GrpoPdfFile[];
     download: (index: number) => Promise<Buffer>;
   }) => Promise<T>,
 ) {
-  const base = (process.env.SAP_SL_TEST_BASE_URL ?? "").replace(/\/+$/, "");
-  const company = process.env.SAP_SL_TEST_COMPANY_DB ?? "";
-  if (
-    !base.startsWith("https://") ||
-    !base.endsWith("/b1s/v1") ||
-    !company ||
-    !process.env.SAP_SL_TEST_USERNAME ||
-    !process.env.SAP_SL_TEST_PASSWORD
-  )
-    throw new ApiError("SAP Test attachment access is not configured.", 503);
+  const environment = readSapEnvironment();
+  const {
+    baseUrl: base,
+    company,
+    username,
+    password,
+  } = readSapServiceConnection(environment);
   let cookie = "";
   const request = async (path: string, init: RequestInit = {}) =>
     sapFetch(base + path, {
@@ -119,8 +123,8 @@ export async function withGrpoPdfs<T>(
     method: "POST",
     body: JSON.stringify({
       CompanyDB: company,
-      UserName: process.env.SAP_SL_TEST_USERNAME,
-      Password: process.env.SAP_SL_TEST_PASSWORD,
+      UserName: username,
+      Password: password,
     }),
   });
   if (!login.body.SessionId)
@@ -146,13 +150,17 @@ export async function withGrpoPdfs<T>(
       );
     if (!Number.isSafeInteger(receipt.DocNum))
       throw new ApiError("SAP receipt identity is unavailable.", 502);
-    const pdfs = await downloadGrpoPdfs(entry);
+    const pdfs =
+      environment === "test"
+        ? await downloadGrpoPdfs(entry)
+        : await productionPdfs(receipt.AttachmentEntry, json, request);
     const files = pdfs.map(({ name, sha256 }, index) => ({
       name,
       sha256,
       index,
     }));
     return await action({
+      environment,
       company,
       docNum: receipt.DocNum,
       files,
@@ -168,4 +176,48 @@ export async function withGrpoPdfs<T>(
       signal: AbortSignal.timeout(5000),
     }).catch(() => {});
   }
+}
+
+async function productionPdfs(
+  entry: unknown,
+  json: (path: string) => Promise<{ body: Record<string, unknown> }>,
+  request: (path: string, init?: RequestInit) => Promise<Response>,
+) {
+  const path =
+    typeof entry === "number" && Number.isSafeInteger(entry) && entry > 0
+      ? `/Attachments2(${entry})`
+      : null;
+  const metadata = path ? (await json(path)).body : null;
+  const files = pdfAttachments(entry, metadata?.Attachments2_Lines);
+  if (!files.length || !path)
+    throw new ApiError("No PDF is attached to this SAP receipt.", 404);
+  if (files.length > 20)
+    throw new ApiError(
+      "This receipt has more than 20 PDFs. Upload a smaller packet manually.",
+      413,
+    );
+  if (
+    new Set(files.map((file) => file.name.toLowerCase())).size !== files.length
+  )
+    throw new ApiError("SAP returned duplicate attachment filenames.", 409);
+  const deadline = AbortSignal.timeout(38_000);
+  const pdfs = [];
+  let total = 0;
+  for (const file of files) {
+    const query = new URLSearchParams({
+      filename: `'${file.name.replace(/'/g, "''")}'`,
+    });
+    const bytes = await readBoundedPdf(
+      await request(`${path}/$value?${query}`, { signal: deadline }),
+    );
+    total += bytes.length;
+    if (total > 100 * 1024 * 1024)
+      throw new ApiError("The receipt PDFs exceed the 100 MB case limit.", 413);
+    pdfs.push({
+      name: file.name,
+      bytes,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+  }
+  return pdfs;
 }
