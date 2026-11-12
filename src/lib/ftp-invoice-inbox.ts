@@ -19,6 +19,11 @@ export type FtpInvoice = {
   canAnalyze: boolean;
 };
 
+export type FtpInvoiceProgress = Pick<
+  FtpInvoice,
+  "status" | "caseId" | "error"
+>;
+
 export type FtpInvoicePage = {
   rows: FtpInvoice[];
   page: number;

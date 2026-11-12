@@ -7,7 +7,10 @@ import {
   INBOX_PAGE_SIZE,
   type FtpInvoiceRow,
 } from "@/server/ftp-inbox/data";
-import type { FtpInvoicePage } from "@/lib/ftp-invoice-inbox";
+import type {
+  FtpInvoicePage,
+  FtpInvoiceProgress,
+} from "@/lib/ftp-invoice-inbox";
 
 function requireProduction() {
   if (readSapEnvironment() !== "live")
@@ -18,6 +21,21 @@ export async function GET(request: Request) {
   return withUser(request, async (db, user) => {
     requireProduction();
     const params = new URL(request.url).searchParams;
+    if (params.has("id")) {
+      const result = await db
+        .from("ftp_invoice_inbox")
+        .select("status,case_id,error")
+        .eq("id", uuid(params.get("id")))
+        .eq("owner_user_id", user)
+        .maybeSingle();
+      checkInboxError(result.error);
+      if (!result.data) throw new ApiError("Invoice file not found.", 404);
+      return {
+        status: result.data.status as FtpInvoiceProgress["status"],
+        caseId: result.data.case_id,
+        error: result.data.error,
+      } satisfies FtpInvoiceProgress;
+    }
     const page = Number(params.get("page") ?? 1);
     const search = (params.get("q") ?? "").trim().slice(0, 100);
     if (!Number.isSafeInteger(page) || page < 1 || page > 10000)

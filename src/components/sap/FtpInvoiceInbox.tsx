@@ -2,10 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FileText, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiFetch } from "@/lib/api-client";
-import type { FtpInvoicePage, FtpInvoiceStatus } from "@/lib/ftp-invoice-inbox";
+import type {
+  FtpInvoicePage,
+  FtpInvoiceProgress,
+  FtpInvoiceStatus,
+} from "@/lib/ftp-invoice-inbox";
 
 const statuses: Record<FtpInvoiceStatus, string> = {
   copying: "Waiting for upload",
@@ -25,12 +30,14 @@ const dateTime = new Intl.DateTimeFormat("en-IN", {
 });
 
 export function FtpInvoiceInbox() {
+  const router = useRouter();
   const [data, setData] = useState<FtpInvoicePage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingInvoice, setPendingInvoice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,6 +78,67 @@ export function FtpInvoiceInbox() {
     };
   }, [page, refresh, search]);
 
+  useEffect(() => {
+    if (!pendingInvoice) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let failedChecks = 0;
+
+    function stopWaiting(message: string) {
+      setActionError(message);
+      setPendingInvoice(null);
+      setRefresh((value) => value + 1);
+    }
+
+    async function checkProgress() {
+      try {
+        const response = await apiFetch(
+          `/api/ftp-invoice-inbox?id=${pendingInvoice}`,
+          { signal: controller.signal, cache: "no-store" },
+        );
+        if (controller.signal.aborted) return;
+        if (response.status === 401 || response.status === 404) {
+          stopWaiting(
+            response.status === 401
+              ? "Your session expired. Sign in to open the case."
+              : "The invoice is no longer available in your inbox.",
+          );
+          return;
+        }
+        if (!response.ok) throw new Error("Analysis status is unavailable.");
+        const progress: FtpInvoiceProgress = await response.json();
+        if (controller.signal.aborted) return;
+        failedChecks = 0;
+        if (
+          progress.caseId &&
+          ["analyzing", "archive_pending", "archived"].includes(progress.status)
+        ) {
+          router.replace(`/cases/${progress.caseId}`);
+          return;
+        }
+        if (progress.status === "failed" || progress.status === "missing") {
+          stopWaiting(progress.error ?? "The invoice could not be analyzed.");
+          return;
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        if (++failedChecks >= 3) {
+          stopWaiting(
+            "Could not check progress. Refresh the inbox for the latest status.",
+          );
+          return;
+        }
+      }
+      timer = setTimeout(checkProgress, 3_000);
+    }
+
+    void checkProgress();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [pendingInvoice, router]);
+
   async function analyze(id: string) {
     setBusy(id);
     setActionError(null);
@@ -83,6 +151,7 @@ export function FtpInvoiceInbox() {
       const body = await response.json();
       if (!response.ok || !body.queued)
         throw new Error(body.error ?? "Could not queue the invoice.");
+      setPendingInvoice(id);
       setData(
         (previous) =>
           previous && {
@@ -138,6 +207,11 @@ export function FtpInvoiceInbox() {
           </Button>
         </div>
       </div>
+      {pendingInvoice && (
+        <p role="status" className="text-sm text-[#64564b]">
+          Preparing the PDF. The analysis page will open automatically.
+        </p>
+      )}
       {(error || actionError || data?.connectionError) && (
         <p
           role="status"
@@ -197,7 +271,7 @@ export function FtpInvoiceInbox() {
                     {row.canAnalyze && (
                       <Button
                         size="sm"
-                        disabled={busy !== null}
+                        disabled={busy !== null || pendingInvoice !== null}
                         onClick={() => void analyze(row.id)}
                         className="bg-[#6b3d20] text-white hover:bg-[#543019]"
                       >

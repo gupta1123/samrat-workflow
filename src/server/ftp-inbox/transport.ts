@@ -67,6 +67,14 @@ export function createInvoiceFtp(): InvoiceFtp {
     process.env.FTP_INBOX_USE_STATIC_PROXY === "true"
       ? new URL(process.env.QUOTAGUARDSTATIC_URL ?? "")
       : null;
+  // FTP uses two connections per transfer. Pin both to one QuotaGuard
+  // gateway, then try the other gateway if that transfer fails.
+  const staticGateway = proxy?.hostname.match(
+    /^([a-z0-9-]+-static-\d+)\.quotaguard\.com$/i,
+  )?.[1];
+  const dataGateways = staticGateway
+    ? [`${staticGateway}-a.quotaguard.com`, `${staticGateway}-b.quotaguard.com`]
+    : [proxy?.hostname];
   const args = [
     "-q",
     "--config",
@@ -78,8 +86,6 @@ export function createInvoiceFtp(): InvoiceFtp {
     "--connect-timeout",
     "8",
     "--ftp-skip-pasv-ip",
-    "--proxy",
-    proxy ? `socks5h://${proxy.hostname}:1080` : "",
     "--noproxy",
     "",
     ...(mode === "ftps" ? ["--ssl-reqd"] : []),
@@ -97,11 +103,23 @@ export function createInvoiceFtp(): InvoiceFtp {
   const url = (path = "") =>
     `ftp://${host}:${port}/${path.split("/").map(encodeURIComponent).join("/").replace(/^\//, "%2F")}`;
 
-  function run(extra: string[], maxBuffer: number, seconds = 28) {
+  function run(
+    extra: string[],
+    maxBuffer: number,
+    seconds = 28,
+    gateway = proxy?.hostname,
+  ) {
     return new Promise<Buffer>((resolve, reject) => {
       const child = execFile(
         "curl",
-        [...args, "--max-time", String(seconds), ...extra],
+        [
+          ...args,
+          "--proxy",
+          gateway ? `socks5h://${gateway}:1080` : "",
+          "--max-time",
+          String(seconds),
+          ...extra,
+        ],
         { encoding: "buffer", timeout: (seconds + 2) * 1_000, maxBuffer },
         (error, stdout) => {
           if (!error) return resolve(stdout);
@@ -113,7 +131,7 @@ export function createInvoiceFtp(): InvoiceFtp {
                 : "The FTP server did not complete the request. The worker will retry.";
           const retryable =
             typeof error.code === "number" &&
-            [7, 18, 28, 55, 56].includes(error.code);
+            [5, 7, 18, 28, 55, 56, 97].includes(error.code);
           reject(new InboxFtpError(message, retryable));
         },
       );
@@ -128,14 +146,15 @@ export function createInvoiceFtp(): InvoiceFtp {
     seconds: number,
     attempts: number,
   ): Promise<Buffer> {
-    // The server opens a separate connection for each data transfer. Retry a
-    // failed read using a fresh connection and alternate the passive commands.
+    // Reconnect through the other gateway, or try the older passive command
+    // when there is only one route.
     for (let attempt = 1; ; attempt++) {
       try {
         return await run(
-          attempt === 2 ? ["--disable-epsv", ...extra] : extra,
+          !staticGateway && attempt === 2 ? ["--disable-epsv", ...extra] : extra,
           maxBuffer,
           seconds,
+          dataGateways[(attempt - 1) % dataGateways.length],
         );
       } catch (error) {
         if (
@@ -212,17 +231,26 @@ export function createInvoiceFtp(): InvoiceFtp {
             entry.modifiedAt?.toISOString() ?? (entry.rawModifiedAt || null),
         }));
     },
-    download(folder, name) {
-      return read(
-        [
-          "--max-filesize",
-          String(UPLOAD_LIMITS.bytes),
-          url(checkedPath(folder, name)),
-        ],
-        UPLOAD_LIMITS.bytes,
-        28,
-        2,
-      );
+    async download(folder, name) {
+      try {
+        return await read(
+          [
+            "--max-filesize",
+            String(UPLOAD_LIMITS.bytes),
+            url(checkedPath(folder, name)),
+          ],
+          UPLOAD_LIMITS.bytes,
+          28,
+          staticGateway ? 2 : 3,
+        );
+      } catch (error) {
+        if (error instanceof InboxFtpError && error.retryable)
+          throw new InboxFtpError(
+            "FTP could not finish downloading the PDF.",
+            true,
+          );
+        throw error;
+      }
     },
     async archive(name, archiveName) {
       const from = checkedPath("in", name);
