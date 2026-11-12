@@ -14,7 +14,14 @@ export type InvoiceFtp = {
   archive: (name: string, archiveName: string) => Promise<void>;
 };
 
-export class InboxFtpError extends Error {}
+export class InboxFtpError extends Error {
+  constructor(
+    message: string,
+    readonly retryable = false,
+  ) {
+    super(message);
+  }
+}
 
 export function isInvoiceFilename(name: string) {
   return (
@@ -70,8 +77,6 @@ export function createInvoiceFtp(): InvoiceFtp {
     "=ftp,ftps",
     "--connect-timeout",
     "8",
-    "--max-time",
-    "28",
     "--ftp-skip-pasv-ip",
     "--proxy",
     proxy ? `socks5h://${proxy.hostname}:1080` : "",
@@ -92,12 +97,12 @@ export function createInvoiceFtp(): InvoiceFtp {
   const url = (path = "") =>
     `ftp://${host}:${port}/${path.split("/").map(encodeURIComponent).join("/").replace(/^\//, "%2F")}`;
 
-  function run(extra: string[], maxBuffer: number) {
+  function run(extra: string[], maxBuffer: number, seconds = 28) {
     return new Promise<Buffer>((resolve, reject) => {
       const child = execFile(
         "curl",
-        [...args, ...extra],
-        { encoding: "buffer", timeout: 30_000, maxBuffer },
+        [...args, "--max-time", String(seconds), ...extra],
+        { encoding: "buffer", timeout: (seconds + 2) * 1_000, maxBuffer },
         (error, stdout) => {
           if (!error) return resolve(stdout);
           const message =
@@ -106,12 +111,41 @@ export function createInvoiceFtp(): InvoiceFtp {
               : error.code === 67
                 ? "FTP sign-in was rejected."
                 : "The FTP server did not complete the request. The worker will retry.";
-          reject(new InboxFtpError(message));
+          const retryable =
+            typeof error.code === "number" &&
+            [7, 18, 28, 55, 56].includes(error.code);
+          reject(new InboxFtpError(message, retryable));
         },
       );
       child.stdin?.on("error", () => {});
       child.stdin?.end(config + "\n");
     });
+  }
+
+  async function read(
+    extra: string[],
+    maxBuffer: number,
+    seconds: number,
+    attempts: number,
+  ): Promise<Buffer> {
+    // The server opens a separate connection for each data transfer. Retry a
+    // failed read using a fresh connection and alternate the passive commands.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await run(
+          attempt === 2 ? ["--disable-epsv", ...extra] : extra,
+          maxBuffer,
+          seconds,
+        );
+      } catch (error) {
+        if (
+          attempt === attempts ||
+          !(error instanceof InboxFtpError) ||
+          !error.retryable
+        )
+          throw error;
+      }
+    }
   }
 
   function checkedPath(folder: "in" | "archive", name: string) {
@@ -123,7 +157,7 @@ export function createInvoiceFtp(): InvoiceFtp {
   return {
     async list(folder) {
       const listing = (
-        await run([url(remote(folder) + "/")], 4 * 1024 * 1024)
+        await read([url(remote(folder) + "/")], 4 * 1024 * 1024, 10, 3)
       ).toString("utf8");
       const parsed = parseList(listing);
       if (
@@ -148,13 +182,15 @@ export function createInvoiceFtp(): InvoiceFtp {
         }));
     },
     download(folder, name) {
-      return run(
+      return read(
         [
           "--max-filesize",
           String(UPLOAD_LIMITS.bytes),
           url(checkedPath(folder, name)),
         ],
         UPLOAD_LIMITS.bytes,
+        28,
+        2,
       );
     },
     async archive(name, archiveName) {
