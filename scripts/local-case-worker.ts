@@ -1,3 +1,4 @@
+import { runProductionInvoiceInbox } from "../src/server/ftp-inbox/worker";
 import {
   readSapEnvironment,
   sapEnvironmentLabel,
@@ -157,13 +158,33 @@ async function run() {
   }
 }
 
-process.on("SIGINT", () => {
-  stopping = true;
-});
-process.on("SIGTERM", () => {
-  stopping = true;
-});
+let inboxTimer: ReturnType<typeof setTimeout> | undefined;
+let inboxFailure: string | undefined;
+async function pollInvoiceInbox() {
+  try {
+    await runProductionInvoiceInbox();
+    inboxFailure = undefined;
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : (error as { code?: string })?.code;
+    if (message !== inboxFailure)
+      console.warn("[invoice-inbox] Check failed:", message ?? "Unknown error");
+    inboxFailure = message;
+  } finally {
+    if (!stopping) inboxTimer = setTimeout(pollInvoiceInbox, 5_000);
+  }
+}
 
+function stop() {
+  stopping = true;
+  clearTimeout(inboxTimer);
+}
+
+process.on("SIGINT", stop);
+process.on("SIGTERM", stop);
+if (process.env.FTP_INBOX_ENABLED === "true") void pollInvoiceInbox();
 void run().catch((error) => {
   console.error("Local case worker stopped:", error);
   process.exitCode = 1;
