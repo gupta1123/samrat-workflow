@@ -148,6 +148,33 @@ export function createInvoiceFtp(): InvoiceFtp {
     }
   }
 
+  async function listOnControlConnection(path: string) {
+    try {
+      const response = await run(
+        ["--dump-header", "-", "--head", "--quote", `STAT ${path}`, url()],
+        4 * 1024 * 1024,
+        10,
+      );
+      const lines = response.toString("utf8").split(/\r?\n/);
+      const start = lines.findIndex((line) => /^213-status of /i.test(line));
+      const end = lines.findIndex(
+        (line, index) =>
+          index > start && /^213 end of status\.?$/i.test(line.trim()),
+      );
+      if (start < 0 || end < 0) return null;
+
+      const listing = lines
+        .slice(start + 1, end)
+        .map((line) => line.trimStart())
+        .join("\n");
+      const parsed = parseList(listing);
+      return listing.trim() && !parsed.length ? null : parsed;
+    } catch {
+      // Some FTP servers do not support directory STAT. Use LIST there.
+      return null;
+    }
+  }
+
   function checkedPath(folder: "in" | "archive", name: string) {
     if (!isInvoiceFilename(name))
       throw new InboxFtpError("Invalid FTP PDF filename.");
@@ -156,16 +183,20 @@ export function createInvoiceFtp(): InvoiceFtp {
 
   return {
     async list(folder) {
-      const listing = (
-        await read([url(remote(folder) + "/")], 4 * 1024 * 1024, 10, 3)
-      ).toString("utf8");
-      const parsed = parseList(listing);
-      if (
-        listing.trim() &&
-        !parsed.length &&
-        !/^total\s+0\s*$/i.test(listing.trim())
-      )
-        throw new InboxFtpError("The FTP folder listing could not be read.");
+      const path = remote(folder);
+      let parsed = await listOnControlConnection(path);
+      if (!parsed) {
+        const listing = (
+          await read([url(path + "/")], 4 * 1024 * 1024, 10, 3)
+        ).toString("utf8");
+        parsed = parseList(listing);
+        if (
+          listing.trim() &&
+          !parsed.length &&
+          !/^total\s+0\s*$/i.test(listing.trim())
+        )
+          throw new InboxFtpError("The FTP folder listing could not be read.");
+      }
       return parsed
         .filter(
           (entry) =>
