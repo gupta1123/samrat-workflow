@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ApiError, dbCheck } from "@/server/api/helpers";
-import { DEFAULT_COMPARISON_OPTIONS } from "@/server/comparison";
 import { storeImportedPdf } from "@/server/imported-pdf";
+import {
+  analysisQueueIsIdle,
+  queueIntakeAnalysis,
+  readAutomaticIntake,
+  type AutomaticIntake,
+} from "@/server/automatic-intake";
+import { runAutomaticGrpoIntake } from "@/server/sap/automatic-grpo";
 import {
   readSapEnvironment,
   sapCaseEnvironment,
@@ -9,7 +15,6 @@ import {
 } from "@/server/sap/config";
 import { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { UPLOAD_LIMITS } from "@/server/uploads";
-import { isConfirmedAnalysisStart } from "@/lib/analysis-start";
 import { checkInboxError, SCAN_INTERVAL_MS, type FtpInvoiceRow } from "./data";
 import {
   archiveFilename,
@@ -248,7 +253,12 @@ async function importPdf(
   return { caseId: attached.data.case.id as string, owner, sha256 };
 }
 
-async function queueAnalysis(db: Db, ftp: InvoiceFtp, row: FtpInvoiceRow) {
+async function queueAnalysis(
+  db: Db,
+  ftp: InvoiceFtp,
+  row: FtpInvoiceRow,
+  automatic = false,
+) {
   let owner = row.owner_user_id;
   if (!owner) throw new ApiError("The original reviewer is unavailable.", 409);
   let caseId = row.case_id;
@@ -302,28 +312,82 @@ async function queueAnalysis(db: Db, ftp: InvoiceFtp, row: FtpInvoiceRow) {
     Date.parse(job.created_at) >= Date.parse(row.requested_at)
   )
     throw new ApiError("Analysis failed. Retry it from the inbox.", 409);
-  if (!process.env.OPENROUTER_API_KEY)
-    throw new ApiError(
-      "Invoice analysis is unavailable. Try again later.",
-      503,
+  const jobId = await queueIntakeAnalysis(db, owner, caseId, automatic);
+  if (!jobId) {
+    // A manual job arrived during the download. Retain the saved case and
+    // let the next idle cycle resume it without downloading again.
+    await update(
+      db,
+      row.id,
+      { status: "ready", requested_at: null },
+      "importing",
     );
-  const result = await db.rpc("enqueue_case_analysis", {
-    p_user: owner,
-    p_case: caseId,
-    p_options: {
-      analysisMode: "standard",
-      comparisonOptions: DEFAULT_COMPARISON_OPTIONS,
-    },
-  });
-  dbCheck(result.error);
-  if (!isConfirmedAnalysisStart(result.data))
-    throw new Error("Analysis queue did not confirm the case.");
+    return;
+  }
   await update(
     db,
     row.id,
-    { status: "analyzing", analysis_job_id: result.data.job.id, error: null },
+    { status: "analyzing", analysis_job_id: jobId, error: null },
     "importing",
   );
+}
+
+async function takeAutomaticInvoice(
+  db: Db,
+  ftp: InvoiceFtp,
+  config: AutomaticIntake,
+  now: Date,
+) {
+  const ready = await db
+    .from(table)
+    .select("*")
+    .eq("status", "ready")
+    .eq("present", true)
+    .gte("discovered_at", config.fromInstant)
+    .lte("discovered_at", now.toISOString())
+    .gt("size_bytes", 0)
+    .lte("size_bytes", UPLOAD_LIMITS.bytes)
+    .or(`owner_user_id.is.null,owner_user_id.eq.${config.owner}`)
+    .order("discovered_at")
+    .order("id")
+    .limit(1)
+    .maybeSingle();
+  dbCheck(ready.error);
+  const row = ready.data as FtpInvoiceRow | null;
+  if (!row) return false;
+  const claimed = await db
+    .from(table)
+    .update({
+      status: "importing",
+      owner_user_id: config.owner,
+      requested_at: now.toISOString(),
+      error: null,
+    })
+    .eq("id", row.id)
+    .eq("status", "ready")
+    .eq("present", true)
+    .select("*")
+    .maybeSingle();
+  dbCheck(claimed.error);
+  if (!claimed.data) return true;
+  try {
+    await queueAnalysis(db, ftp, claimed.data as FtpInvoiceRow, true);
+    console.info("[automatic-intake] Checked ready FTP invoice", row.id);
+  } catch (error) {
+    await update(
+      db,
+      row.id,
+      {
+        status: "failed",
+        error: userError(
+          error,
+          "Could not start analysis. Retry from the inbox.",
+        ),
+      },
+      "importing",
+    );
+  }
+  return true;
 }
 
 async function reconcileAnalysis(db: Db) {
@@ -434,6 +498,7 @@ export async function runInvoiceInboxCycle(
   db: Db,
   ftp: InvoiceFtp,
   now = new Date(),
+  automatic: AutomaticIntake | null = null,
 ) {
   const token = randomUUID();
   const lease = await db
@@ -477,7 +542,10 @@ export async function runInvoiceInboxCycle(
     }
 
     await reconcileAnalysis(db);
-    if (lease.data.error) return;
+    if (lease.data.error) {
+      if (automatic) await checkAutomaticIntake(db, null, automatic, now);
+      return;
+    }
     // Give imports priority and do at most one FTP operation chain per lease.
     const queued = await db
       .from(table)
@@ -531,7 +599,9 @@ export async function runInvoiceInboxCycle(
           "archive_pending",
         );
       }
+      return;
     }
+    if (automatic) await checkAutomaticIntake(db, ftp, automatic, now);
   } finally {
     const released = await db
       .from("ftp_invoice_sync")
@@ -542,14 +612,47 @@ export async function runInvoiceInboxCycle(
   }
 }
 
+let lastAutomaticCheck = 0;
+async function checkAutomaticIntake(
+  db: Db,
+  ftp: InvoiceFtp | null,
+  config: AutomaticIntake,
+  now: Date,
+) {
+  // This runs under the existing inbox lease, across worker restarts and dynos.
+  if (now.getTime() - lastAutomaticCheck < SCAN_INTERVAL_MS) return;
+  lastAutomaticCheck = now.getTime();
+  if (!(await analysisQueueIsIdle(db))) return;
+  if (ftp && (await takeAutomaticInvoice(db, ftp, config, now))) return;
+  await runAutomaticGrpoIntake(db, config, now);
+}
+
 export async function runProductionInvoiceInbox() {
   if (
     readSapEnvironment() !== "live" ||
     process.env.FTP_INBOX_ENABLED !== "true"
   )
     return;
+  const automatic = productionIntakeConfiguration();
   await runInvoiceInboxCycle(
     createSupabaseAdminClient({ fetchTimeoutMs: 15_000 }),
     createInvoiceFtp(),
+    new Date(),
+    automatic,
   );
+}
+
+let productionIntake: AutomaticIntake | null | undefined;
+function productionIntakeConfiguration() {
+  if (productionIntake !== undefined) return productionIntake;
+  try {
+    productionIntake = readAutomaticIntake();
+  } catch (error) {
+    productionIntake = null;
+    console.warn(
+      "[automatic-intake] Configuration is invalid",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+  }
+  return productionIntake;
 }

@@ -22,20 +22,29 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function nextQueuedJobId() {
+async function nextQueuedJob() {
   const db = createSupabaseAdminClient();
-  const { data, error } = await db
+  const prioritizeManual = process.env.AUTOMATIC_INTAKE_ENABLED === "true";
+  let query = db
     .from("packet_processing_jobs")
-    .select("id")
+    .select("id,automatic:result->>automaticIntake")
     .eq("status", "queued")
-    .lte("next_run_at", new Date().toISOString())
+    .lte("next_run_at", new Date().toISOString());
+  if (prioritizeManual)
+    query = query.order("result->>automaticIntake", {
+      ascending: true,
+      nullsFirst: true,
+    });
+  const { data, error } = await query
     .order("next_run_at", { ascending: true })
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
 
   if (error) throw error;
-  return typeof data?.id === "string" ? data.id : null;
+  return typeof data?.id === "string"
+    ? { id: data.id, automatic: prioritizeManual && data.automatic === "true" }
+    : null;
 }
 
 async function nextQueuedSapMatchCaseId() {
@@ -116,8 +125,11 @@ async function run() {
         currentEnvironment = environment;
       }
       await runMaintenanceIfDue();
-      const jobId = await nextQueuedJobId();
-      if (jobId) {
+      const job = await nextQueuedJob();
+      const sapCaseId =
+        !job || job.automatic ? await nextQueuedSapMatchCaseId() : null;
+      if (job && !sapCaseId) {
+        const jobId = job.id;
         const startedAt = Date.now();
         console.log(`[case-worker] processing ${jobId}`);
         const result = await processCaseJob(jobId);
@@ -133,7 +145,6 @@ async function run() {
         continue;
       }
 
-      const sapCaseId = await nextQueuedSapMatchCaseId();
       if (!sapCaseId) {
         await wait(IDLE_POLL_MS);
         continue;

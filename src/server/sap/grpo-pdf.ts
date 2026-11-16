@@ -14,6 +14,18 @@ export type GrpoPdfFile = {
   index: number;
   sha256?: string;
 };
+
+export function grpoHasOpenQuantity(value: unknown) {
+  return (
+    Array.isArray(value) &&
+    value.some(
+      (line) =>
+        line?.LineStatus === "bost_Open" &&
+        typeof line.RemainingOpenQuantity === "number" &&
+        line.RemainingOpenQuantity > 0,
+    )
+  );
+}
 export function grpoEntry(value: unknown) {
   const id = Number(value);
   if (!Number.isSafeInteger(id) || id <= 0)
@@ -89,6 +101,7 @@ export async function withGrpoPdfs<T>(
     files: GrpoPdfFile[];
     download: (index: number) => Promise<Buffer>;
   }) => Promise<T>,
+  options?: { requireOpenQuantity?: boolean },
 ) {
   const environment = readSapEnvironment();
   const {
@@ -142,7 +155,9 @@ export async function withGrpoPdfs<T>(
     if (
       receipt.DocEntry !== entry ||
       receipt.DocumentStatus !== "bost_Open" ||
-      receipt.Cancelled !== "tNO"
+      receipt.Cancelled !== "tNO" ||
+      (options?.requireOpenQuantity &&
+        !grpoHasOpenQuantity(receipt.DocumentLines))
     )
       throw new ApiError(
         "This GRPO is no longer open in SAP. Refresh the list.",

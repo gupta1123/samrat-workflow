@@ -174,6 +174,7 @@ export async function attachGrpoPdfs(
     docEntry: number;
     docNum: number;
     environment?: SapEnvironment;
+    automatic?: true;
   },
 ) {
   const environment = source.environment ?? readSapEnvironment();
