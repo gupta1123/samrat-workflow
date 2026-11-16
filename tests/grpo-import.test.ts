@@ -88,6 +88,7 @@ async function setup(t: TestContext, production = false) {
     changedPdf: false,
     attachmentApiStatus: 200,
     attachmentApiCalls: [] as string[],
+    productionPdfDownloads: 0,
     failSave: false,
     failEvents: false,
     failDraftRead: false,
@@ -168,6 +169,7 @@ async function setup(t: TestContext, production = false) {
         method: "GET",
       })
       .reply((options) => {
+        state.productionPdfDownloads++;
         assert.equal(
           new URL(options.path, "https://production.invalid").searchParams.get(
             "filename",
@@ -327,6 +329,7 @@ async function setup(t: TestContext, production = false) {
             status: "draft",
             deleted_at: null,
             owner_user_id: owner,
+            created_at: "2026-01-03T00:00:00.000Z",
           };
           state.cases.push(active);
           for (const a of assets) {
@@ -527,6 +530,27 @@ test("Production GRPO downloads use the Production company and native attachment
   assert.equal(result.files[0].name, "Original.pdf");
   assert.deepEqual(state.attachmentApiCalls, []);
   assert.equal(state.cases.length, 0);
+});
+
+test("a single-PDF import saves the original bytes with one SAP download and can be retried", async (t) => {
+  const { state, call } = await setup(t, true);
+  const body = { action: "prepare", completeSinglePdf: true };
+  const first = await call(body);
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).caseId, caseId);
+  assert.equal(state.productionPdfDownloads, 1);
+  assert.equal(state.assets.length, 1);
+  assert.equal(state.cases.length, 1);
+  assert.equal(state.files.length, 1);
+  assert.equal(
+    digest(state.objects.get(state.assets[0].storage_path)!),
+    state.files[0].content_sha256,
+  );
+  const retry = await call(body);
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).caseId, caseId);
+  assert.equal(state.cases.length, 1);
+  assert.equal(state.productionPdfDownloads, 1);
 });
 
 test("changed manifests, invalid indexes and other users' assets cannot be imported", async (t) => {
@@ -1225,6 +1249,7 @@ test("the receipt snapshot loads both tabs across SAP batches before returning",
   listRows.sort((a, b) => b.DocEntry - a.DocEntry);
   const requestedCursors: Array<string | null> = [];
   const progress: number[] = [];
+  const firstBatches: number[] = [];
   const snapshot = await fetchOpenReceiptSnapshot(
     new AbortController().signal,
     (count) => progress.push(count),
@@ -1238,9 +1263,11 @@ test("the receipt snapshot loads both tabs across SAP batches before returning",
         }),
       );
     },
+    (partial) => firstBatches.push(partial.records.length),
   );
   assert.deepEqual(requestedCursors, [null, "11"]);
   assert.deepEqual(progress, [70, 80]);
+  assert.deepEqual(firstBatches, [70]);
   assert.deepEqual(
     snapshot.records.map((record) => Number(record.docEntry)),
     listRows.map((row) => row.DocEntry),

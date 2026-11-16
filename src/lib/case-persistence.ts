@@ -220,6 +220,7 @@ export type MismatchDecision = "accepted" | "rejected";
 
 export type FetchCasesOptions = {
   scope: CaseListScope;
+  summaryOnly?: boolean;
   limit?: number;
   cursor?: string | null;
   page?: number | null;
@@ -754,6 +755,7 @@ export async function fetchCasesByScope(
 
 export async function fetchCasePage({
   scope,
+  summaryOnly = false,
   limit = 25,
   cursor,
   page,
@@ -765,6 +767,7 @@ export async function fetchCasePage({
   const query = new URLSearchParams();
   query.set("limit", String(limit));
   query.set("scope", scope);
+  if (summaryOnly) query.set("view", "summary");
   if (cursor) {
     query.set("cursor", cursor);
   } else if (page && page > 0) {

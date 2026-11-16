@@ -9,7 +9,11 @@ import {
 } from "../src/app/api/uploads/[id]/route";
 import { GET as files } from "../src/app/api/cases/[id]/files/route";
 import { POST as diagnostics } from "../src/app/api/uploads/diagnostics/route";
-import { FILE_CHUNK_BYTES, MAX_FILE_BYTES } from "../src/lib/file-transfer";
+import {
+  FILE_CHUNK_BYTES,
+  FILE_DOWNLOAD_CHUNK_BYTES,
+  MAX_FILE_BYTES,
+} from "../src/lib/file-transfer";
 import {
   downloadPrivateDocument,
   FileTransferError,
@@ -292,6 +296,10 @@ test("upload and preview preserve the original maximum-size 50 MiB file through 
   const blob = await downloadPrivateDocument(source, undefined, fixture.deps);
   assert.equal(blob.size, bytes.length);
   assert.equal(digest(new Uint8Array(await blob.arrayBuffer())), digest(bytes));
+  assert.equal(
+    fixture.browser.filter((request) => request.path === source).length,
+    Math.ceil(bytes.length / FILE_DOWNLOAD_CHUNK_BYTES),
+  );
   const fallback = await fixture.deps.fetcher(
     `/api/cases/${caseId}/files?fileId=${fileId}`,
   );
@@ -566,7 +574,7 @@ test("a stalled transfer is cancelled, retried only within its limit, and record
 
 test("document ranges remain bounded and malformed ranges never reach storage", async (t) => {
   const f = setup(t);
-  const bytes = Buffer.alloc(FILE_CHUNK_BYTES + 10, 7);
+  const bytes = Buffer.alloc(FILE_DOWNLOAD_CHUNK_BYTES + 10, 7);
   await uploadFileThroughWebsite(
     new File([bytes], "ranges.pdf"),
     digest(bytes),
@@ -575,7 +583,7 @@ test("document ranges remain bounded and malformed ranges never reach storage", 
   f.attach(f.assets[0]);
   const source = `/api/cases/${caseId}/files?fileId=${fileId}&content=1`;
   for (const range of [
-    `bytes=0-${FILE_CHUNK_BYTES}`,
+    `bytes=0-${FILE_DOWNLOAD_CHUNK_BYTES}`,
     "bytes=-1-4",
     "bytes=0-2,4-6",
     `bytes=0-${bytes.length}`,

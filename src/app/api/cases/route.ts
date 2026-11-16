@@ -13,9 +13,17 @@ import {
 import { verifyUploads } from "@/server/uploads";
 import { listDraftCaseFiles } from "@/server/case-files";
 export const runtime = "nodejs";
+const CASE_LIST_COLUMNS =
+  "id,slug,display_name,buyer_name,po_number,invoice_number,status,risk_score,upload_count,document_count,mismatch_count,created_at,deleted_at,review_flow,supply_kind,receiverName:processing_meta->>receiverName,caseCategory:processing_meta->>caseCategory";
+type CaseListRow = Parameters<typeof mapCase>[0] & {
+  receiverName?: string;
+  caseCategory?: string;
+};
+
 export async function GET(request: Request) {
   return withUser(request, async (db, user) => {
     const search = new URL(request.url).searchParams;
+    const summaryOnly = search.get("view") === "summary";
     const positive = (value: string | null, fallback: number, max: number) => {
       const number = Number(value);
       return Number.isFinite(number) && number > 0
@@ -26,7 +34,7 @@ export async function GET(request: Request) {
     const page = positive(search.get("page"), 1, 100000);
     let query = db
       .from("packet_cases")
-      .select("*", { count: "exact" })
+      .select(summaryOnly ? CASE_LIST_COLUMNS : "*", { count: "exact" })
       .eq("owner_user_id", user);
     query =
       search.get("scope") === "deleted"
@@ -54,32 +62,85 @@ export async function GET(request: Request) {
         ascending: sort === "oldest" || sort === "name",
       })
       .order("id");
-    const { data, error, count } = await query.range(
-      (page - 1) * limit,
-      page * limit - 1,
-    );
+    const { data, error, count } = await query
+      .range((page - 1) * limit, page * limit - 1)
+      .overrideTypes<CaseListRow[], { merge: false }>();
     dbCheck(error);
-    const caseIds = data!.map((entry) => entry.id);
+    const rows = data ?? [];
+    const caseIds = rows.map((entry) => entry.id);
+    // Older cases sometimes need source evidence to recover display names or
+    // invoice references. Only fetch that evidence for rows that can use it.
+    const fallbackIds = summaryOnly
+      ? rows
+          .filter((row) => {
+            const name = row.display_name?.trim();
+            return (
+              !name ||
+              name === "Case" ||
+              name === "New case" ||
+              (!row.invoice_number && !row.po_number)
+            );
+          })
+          .map((row) => row.id)
+      : [];
+    const [persistedIssues, identityEvidence] = await Promise.all([
+      caseIds.length
+        ? db.from("packet_mismatches").select("case_id").in("case_id", caseIds)
+        : { data: [], error: null },
+      fallbackIds.length
+        ? db
+            .from("packet_cases")
+            .select(
+              "id,documentAudits:processing_meta->extractionReview->documentAudits,verificationGroups:processing_meta->verificationGroups",
+            )
+            .eq("owner_user_id", user)
+            .in("id", fallbackIds)
+        : { data: [], error: null },
+    ]);
+    dbCheck(persistedIssues.error);
+    dbCheck(identityEvidence.error);
     const persistedIssueCounts = new Map<string, number>();
-    if (caseIds.length > 0) {
-      const persistedIssues = await db
-        .from("packet_mismatches")
-        .select("case_id")
-        .in("case_id", caseIds);
-      dbCheck(persistedIssues.error);
-      for (const issue of persistedIssues.data!) {
-        persistedIssueCounts.set(
-          issue.case_id,
-          (persistedIssueCounts.get(issue.case_id) ?? 0) + 1,
-        );
-      }
+    for (const issue of persistedIssues.data ?? []) {
+      persistedIssueCounts.set(
+        issue.case_id,
+        (persistedIssueCounts.get(issue.case_id) ?? 0) + 1,
+      );
     }
+    const identityByCase = new Map(
+      (identityEvidence.data ?? []).map((row) => [row.id, row]),
+    );
     const totalPages = Math.max(1, Math.ceil((count || 0) / limit));
     return {
-      cases: data!.map((entry) => ({
-        ...mapCase(entry),
-        mismatchCount: persistedIssueCounts.get(entry.id) ?? 0,
-      })),
+      cases: rows.map((entry) => {
+        const identity = identityByCase.get(entry.id);
+        const result = mapCase(
+          summaryOnly
+            ? {
+                ...entry,
+                processing_meta: {
+                  receiverName: entry.receiverName,
+                  caseCategory: entry.caseCategory,
+                  extractionReview: {
+                    documentAudits: identity?.documentAudits,
+                  },
+                  verificationGroups: identity?.verificationGroups,
+                },
+              }
+            : entry,
+        );
+        return {
+          ...result,
+          ...(summaryOnly
+            ? {
+                processingMeta: {
+                  receiverName: result.receiverName,
+                  caseCategory: result.category,
+                },
+              }
+            : {}),
+          mismatchCount: persistedIssueCounts.get(entry.id) ?? 0,
+        };
+      }),
       page,
       pageSize: limit,
       totalCount: count,

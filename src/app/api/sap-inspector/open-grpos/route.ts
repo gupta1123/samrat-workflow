@@ -36,6 +36,7 @@ export async function GET(request: Request) {
     return withSapServiceLayer(async (client) => {
       const records: SapInspectorRecord[] = [];
       const uploads: Record<string, GrpoUploadState> = {};
+      let allPageUploads: Promise<Record<string, GrpoUploadState>> | undefined;
       let cursor = query.before;
       let nextCursor: number | null = null;
       // Filter before returning a page, retaining a cursor even for sparse tabs.
@@ -53,13 +54,19 @@ export async function GET(request: Request) {
           query.limit,
         );
         const basic = normalizeSapInspectorRecords("grpo", page.rows);
+        if (tab === "all") {
+          records.push(...basic);
+          nextCursor = page.nextCursor;
+          allPageUploads = grpoUploadStates(db, user, company, basic);
+          break;
+        }
         const states = await grpoUploadStates(db, user, company, basic);
         let consumed = 0;
         for (const record of basic) {
           consumed++;
           const saved = states[String(record.docEntry)];
           const upload = saved?.deleted ? undefined : saved;
-          if (tab === "all" || Boolean(upload) === (tab === "yes")) {
+          if (Boolean(upload) === (tab === "yes")) {
             records.push(record);
             if (upload) uploads[String(record.docEntry)] = upload;
           }
@@ -84,8 +91,14 @@ export async function GET(request: Request) {
             .map((l) => l.baseEntry!),
         ),
       ];
-      const unuploaded = records.filter((r) => !uploads[String(r.docEntry)]);
       const readPdfs = async () => {
+        if (allPageUploads) {
+          const states = await allPageUploads;
+          for (const [entry, state] of Object.entries(states)) {
+            if (!state.deleted) uploads[entry] = state;
+          }
+        }
+        const unuploaded = records.filter((r) => !uploads[String(r.docEntry)]);
         if (tab !== "all") {
           return grpoPdfAvailability(unuploaded, client.getAttachmentMetadata);
         }

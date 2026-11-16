@@ -1,5 +1,7 @@
 // Keep binary requests well below the hosting adapter's request/response limit.
 export const FILE_CHUNK_BYTES = 512 * 1024;
+// Match the existing safe limit for full document responses.
+export const FILE_DOWNLOAD_CHUNK_BYTES = 3 * 1024 * 1024;
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const FILE_REQUEST_TIMEOUT_MS = 75_000;
 export const TRANSFER_ID_HEADER = "X-Samrat-Transfer-Id";

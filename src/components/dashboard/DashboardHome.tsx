@@ -34,7 +34,12 @@ function fetchDashboardData() {
   if (pendingDashboardLoad) return pendingDashboardLoad;
 
   const request = Promise.all([
-    fetchCasePage({ scope: "active", limit: DASHBOARD_CASE_LIMIT, page: 1 }),
+    fetchCasePage({
+      scope: "active",
+      summaryOnly: true,
+      limit: DASHBOARD_CASE_LIMIT,
+      page: 1,
+    }),
     apiFetch("/api/cases/summary"),
   ])
     .then(async ([page, response]) => {

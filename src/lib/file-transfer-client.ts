@@ -2,6 +2,7 @@ import { apiFetch } from "./api-client";
 import { createSupabaseFetch } from "./supabase/fetch";
 import {
   FILE_CHUNK_BYTES,
+  FILE_DOWNLOAD_CHUNK_BYTES,
   FILE_REQUEST_TIMEOUT_MS,
   MAX_FILE_BYTES,
   TRANSFER_ID_HEADER,
@@ -241,15 +242,19 @@ export async function downloadPrivateDocument(
   )
     throw new Error("The document metadata could not be verified.");
   const data = new Uint8Array(info.size);
-  const count = filePartCount(info.size);
+  const chunkSize =
+    info.downloadChunkSize === FILE_DOWNLOAD_CHUNK_BYTES
+      ? FILE_DOWNLOAD_CHUNK_BYTES
+      : FILE_CHUNK_BYTES;
+  const count = Math.ceil(info.size / chunkSize);
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(3, count) }, async () => {
       while (next < count) {
         const part = next++;
         signal?.throwIfAborted();
-        const start = part * FILE_CHUNK_BYTES;
-        const end = Math.min(info.size, start + FILE_CHUNK_BYTES) - 1;
+        const start = part * chunkSize;
+        const end = Math.min(info.size, start + chunkSize) - 1;
         const chunk = await transferFetch(
           source,
           "download",

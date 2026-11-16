@@ -88,17 +88,24 @@ export async function POST(
           ]),
         )
         .digest("hex");
-      if (body.action === "prepare")
+      const preparing = body.action === "prepare";
+      const completeSinglePdf =
+        preparing &&
+        body.completeSinglePdf === true &&
+        source.files.length === 1;
+      if (preparing && !completeSinglePdf)
         return {
           files: source.files.map((f) => ({ name: f.name, index: f.index })),
           day: new Date().toISOString().slice(0, 10),
           manifest,
           session: randomUUID(),
         };
-      if (body.manifest !== manifest)
+      if (!preparing && body.manifest !== manifest)
         throw new ApiError("SAP attachments changed. Refresh and retry.", 409);
-      const day = importDay(body.day);
-      const session = uuid(body.session);
+      const day = preparing
+        ? new Date().toISOString().slice(0, 10)
+        : importDay(body.day);
+      const session = preparing ? randomUUID() : uuid(body.session);
       const assetId = (index: number) =>
         importAssetId(
           user,
@@ -106,20 +113,22 @@ export async function POST(
           entry,
           day,
           index,
-          source.environment === "live"
-            ? `live:${manifest}:${prior?.deleted ? prior.caseId : ""}`
+          source.environment === "live" || completeSinglePdf
+            ? `${source.environment}:${manifest}:${prior?.deleted ? prior.caseId : ""}`
             : session,
         );
-      if (body.action === "file") {
-        if (!Number.isInteger(body.index) || !source.files[body.index])
+      if (body.action === "file" || completeSinglePdf) {
+        const index = completeSinglePdf ? 0 : body.index;
+        if (!Number.isInteger(index) || !source.files[index])
           throw new ApiError("Invalid PDF selection.");
-        const file = source.files[body.index];
+        const file = source.files[index];
         const name = `${file.index + 1}-${file.name.slice(0, -4).slice(0, 230)}.pdf`;
-        return storeGrpoPdf(db, user, {
+        const stored = await storeGrpoPdf(db, user, {
           id: assetId(file.index),
           name,
           bytes: await source.download(file.index),
         });
+        if (!completeSinglePdf) return stored;
       }
       return attachGrpoPdfs(
         db,

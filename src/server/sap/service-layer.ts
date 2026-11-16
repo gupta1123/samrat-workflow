@@ -727,6 +727,7 @@ export async function withSapServiceLayer<T>(
             encodeURIComponent("CardType eq 'cSupplier' and Valid eq 'tYES'") +
             "&$orderby=CardCode%20asc",
           5000,
+          { headers: { Prefer: "odata.maxpagesize=100" } },
         );
       },
       async listBusinessPartnersPage(query) {
@@ -814,6 +815,7 @@ export async function withSapServiceLayer<T>(
             ) +
             "&$orderby=DocEntry%20asc",
           1000,
+          { headers: { Prefer: "odata.maxpagesize=100" } },
         );
       },
       async findOpenReceiptDocumentsForInvoice(input) {
@@ -948,6 +950,7 @@ export async function withSapServiceLayer<T>(
             ) +
             "&$orderby=DocEntry%20asc",
           1000,
+          { headers: { Prefer: "odata.maxpagesize=100" } },
         );
       },
       async listPurchaseOrdersByEntries(entries, batchSize = 15) {

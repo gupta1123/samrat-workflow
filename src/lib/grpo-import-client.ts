@@ -17,6 +17,7 @@ export async function fetchOpenReceiptSnapshot(
   signal: AbortSignal,
   onProgress: (count: number) => void,
   fetcher = apiFetch,
+  onBatch?: (snapshot: OpenReceiptSnapshot) => void,
 ): Promise<OpenReceiptSnapshot> {
   const records = new Map<string, SapInspectorRecord>();
   const uploads: OpenReceiptSnapshot["uploads"] = {};
@@ -66,6 +67,13 @@ export async function fetchOpenReceiptSnapshot(
     }
     cursor = body.nextCursor;
     onProgress(records.size);
+    if (cursor !== null && onBatch) {
+      onBatch({
+        records: [...records.values()],
+        uploads: { ...uploads },
+        pdfs: { ...pdfs },
+      });
+    }
   } while (cursor !== null);
 
   return { records: [...records.values()], uploads, pdfs };
@@ -120,7 +128,7 @@ export async function importGrpoAndAnalyze(
     return b;
   };
   progress("Checking SAP PDFs…");
-  const prepared = await post({ action: "prepare" });
+  const prepared = await post({ action: "prepare", completeSinglePdf: true });
   let result = prepared;
   if (!prepared.caseId) {
     if (

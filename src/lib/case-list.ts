@@ -54,6 +54,7 @@ export function createCaseListLoader(
     const filtered = params.reconciliation !== "all";
     const payload = await readPage({
       scope: "active",
+      summaryOnly: true,
       limit: filtered ? RECONCILIATION_SCAN_LIMIT : params.pageSize,
       page: filtered ? 1 : params.page,
       query: params.query,

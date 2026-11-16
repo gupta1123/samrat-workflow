@@ -11,7 +11,10 @@ import {
 import { caseFileContentUrl, listDraftCaseFiles } from "@/server/case-files";
 import { mapProcessingJob } from "@/server/processing/jobs";
 import { verifyUploads } from "@/server/uploads";
-import { FILE_CHUNK_BYTES } from "@/lib/file-transfer";
+import {
+  FILE_CHUNK_BYTES,
+  FILE_DOWNLOAD_CHUNK_BYTES,
+} from "@/lib/file-transfer";
 import { fileTransferRequest } from "@/server/file-transfer";
 import { privateFileContent } from "@/server/file-content";
 
@@ -46,6 +49,7 @@ export async function GET(request: Request, context: Context) {
         sha256: file.content_sha256,
         mimeType: file.mime_type,
         chunkSize: FILE_CHUNK_BYTES,
+        downloadChunkSize: FILE_DOWNLOAD_CHUNK_BYTES,
       };
     if (search.get("content") !== "1")
       return { fileId: file.id, signedUrl: caseFileContentUrl(id, file.id) };

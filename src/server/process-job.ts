@@ -373,7 +373,7 @@ async function processJob(jobId: string) {
     const options = record(job.result);
     const mode: CaseAnalysisMode =
       options.analysisMode === "smart_split" ? "smart_split" : "standard";
-    const [config, current, caseOrigin] = await measure(
+    const [config, current, caseOrigin, manifest] = await measure(
       "loadConfigurationMs",
       async () =>
         Promise.all([
@@ -389,11 +389,11 @@ async function processJob(jobId: string) {
             .select("created_at,processing_meta")
             .eq("id", job.case_id)
             .single(),
+          readManifest(),
         ]),
     );
     if (caseOrigin.error) throw caseOrigin.error;
     if (current.error) throw current.error;
-    const manifest = await readManifest();
     const manifestDigest = reviewInputDigest(manifest);
     const extractionKey = reviewCheckpointKey("extraction", {
       manifest,
@@ -412,6 +412,8 @@ async function processJob(jobId: string) {
         extract: () =>
           processStoredCaseFiles({
             caseId: job.case_id,
+            manifest,
+            fieldConfiguration: config,
             analysisMode: mode,
             comparisonOptions: options.comparisonOptions,
             onProgress: async (p) => update(p.progress, p.stage),

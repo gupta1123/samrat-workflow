@@ -525,13 +525,19 @@ export function OpenGrpoList() {
           (count) => {
             if (active) setLoadedCount(count);
           },
+          undefined,
+          (partial) => {
+            if (active) setData(partial);
+          },
         );
         if (active) setData(snapshot);
       } catch (failure) {
-        if (active && !controller.signal.aborted)
+        if (active && !controller.signal.aborted) {
+          setData(null);
           setError(
             failure instanceof Error ? failure.message : "Could not read SAP.",
           );
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -715,7 +721,7 @@ export function OpenGrpoList() {
       <div className="mt-4 overflow-x-auto rounded-xl border border-[#e2dacf] bg-white">
         <table
           className="w-full min-w-[1000px] border-collapse text-sm"
-          aria-busy={loading}
+          aria-busy={loading && !visibleReceipts.length}
         >
           <thead>
             <tr>
@@ -730,7 +736,7 @@ export function OpenGrpoList() {
               <th className={HEAD}>Case / action</th>
             </tr>
           </thead>
-          {loading ? (
+          {loading && !visibleReceipts.length ? (
             <SkeletonRows />
           ) : (
             visibleReceipts.map((record) => (
@@ -776,7 +782,7 @@ export function OpenGrpoList() {
             {number.format(firstRow + 1)}–
             {number.format(firstRow + visibleReceipts.length)}
             {" of "}
-            {number.format(stillOpen.length)}{" "}
+            {number.format(stillOpen.length)} {loading ? "loaded " : ""}
             {stillOpen.length === 1 ? "receipt" : "receipts"}
           </span>
           <nav

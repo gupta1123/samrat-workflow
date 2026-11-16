@@ -198,6 +198,7 @@ export function RecycleBinPage() {
 
     fetchCasePage({
       scope: "deleted",
+      summaryOnly: true,
       limit: RECYCLE_BIN_PAGE_SIZE,
       page: currentPage,
       query: debouncedQuery,

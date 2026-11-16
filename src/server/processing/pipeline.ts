@@ -10287,18 +10287,6 @@ async function normalizePageImageOrientation(image: string, label: string) {
   }
 }
 
-async function normalizePageImageOrientations(
-  images: string[],
-  sourceName: string,
-) {
-  return mapWithConcurrency(
-    images,
-    Math.min(PACKET_AI_CONCURRENCY, 4),
-    (image, index) =>
-      normalizePageImageOrientation(image, `${sourceName} page ${index + 1}`),
-  );
-}
-
 async function compactImageForAuthoritativeReview(
   image: string,
   label: string,
@@ -10368,17 +10356,25 @@ async function renderPdfToImagePages(
   },
 ) {
   const sourceName = options?.sourceName || "PDF";
-  const rendered = await renderPdfPages(
+  const concurrency = Math.min(PACKET_AI_CONCURRENCY, 4);
+  const orientations: Promise<string>[] = [];
+  await renderPdfPages(
     data,
     options?.maxPages ?? PDF_RENDER_MAX_PAGES,
-    async (bytes, page) =>
-      imageBytesToProviderDataUrl(
+    async (bytes, page) => {
+      const label = `${sourceName} page ${page}`;
+      const image = await imageBytesToProviderDataUrl(
         bytes,
         "image/png",
-        sourceName + " page " + page,
-      ),
+        label,
+      );
+      // While the renderer prepares the next page, the provider can check
+      // this one. Wait for an older check before starting another worker.
+      if (page > concurrency) await orientations[page - concurrency - 1];
+      orientations.push(normalizePageImageOrientation(image, label));
+    },
   );
-  return normalizePageImageOrientations(rendered, sourceName);
+  return Promise.all(orientations);
 }
 
 export async function renderUploadedFileForReview(params: {
@@ -11604,8 +11600,21 @@ export async function extractUploadedPacketFile(params: {
   return { documents, reviewImages };
 }
 
+type StoredAnalysisFile = {
+  id: string;
+  original_name: string;
+  storage_bucket: string | null;
+  storage_path: string;
+  mime_type: string | null;
+  content_sha256: string;
+};
+
 export async function processStoredCaseFiles(params: {
   caseId: string;
+  manifest?: StoredAnalysisFile[];
+  fieldConfiguration?: Awaited<
+    ReturnType<typeof getPersistedPacketFieldConfiguration>
+  >;
   analysisMode?: CaseAnalysisMode;
   comparisonOptions?: unknown;
   onProgress?: (details: {
@@ -11614,23 +11623,25 @@ export async function processStoredCaseFiles(params: {
   }) => Promise<void> | void;
 }) {
   const supabase = createSupabaseAdminClient();
-  const fieldConfiguration = await getPersistedPacketFieldConfiguration();
+  const fieldConfiguration =
+    params.fieldConfiguration ?? (await getPersistedPacketFieldConfiguration());
   const comparisonOptions = readComparisonOptions(
     params.comparisonOptions ?? DEFAULT_COMPARISON_OPTIONS,
   );
   const analysisMode = params.analysisMode ?? "standard";
 
-  const { data: files, error: filesError } = await supabase
-    .from("packet_case_files")
-    .select(
-      "id, original_name, storage_bucket, storage_path, mime_type, content_sha256",
-    )
-    .eq("case_id", params.caseId)
-    .order("created_at", { ascending: true })
-    .order("id", { ascending: true });
-
-  if (filesError) {
-    throw filesError;
+  let files = params.manifest;
+  if (!files) {
+    const result = await supabase
+      .from("packet_case_files")
+      .select(
+        "id,original_name,storage_bucket,storage_path,mime_type,content_sha256",
+      )
+      .eq("case_id", params.caseId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+    if (result.error) throw result.error;
+    files = result.data ?? [];
   }
 
   if (!files?.length) {

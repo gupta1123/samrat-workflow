@@ -43,13 +43,13 @@ export async function loadPdf(data: Uint8Array) {
     cMapPacked: true,
   }).promise;
 }
-export async function renderPdfPages(
+export async function renderPdfPages<T>(
   data: Uint8Array,
   maxPages: number,
-  onPage: (bytes: Uint8Array, page: number) => Promise<string>,
+  onPage: (bytes: Uint8Array, page: number) => Promise<T>,
 ) {
   const pdf = await loadPdf(data);
-  const images: string[] = [];
+  const images: T[] = [];
   try {
     if (pdf.numPages > maxPages)
       throw new Error(

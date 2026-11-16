@@ -1,11 +1,11 @@
-import { FILE_CHUNK_BYTES } from "@/lib/file-transfer";
+import { FILE_DOWNLOAD_CHUNK_BYTES } from "@/lib/file-transfer";
 import { createSupabaseFetch } from "@/lib/supabase/fetch";
 import { getSupabaseServerUrl } from "@/lib/supabase/config";
 import { ApiError } from "./api/helpers";
 
 export function requestedFileRange(header: string | null, size: number) {
   if (!header) {
-    if (size > 3 * 1024 * 1024)
+    if (size > FILE_DOWNLOAD_CHUNK_BYTES)
       throw new ApiError(
         "Open this document inside the case to load it in verified parts.",
         413,
@@ -22,7 +22,7 @@ export function requestedFileRange(header: string | null, size: number) {
     start < 0 ||
     end < start ||
     end >= size ||
-    end - start + 1 > FILE_CHUNK_BYTES
+    end - start + 1 > FILE_DOWNLOAD_CHUNK_BYTES
   )
     throw new ApiError("Invalid document byte range.", 416);
   return { start, end };
