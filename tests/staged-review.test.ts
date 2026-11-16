@@ -3085,7 +3085,7 @@ for (const repairable of [true, false]) {
 }
 
 test("corrupt extraction snapshots cannot bypass source-page provenance", async () => {
-  const { parseExtractionCheckpoint } =
+  const { loadOrExtractCase, parseExtractionCheckpoint } =
     await import("../src/server/processing/extraction-checkpoint");
   const snapshot = {
     documents,
@@ -3120,6 +3120,29 @@ test("corrupt extraction snapshots cannot bypass source-page provenance", async 
       parseExtractionCheckpoint(JSON.stringify({ ...snapshot, documents: [] })),
     /structure/,
   );
+  const store = memoryStore();
+  const key = "extraction/test";
+  const valid = parseExtractionCheckpoint(JSON.stringify(snapshot));
+  const corrupt = { ...valid, reviewPages: valid.reviewPages.slice(0, 1) };
+  await store.write(key, JSON.stringify(corrupt));
+  await assert.rejects(
+    () => loadOrExtractCase({ key, store, extract: async () => corrupt }),
+    /missing/,
+  );
+  assert.equal(await store.read(key), JSON.stringify(corrupt));
+  const fresh = await loadOrExtractCase({
+    key,
+    store,
+    extract: async () => valid,
+  });
+  assert.equal(fresh.reused, false);
+  const restored = await loadOrExtractCase({
+    key,
+    store,
+    extract: async () => assert.fail("valid checkpoint should be reused"),
+  });
+  assert.equal(restored.reused, true);
+  assert.deepEqual(restored.result, fresh.result);
 });
 
 test("26 proposals are partitioned without omissions and each bounded decision set must be complete", async () => {

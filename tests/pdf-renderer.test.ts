@@ -1,10 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
+import { PDFDocument, degrees } from "pdf-lib";
 import { samplePdf } from "./pdf-fixture";
 import {
   pdfTextPages,
   renderPdfPages,
+  withPdfSource,
 } from "../src/server/processing/pdf-renderer";
 test("PDF text and native rendering handle all pages without Poppler", async () => {
   const bytes = samplePdf(2);
@@ -33,4 +35,21 @@ test("PDF limit rejects the whole file instead of silently skipping later pages"
     () => renderPdfPages(samplePdf(2), 1, async () => ""),
     /Page limit exceeded/,
   );
+});
+
+test("reusing the PDF for text and images preserves every page, including sideways pages", async () => {
+  const pdf = await PDFDocument.load(samplePdf(3));
+  pdf.getPage(1).setRotation(degrees(90));
+  pdf.getPage(2).setRotation(degrees(180));
+  const input = await pdf.save();
+  const capture = async (bytes: Uint8Array, page: number) => ({ page, bytes });
+  const separate = {
+    text: await pdfTextPages(input),
+    images: await renderPdfPages(input, 40, capture),
+  };
+  const combined = await withPdfSource(input, async (source) => ({
+    text: await source.textPages(40),
+    images: await source.renderPages(40, capture),
+  }));
+  assert.deepEqual(combined, separate);
 });

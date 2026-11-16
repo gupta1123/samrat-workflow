@@ -159,14 +159,11 @@ test("PDF extraction and review use the upright view of each quarter-turn page",
     page.setRotation(degrees(rotation));
   }
   const bytes = await pdf.save();
-  const { pdfTextPages } =
-    await import("../src/server/processing/pdf-renderer");
-  const { extractPdfPacketDocuments } =
+  const { extractUploadedPacketFile } =
     await import("../src/server/processing/pipeline");
-  const result = await extractPdfPacketDocuments({
+  const result = await extractUploadedPacketFile({
     bytes,
     fileName: "mixed-rotations.pdf",
-    textPages: await pdfTextPages(bytes),
   });
 
   assert.deepEqual(

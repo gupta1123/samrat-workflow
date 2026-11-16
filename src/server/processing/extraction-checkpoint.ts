@@ -1,10 +1,7 @@
 import type { processStoredCaseFiles } from "./pipeline";
 import { ownDocumentPages } from "./staged-review-contract";
 import { MAX_CASE_PAGE_COUNT } from "../../lib/upload-page-limit";
-import {
-  cachedReviewStage,
-  type ReviewCheckpointStore,
-} from "./review-checkpoints";
+import type { ReviewCheckpointStore } from "./review-checkpoints";
 
 type Extraction = Awaited<ReturnType<typeof processStoredCaseFiles>>;
 function record(value: unknown): value is Record<string, unknown> {
@@ -13,8 +10,7 @@ function record(value: unknown): value is Record<string, unknown> {
 
 // This snapshot is an untrusted first pass, never an approval decision. A
 // resumed snapshot still goes through every source and packet review contract.
-export function parseExtractionCheckpoint(raw: string): Extraction {
-  const value: unknown = JSON.parse(raw);
+function validateExtractionCheckpoint(value: unknown): Extraction {
   if (
     !record(value) ||
     !Array.isArray(value.documents) ||
@@ -78,18 +74,30 @@ export function parseExtractionCheckpoint(raw: string): Extraction {
   return result;
 }
 
-export function loadOrExtractCase(options: {
+export function parseExtractionCheckpoint(raw: string): Extraction {
+  return validateExtractionCheckpoint(JSON.parse(raw));
+}
+
+export async function loadOrExtractCase(options: {
   key: string;
   store: ReviewCheckpointStore;
   extract: () => Promise<Extraction>;
 }) {
-  return cachedReviewStage({
-    key: options.key,
-    store: options.store,
-    validate: parseExtractionCheckpoint,
-    run: async () => {
-      const raw = JSON.stringify(await options.extract());
-      return { raw, result: parseExtractionCheckpoint(raw) };
-    },
-  });
+  const saved = await options.store.read(options.key);
+  if (saved !== null) {
+    try {
+      return {
+        result: parseExtractionCheckpoint(saved),
+        reused: true,
+        attempts: 0,
+      };
+    } catch {
+      // A corrupt prior snapshot must go through extraction again.
+    }
+  }
+  // Validate the fresh object directly; do not allocate parsed copies of all
+  // page images just to validate the JSON we are about to store.
+  const result = validateExtractionCheckpoint(await options.extract());
+  await options.store.write(options.key, JSON.stringify(result));
+  return { result, reused: false, attempts: 1 };
 }

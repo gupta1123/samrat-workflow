@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { pdfTextPages, renderPdfPages } from "./pdf-renderer";
+import { renderPdfPages, withPdfSource } from "./pdf-renderer";
 import { compactReviewProviderSchema } from "./review-response-schema";
 import { ReviewContractError } from "./review-contract-error";
 import { readReferenceLedger, REFERENCE_FIELD_KEYS } from "./reference-ledger";
@@ -10330,36 +10330,49 @@ async function compactImageForAuthoritativeReview(
   }
 }
 
-async function prepareAuthoritativeReviewPages(pages: ReviewSourcePage[]) {
-  return mapWithConcurrency(
-    pages,
-    Math.min(PACKET_AI_CONCURRENCY, 4),
-    async (page) => ({
-      ...page,
-      image: await compactImageForAuthoritativeReview(
-        page.image,
-        `${page.sourceFileName} page ${page.pageNumber}`,
+async function prepareAuthoritativeReviewImages(
+  images: string[],
+  fileName: string,
+) {
+  // Prepare one image at a time alongside extraction, and retain only the
+  // review size once this file has finished. Large packets need not keep every
+  // full-size render until all files have been extracted.
+  const compact: string[] = [];
+  for (const [index, image] of images.entries()) {
+    compact.push(
+      await compactImageForAuthoritativeReview(
+        image,
+        `${fileName} page ${index + 1}`,
       ),
-    }),
-  );
+    );
+  }
+  return compact;
 }
 
 function hasMeaningfulTextPages(textPages: string[]) {
   return textPages.some((page) => page.replace(/\s+/g, "").length > 20);
 }
 
+type RenderPacketPages = (
+  maxPages: number,
+  onPage: (bytes: Uint8Array, page: number) => Promise<void>,
+) => Promise<unknown>;
+
 async function renderPdfToImagePages(
   data: Uint8Array,
   options?: {
     maxPages?: number;
     sourceName?: string;
+    renderPages?: RenderPacketPages;
   },
 ) {
   const sourceName = options?.sourceName || "PDF";
   const concurrency = Math.min(PACKET_AI_CONCURRENCY, 4);
   const orientations: Promise<string>[] = [];
-  await renderPdfPages(
-    data,
+  const render =
+    options?.renderPages ??
+    ((limit, onPage) => renderPdfPages(data, limit, onPage));
+  await render(
     options?.maxPages ?? PDF_RENDER_MAX_PAGES,
     async (bytes, page) => {
       const label = `${sourceName} page ${page}`;
@@ -10403,10 +10416,6 @@ export async function renderUploadedFileForReview(params: {
     `Unsupported document format for "${params.fileName}". Upload a PDF or image document.`,
   );
 }
-async function extractPdfTextPages(data: Uint8Array) {
-  return pdfTextPages(data, Number(process.env.PACKET_MAX_PAGES || 40));
-}
-
 async function classifyDocumentFromImage(
   image: string,
   fileName = "",
@@ -11474,6 +11483,8 @@ export async function extractPdfPacketDocuments(params: {
   bytes: Uint8Array;
   fileName: string;
   textPages: string[];
+  renderPages?: RenderPacketPages;
+  compactReviewImages?: boolean;
   onGroupProgress?: (details: {
     current: number;
     total: number;
@@ -11489,6 +11500,7 @@ export async function extractPdfPacketDocuments(params: {
     pageImageRequest = renderPdfToImagePages(params.bytes, {
       maxPages: PDF_SMART_SPLIT_MAX_PAGES,
       sourceName: params.fileName,
+      renderPages: params.renderPages,
     })
       .then((rendered) => {
         pageImages = rendered;
@@ -11522,24 +11534,49 @@ export async function extractPdfPacketDocuments(params: {
     pageImages,
     loadPageImages,
   });
-  const documents = await extractPdfDocumentGroups({
-    fileName: params.fileName,
-    textPages: params.textPages,
-    pageImages,
-    loadPageImages,
-    groups,
-    onGroupProgress: ({ current, total, group }) =>
-      params.onGroupProgress?.({
-        current,
-        total,
-        documentType: group.documentType,
-      }),
-  });
+  const sourceImages = await loadPageImages();
+  const [documents, reviewImages] = await Promise.all([
+    extractPdfDocumentGroups({
+      fileName: params.fileName,
+      textPages: params.textPages,
+      pageImages: sourceImages,
+      loadPageImages,
+      groups,
+      onGroupProgress: ({ current, total, group }) =>
+        params.onGroupProgress?.({
+          current,
+          total,
+          documentType: group.documentType,
+        }),
+    }),
+    params.compactReviewImages
+      ? prepareAuthoritativeReviewImages(sourceImages, params.fileName)
+      : sourceImages,
+  ]);
+  return { documents, reviewImages };
+}
 
-  return {
-    documents,
-    reviewImages: await loadPageImages(),
-  };
+async function extractPdfFromBytes(params: {
+  bytes: Uint8Array;
+  fileName: string;
+  compactReviewImages?: boolean;
+  onTextPages?: (pageCount: number) => Promise<void>;
+  onGroupProgress?: Parameters<
+    typeof extractPdfPacketDocuments
+  >[0]["onGroupProgress"];
+}) {
+  return withPdfSource(params.bytes, async ({ textPages, renderPages }) => {
+    const pages = await textPages(Number(process.env.PACKET_MAX_PAGES || 40));
+    await params.onTextPages?.(pages.length);
+    return extractPdfPacketDocuments({
+      bytes: params.bytes,
+      fileName: params.fileName,
+      textPages: pages,
+      renderPages,
+      compactReviewImages: params.compactReviewImages,
+      onGroupProgress: params.onGroupProgress,
+    });
+  });
 }
 
 export async function extractUploadedPacketFile(params: {
@@ -11578,11 +11615,9 @@ export async function extractUploadedPacketFile(params: {
     documents = [document];
     reviewImages = [image];
   } else if (mimeType === "application/pdf") {
-    const textPages = await extractPdfTextPages(params.bytes.slice());
-    const extracted = await extractPdfPacketDocuments({
+    const extracted = await extractPdfFromBytes({
       bytes: params.bytes,
       fileName: params.fileName,
-      textPages,
     });
     documents = extracted.documents;
     reviewImages = extracted.reviewImages;
@@ -11696,7 +11731,6 @@ export async function processStoredCaseFiles(params: {
         await imageBytesToProviderDataUrl(bytes, mimeType, file.original_name),
         `${file.original_name} page 1`,
       );
-      fileReviewImages = [image];
       const documentType = await classifyDocumentFromImage(
         image,
         file.original_name,
@@ -11713,26 +11747,30 @@ export async function processStoredCaseFiles(params: {
         documentType,
       });
       fileDocuments = [document];
+      fileReviewImages = await prepareAuthoritativeReviewImages(
+        [image],
+        file.original_name,
+      );
     } else if (mimeType === "application/pdf") {
-      const textPages = await extractPdfTextPages(bytes.slice());
-      totalPages += textPages.length;
-      if (totalPages > 40)
-        throw new Error(
-          "Page limit exceeded: a case supports up to 40 pages. Split the documents into smaller cases.",
-        );
-      await params.onProgress?.({
-        progress: fileProgress(0.18),
-        stage: `Identifying documents in PDF ${index + 1} of ${files.length}: ${file.original_name}`,
-      });
-
       // Analysis mode controls whether unrelated packet groups become separate
       // cases. It must never control document recognition: a PDF containing an
       // invoice, PO, e-way bill, and weighment slip still contains four distinct
       // documents even when the user wants them kept together as one case.
-      const extractedPdf = await extractPdfPacketDocuments({
+      const extractedPdf = await extractPdfFromBytes({
         bytes,
         fileName: file.original_name,
-        textPages,
+        compactReviewImages: true,
+        onTextPages: async (pageCount) => {
+          totalPages += pageCount;
+          if (totalPages > 40)
+            throw new Error(
+              "Page limit exceeded: a case supports up to 40 pages. Split the documents into smaller cases.",
+            );
+          await params.onProgress?.({
+            progress: fileProgress(0.18),
+            stage: `Identifying documents in PDF ${index + 1} of ${files.length}: ${file.original_name}`,
+          });
+        },
         onGroupProgress: async ({ current, total, documentType }) => {
           await params.onProgress?.({
             progress: fileProgress(0.2 + (current / Math.max(1, total)) * 0.72),
@@ -11794,6 +11832,6 @@ export async function processStoredCaseFiles(params: {
     analysisMode,
     fieldConfiguration,
     verificationGroups: verificationResult.verificationGroups,
-    reviewPages: await prepareAuthoritativeReviewPages(reviewPages),
+    reviewPages,
   };
 }
