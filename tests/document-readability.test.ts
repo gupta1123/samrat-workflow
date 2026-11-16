@@ -41,7 +41,7 @@ test("a clear upright source page remains approval-safe", () => {
   assert.deepEqual(buildDocumentReadabilityMismatches(assessments), []);
 });
 
-for (const issue of ["faint", "rotated", "blurred", "cropped"] as const) {
+for (const issue of ["faint", "blurred", "cropped"] as const) {
   test(`a merely ${issue} source page does not create a review issue`, () => {
     const assessments = parseDocumentPageQuality({
       value: [
@@ -61,6 +61,27 @@ for (const issue of ["faint", "rotated", "blurred", "cropped"] as const) {
     assert.deepEqual(buildDocumentReadabilityMismatches(assessments), []);
   });
 }
+
+test("a rotation-only unsafe verdict requires a fresh readability assessment", () => {
+  assert.throws(
+    () =>
+      parseDocumentPageQuality({
+        value: [
+          {
+            ...sourcePages[0],
+            documentId: document.id,
+            issues: ["rotated"],
+            approvalSafe: false,
+            confidence: "high",
+            reason: "The page is sideways.",
+          },
+        ],
+        sourcePages,
+        documents: [document],
+      }),
+    /without identifying a reading defect/,
+  );
+});
 
 test("an unreadable source page creates a blocking review issue", () => {
   const assessments = parseDocumentPageQuality({

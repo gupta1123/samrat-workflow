@@ -4,7 +4,6 @@ import sharp from "sharp";
 import {
   buildPageOrientationViews,
   orientPageImageWithVision,
-  applyDeclaredPageRotation,
 } from "../src/server/processing/page-orientation";
 
 async function sampleImage(width = 1200, height = 800) {
@@ -75,14 +74,20 @@ test("rejects an orientation response outside the supplied visual views", async 
   );
 });
 
-test("page classification rotation is applied without making another model call", async () => {
-  const image = await sampleImage(1200, 800);
-  assert.equal(await applyDeclaredPageRotation(image, 0), image);
-  const rotated = await applyDeclaredPageRotation(image, 270);
-  const metadata = await sharp(bytesFromDataUrl(rotated)).metadata();
-  assert.deepEqual([metadata.width, metadata.height], [800, 1200]);
-  await assert.rejects(
-    applyDeclaredPageRotation(image, 45),
-    /invalid reading rotation/,
-  );
+test("an orientation selected as upright still applies the camera's EXIF rotation", async () => {
+  const bytes = await sharp(bytesFromDataUrl(await sampleImage()))
+    .withMetadata({ orientation: 6 })
+    .jpeg()
+    .toBuffer();
+  const image = `data:image/jpeg;base64,${bytes.toString("base64")}`;
+  const normalized = await orientPageImageWithVision({
+    image,
+    label: "camera photo",
+    select: async () => ({ selectedView: "view_1" }),
+  });
+  const { width, height, orientation } = await sharp(
+    bytesFromDataUrl(normalized),
+  ).metadata();
+  assert.deepEqual([width, height], [800, 1200]);
+  assert.equal(orientation, undefined);
 });

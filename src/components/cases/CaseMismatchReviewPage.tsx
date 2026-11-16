@@ -1162,8 +1162,8 @@ export function CaseMismatchReviewPage({ caseId }: { caseId: string }) {
                       <div className={styles.mismatchMissingAction}>
                         <strong>Approval is blocked for this page.</strong>
                         <span>
-                          Choose a clear, upright copy of this exact page. It
-                          will be AI-verified before the stored page changes.
+                          Choose a clear copy of this exact page. It will be
+                          AI-verified before the stored page changes.
                         </span>
                         <DocumentPicker
                           compact

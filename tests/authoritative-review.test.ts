@@ -669,7 +669,7 @@ test("authoritative review turns an unreadable page into a blocking mismatch", a
   assert.equal(result.pageQuality[0].approvalSafe, false);
   assert.equal(result.reviewIssues.length, 1);
   assert.equal(result.reviewIssues[0].field, DOCUMENT_READABILITY_FIELD);
-  assert.match(result.reviewIssues[0].fixPlan ?? "", /clear, upright scan/i);
+  assert.match(result.reviewIssues[0].fixPlan ?? "", /clear scan/i);
 });
 
 test("independent review preserves exact identifiers and catches quality missed by the first reviewer", async (t) => {

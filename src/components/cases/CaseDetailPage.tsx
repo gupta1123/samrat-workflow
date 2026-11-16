@@ -2627,7 +2627,7 @@ export function CaseDetailPage({ caseId }: { caseId: string }) {
     pendingMismatchCount === 0 &&
     rejectedMismatchCount === 0;
   const approvalBlockedReason = documentReadingWarningCount
-    ? "Replace every affected page with a clear, upright copy and analyze the case again before approval."
+    ? "Replace every affected page with a clear copy and analyze the case again before approval."
     : analysisIntegrityBlockReason
       ? analysisIntegrityBlockReason
       : invoiceNumberBlockReason

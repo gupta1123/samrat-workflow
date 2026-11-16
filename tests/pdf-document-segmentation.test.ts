@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { degrees, PDFDocument, rgb } from "pdf-lib";
+import sharp from "sharp";
 
 import type { DocType } from "../src/types/pipeline";
 import { samplePdfWithPageTexts } from "./pdf-fixture";
@@ -81,7 +83,11 @@ function extractionResponse(requestText: string) {
   };
 }
 
-function mockPacketAi(t: TestContext, sequence: SequencePage[]) {
+function mockPacketAi(
+  t: TestContext,
+  sequence: SequencePage[],
+  selectView: (page: number) => string = () => "view_1",
+) {
   const previousKey = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = "test-key-no-network";
   t.after(() => {
@@ -105,16 +111,88 @@ function mockPacketAi(t: TestContext, sequence: SequencePage[]) {
       const requestedPage = Number(
         requestText.match(/Current global page: (\d+)/)?.[1],
       );
+      const schema = body.response_format?.json_schema?.name;
       const content =
-        body.response_format?.json_schema?.name === "pdf_page_sequence_entry"
-          ? pageRecord(sequence[requestedPage - 1], requestedPage)
-          : extractionResponse(requestText);
+        schema === "page_orientation_review"
+          ? {
+              selectedView: selectView(
+                Number(requestText.match(/ page (\d+)\./)?.[1]),
+              ),
+            }
+          : schema === "pdf_page_sequence_entry"
+            ? pageRecord(sequence[requestedPage - 1], requestedPage)
+            : extractionResponse(requestText);
       return Response.json({
         choices: [{ message: { content: JSON.stringify(content) } }],
       });
     },
   );
 }
+
+test("PDF extraction and review use the upright view of each quarter-turn page", async (t) => {
+  const rotations = [0, 90, 180, 270];
+  const views = ["view_1", "view_4", "view_3", "view_2"];
+  mockPacketAi(
+    t,
+    rotations.map(() => ({
+      documentType: "Weighment Slip",
+      startsNewDocument: true,
+      boundaryEvidence: "A separate weighment slip starts here.",
+    })),
+    (page) => views[page - 1],
+  );
+  const pdf = await PDFDocument.create();
+  for (const rotation of rotations) {
+    const page = pdf.addPage([360, 640]);
+    page.drawRectangle({
+      x: 16,
+      y: 568,
+      width: 40,
+      height: 40,
+      color: rgb(1, 0, 0),
+    });
+    page.drawText("WEIGHMENT SLIP NET WEIGHT 41800 KG", {
+      x: 16,
+      y: 550,
+      size: 14,
+    });
+    page.setRotation(degrees(rotation));
+  }
+  const bytes = await pdf.save();
+  const { pdfTextPages } =
+    await import("../src/server/processing/pdf-renderer");
+  const { extractPdfPacketDocuments } =
+    await import("../src/server/processing/pipeline");
+  const result = await extractPdfPacketDocuments({
+    bytes,
+    fileName: "mixed-rotations.pdf",
+    textPages: await pdfTextPages(bytes),
+  });
+
+  assert.deepEqual(
+    result.documents.map((doc) => doc.sourcePageNumbers),
+    [[1], [2], [3], [4]],
+  );
+  assert.equal(result.reviewImages.length, 4);
+  for (const image of result.reviewImages) {
+    const page = sharp(Buffer.from(image.split(",")[1], "base64"));
+    const { width, height } = await page.metadata();
+    assert.ok(width < height, "review uses the upright portrait layout");
+    const marker = await page
+      .extract({
+        left: Math.round(width * 0.1),
+        top: Math.round(height * 0.08),
+        width: 1,
+        height: 1,
+      })
+      .raw()
+      .toBuffer();
+    assert.ok(
+      marker[0] > 200 && marker[1] < 40 && marker[2] < 40,
+      "the page's red marker retains its original top-left position",
+    );
+  }
+});
 
 test("one-case analysis extracts distinct documents from a PDF", async (t) => {
   mockPacketAi(t, [
@@ -259,22 +337,25 @@ test("a malformed sequence response falls back to isolated pages", async (t) => 
       };
       const requestText = JSON.stringify(body.messages ?? []);
       const content =
-        body.response_format?.json_schema?.name === "pdf_page_sequence_entry"
-          ? {}
-          : requestText.includes("Classify rendered page")
-            ? {
-                documents: [
-                  {
-                    documentType: "Purchase Order",
-                    confidence: 0.95,
-                    documentNumber: null,
-                    primaryPartyName: null,
-                    vehicleNumber: null,
-                    splitReason: null,
-                  },
-                ],
-              }
-            : extractionResponse(requestText);
+        body.response_format?.json_schema?.name === "page_orientation_review"
+          ? { selectedView: "view_1" }
+          : body.response_format?.json_schema?.name ===
+              "pdf_page_sequence_entry"
+            ? {}
+            : requestText.includes("Classify rendered page")
+              ? {
+                  documents: [
+                    {
+                      documentType: "Purchase Order",
+                      confidence: 0.95,
+                      documentNumber: null,
+                      primaryPartyName: null,
+                      vehicleNumber: null,
+                      splitReason: null,
+                    },
+                  ],
+                }
+              : extractionResponse(requestText);
       return Response.json({
         choices: [{ message: { content: JSON.stringify(content) } }],
       });

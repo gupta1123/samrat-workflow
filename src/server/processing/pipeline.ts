@@ -5,7 +5,6 @@ import { ReviewContractError } from "./review-contract-error";
 import { readReferenceLedger, REFERENCE_FIELD_KEYS } from "./reference-ledger";
 import {
   orientPageImageWithVision,
-  applyDeclaredPageRotation,
   type PageOrientationView,
 } from "./page-orientation";
 import {
@@ -37,6 +36,8 @@ import {
 import {
   buildDocumentReadabilityMismatches,
   parseDocumentPageQuality,
+  PAGE_READABILITY_INSTRUCTION,
+  PAGE_READABILITY_ISSUES,
   type DocumentPageQualityAssessment,
 } from "@/server/document-readability";
 import { EXTRACTION_VERIFICATION_FIELD } from "@/lib/extraction-verification";
@@ -2319,11 +2320,11 @@ export function buildAuthoritativeReviewResponseSchema(input: {
       documentId: conciseString(120),
       issues: {
         type: "array",
-        maxItems: 5,
+        maxItems: PAGE_READABILITY_ISSUES.length,
         uniqueItems: true,
         items: {
           type: "string",
-          enum: ["faint", "rotated", "blurred", "cropped", "unreadable"],
+          enum: [...PAGE_READABILITY_ISSUES],
         },
       },
       approvalSafe: { type: "boolean" },
@@ -4219,8 +4220,9 @@ async function independentlyValidateAuthoritativeReview(params: {
     "The first reviewer is untrusted evidence, not authority. Decide every mutation separately. Accept only when the proposed value is explicitly and decisively supported by the cited source page and is more accurate than the current value. Keep the original when it is at least as well supported, including when the proposal drops, inserts, substitutes, or reorders punctuation, separators, digits, letters, spacing, or leading zeroes that are visibly part of an identifier. Use needs_review when neither value can be verified safely. Never accept a change merely because it makes documents agree. Never infer from filenames, arithmetic, or expected formats. " +
     "Do not accept a partially correct or truncated proposed value merely because it improves the current value; every visible identifier, product description, material grade, amount, unit, and table row in the proposed mutation must be complete. " +
     "Decide every proposed review issue independently. Confirm it only when the cited source pages show a genuine unresolved conflict. Dismiss it when the cited values are equal or semantically equivalent, the source does not support the claim, or an accepted correction resolves it. Use needs_review only when the original pages are genuinely insufficient to decide. " +
-    "Reassess every source page visually and independently. A page is approval-safe only when it is upright and every critical value is comfortably readable without relying on OCR. " +
-    'Return only JSON: {"correctionDecisions":[{"mutationId":"exact proposed mutation id","verdict":"accept|keep_original|needs_review","reason":"concise source-based reason","evidence":{"sourceFileName":"exact source filename","pageNumber":1,"quote":"minimum exact visible words"}}],"reviewIssueDecisions":[{"reviewIssueId":"exact proposed review issue id","verdict":"confirmed|dismissed|needs_review","reason":"concise source-based reason"}],"pageQuality":[{"sourceFileName":"exact source filename","pageNumber":1,"documentId":"exact document id","issues":["faint|rotated|blurred|cropped|unreadable"],"approvalSafe":true,"confidence":"high|medium|low","reason":"short visual assessment"}]}. Include every mutation, every proposed review issue, and every source page exactly once; use empty arrays when a category has no candidates.\n\n' +
+    "Reassess every source page visually and independently. Use page images as evidence for critical values. " +
+    PAGE_READABILITY_INSTRUCTION +
+    ' Return only JSON: {"correctionDecisions":[{"mutationId":"exact proposed mutation id","verdict":"accept|keep_original|needs_review","reason":"concise source-based reason","evidence":{"sourceFileName":"exact source filename","pageNumber":1,"quote":"minimum exact visible words"}}],"reviewIssueDecisions":[{"reviewIssueId":"exact proposed review issue id","verdict":"confirmed|dismissed|needs_review","reason":"concise source-based reason"}],"pageQuality":[{"sourceFileName":"exact source filename","pageNumber":1,"documentId":"exact document id","issues":["faint|blurred|cropped|unreadable"],"approvalSafe":true,"confidence":"high|medium|low","reason":"short visual assessment"}]}. Include every mutation, every proposed review issue, and every source page exactly once; use empty arrays when a category has no candidates.\n\n' +
     validationContext;
   const userContent = params.sourcePages.length
     ? [
@@ -5331,7 +5333,9 @@ export async function reviewAndCorrectExtractedDocuments(
     "You may correct documentType, fields, lineItems, quarantine unsupported fields, and report unresolved reviewIssues. " +
     "Use the packet-level allowedFieldKeys list for valid output keys. During the completeness audit, correct an explicitly labelled visible value only when it is missing or mapped to the wrong valid field. Do not require every allowed field to be present. " +
     "Use the entire packet as context. A value may be valid visible evidence even when its format is invalid; never silently discard such evidence. Create a reviewIssue only for a genuine unresolved conflict between explicit source values, or for an unreadable or truncated critical identifier or amount that makes approval unsafe. Never create a reviewIssue for a missing optional field, harmless formatting, low confidence alone, or a problem fully resolved by a correction. A clean, internally consistent packet must have an empty reviewIssues array. " +
-    "Perform a separate visual readability audit for every supplied original source page. The supplied page view may already have been rotated into its natural reading orientation by a separate visual model; that corrected orientation is not a quality defect. A materially faint, blurred, cropped, or unreadable page is not approval-safe even if OCR produced plausible values. Minor skew or low contrast is clear only when every critical value remains comfortably readable. Decide page quality from the page image itself, never from OCR confidence or filename. " +
+    "Perform a separate visual readability audit for every supplied original source page. Decide page quality from the page image itself, never from OCR confidence or filename. " +
+    PAGE_READABILITY_INSTRUCTION +
+    " " +
     "Keep the JSON compact. Return only actual corrections, never repeat unchanged fields or unchanged lineItems, keep each reason to at most two short sentences, quote only the minimum exact evidence needed, and leave notes empty unless they contain a material warning not represented elsewhere. " +
     "Do not replace a correct field or table merely to change decimal padding, letter case, or numeric formatting. Preserve the original extracted value when it conveys the same visible value and unit; still correct genuinely wrong digits, units or roles. " +
     "For every Invoice or Tax Invoice with a visible commercial item table, ensure lineItems contains every visible goods or service row. Do not move an invoice row to another document merely because the same HSN or amount also appears there. " +
@@ -10361,7 +10365,6 @@ async function renderPdfToImagePages(
   options?: {
     maxPages?: number;
     sourceName?: string;
-    normalizeOrientation?: boolean;
   },
 ) {
   const sourceName = options?.sourceName || "PDF";
@@ -10375,9 +10378,7 @@ async function renderPdfToImagePages(
         sourceName + " page " + page,
       ),
   );
-  return options?.normalizeOrientation === false
-    ? rendered
-    : normalizePageImageOrientations(rendered, sourceName);
+  return normalizePageImageOrientations(rendered, sourceName);
 }
 
 export async function renderUploadedFileForReview(params: {
@@ -10477,7 +10478,6 @@ type PdfPageSequenceEntry = {
   boundaryEvidence?: string;
   extractionSource: "image" | "text";
   documents: PdfPageDocument[];
-  readingRotation?: number;
 };
 
 function readOptionalModelText(value: unknown) {
@@ -10530,21 +10530,12 @@ function parsePdfPageSequenceEntry(
   if (typeof record.startsNewDocument !== "boolean") {
     throw new Error("A PDF page omitted its document-boundary decision.");
   }
-  if (
-    record.readingRotation !== undefined &&
-    record.readingRotation !== null &&
-    ![0, 90, 180, 270].includes(record.readingRotation as number)
-  )
-    throw new Error("A PDF page supplied an invalid reading rotation.");
   return {
     pageNumber: expectedPageNumber,
     startsNewDocument: record.startsNewDocument,
     boundaryEvidence: readOptionalModelText(record.boundaryEvidence),
     extractionSource,
     documents: parsePdfPageDocuments(record.documents),
-    ...(typeof record.readingRotation === "number"
-      ? { readingRotation: record.readingRotation }
-      : {}),
   };
 }
 
@@ -10553,9 +10544,6 @@ function pdfPageSequenceEntrySchema() {
     type: "object",
     properties: {
       startsNewDocument: { type: "boolean" },
-      readingRotation: {
-        anyOf: [{ type: "integer", enum: [0, 90, 180, 270] }, { type: "null" }],
-      },
       boundaryEvidence: { type: "string", minLength: 1 },
       documents: {
         type: "array",
@@ -10575,12 +10563,7 @@ function pdfPageSequenceEntrySchema() {
         },
       },
     },
-    required: [
-      "startsNewDocument",
-      "boundaryEvidence",
-      "documents",
-      "readingRotation",
-    ],
+    required: ["startsNewDocument", "boundaryEvidence", "documents"],
     additionalProperties: false,
   };
 }
@@ -10683,7 +10666,6 @@ async function classifyPdfPageSequence(params: {
     `Inspect the current procurement packet page and, when supplied, the immediately previous page. Return the required JSON for the current page only. ` +
     `Use only these documentType values: ${SUPPORTED_DOC_TYPES.join(", ")}. ` +
     `The rendered page is the source of truth and OCR is supporting context only. ` +
-    `Set readingRotation to the clockwise rotation (0, 90, 180 or 270 degrees) that makes this current page's main printed text upright. Use null if orientation cannot be decided from the image. This decision is about image orientation only; never infer document values. ` +
     `Set startsNewDocument to false only when visible page numbering, an explicitly continued table, or an unmistakably continued layout proves that the current page continues the previous page. ` +
     `Shared parties, transaction references, vehicles, filenames, or document types do not prove continuation. ` +
     `If the current physical page contains multiple independent documents, return each in documents and set startsNewDocument to true. ` +
@@ -10763,18 +10745,7 @@ async function classifyPdfPageSequence(params: {
       );
     },
   );
-  const groups = pageSequenceToDocumentGroups(pages);
-  // Reuse the existing classifier's explicit visual decision. The same
-  // original page remains the evidence source, now upright for both readers.
-  await Promise.all(
-    pages.map(async (page) => {
-      const image = params.pageImages[page.pageNumber - 1];
-      if (image && page.readingRotation !== undefined)
-        params.pageImages[page.pageNumber - 1] =
-          await applyDeclaredPageRotation(image, page.readingRotation);
-    }),
-  );
-  return groups;
+  return pageSequenceToDocumentGroups(pages);
 }
 
 async function splitPdfPagesIndividually(params: {
@@ -11522,9 +11493,6 @@ export async function extractPdfPacketDocuments(params: {
     pageImageRequest = renderPdfToImagePages(params.bytes, {
       maxPages: PDF_SMART_SPLIT_MAX_PAGES,
       sourceName: params.fileName,
-      // The sequence model sees the complete rendered page and can read its
-      // orientation directly. This avoids one extra AI call per PDF page.
-      normalizeOrientation: false,
     })
       .then((rendered) => {
         pageImages = rendered;

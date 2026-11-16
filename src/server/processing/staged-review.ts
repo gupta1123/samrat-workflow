@@ -14,7 +14,10 @@ import {
   InvoiceAssemblySourceConflict,
   parseInvoiceAssemblies,
 } from "@/lib/invoice-assembly";
-import { buildDocumentReadabilityMismatches } from "../document-readability";
+import {
+  buildDocumentReadabilityMismatches,
+  PAGE_READABILITY_INSTRUCTION,
+} from "../document-readability";
 import { EXTRACTION_VERIFICATION_FIELD } from "../../lib/extraction-verification";
 import { readComparisonOptions } from "../comparison";
 import { compactReviewProviderSchema } from "./review-response-schema";
@@ -323,7 +326,9 @@ const SOURCE_REVIEW_INSTRUCTION =
   "Each structureChange.lineItems row is {pageNumber:own-page p pointer,cells:[{field:allowed line-item property,value:literal source value,quote:its own-page column/label and value}]}. Never return a flat line-item object. Pair EACH retained property with proof in the same cell; include the unit header in that unit cell's quote when it is printed in a heading. Preserve the literal source unit; do not substitute a customary equivalent. Each field appears once per row. " +
   "Each tableCoverage.rows quote identifies the corresponding goods row; the row's cells separately prove every retained value. Quote the goods row itself, not a tax summary or freight total. If a monetary amount is not printed for the goods alone, omit its row amount cell and retain explicitly labelled document amounts in fields. Do not round numeric tokens or shorten a decimal to match a quote. " +
   "Return sourceVerdict verified when the source is decidable, even if changes are required; needs_review when it is not. " +
-  "Assess EVERY supplied page. The supplied view may already have been rotated into its natural reading orientation by a separate visual model; that corrected orientation is not a quality defect. Faint, blurred, cropped or unreadable content still needs the corresponding quality warning and approvalSafe false. " +
+  "Assess EVERY supplied page. " +
+  PAGE_READABILITY_INSTRUCTION +
+  " " +
   "Use reviewIssues only for unresolved source findings with printed evidence; no invented business conflicts. " +
   "Return all required arrays, using empty arrays where appropriate. Keep reasons brief and do not include document IDs or filenames: the task binds its own source pointers.";
 
@@ -375,7 +380,8 @@ const SOURCE_AUDIT_REPAIR_INSTRUCTION =
   "Every row quote must literally contain all retained item codes/descriptions, quantities/units, prices, row amounts and row references. Quote that goods row only; omit row amounts that appear only as document totals or freight/tax summaries. Preserve every decimal digit. " +
   "Return one support vote for every supplied field and line-item property. Return an independent literal value-and-proof observation in fieldChanges for EVERY supported non-reference field. Supported means this field/property is supplied in its stated role; return the complete source-read table in structureChange.lineItems when a commercial table exists. Unsupported means this source does not supply the field/property in that role and requires removalEvidence. For an undecidable field/value set sourceVerdict needs_review and report the page issue; uncertainty never proves correctness. " +
   "Use structureChange null only when no commercial table or document-type change is present. " +
-  "Keep all quality findings and review issues tied to literal evidence on this source. Do not return references or newReferences.";
+  "Keep all quality findings and review issues tied to literal evidence on this source. Do not return references or newReferences. " +
+  PAGE_READABILITY_INSTRUCTION;
 
 function parseObjectOrNull(raw: string) {
   try {
@@ -1175,7 +1181,7 @@ export const PACKET_INSTRUCTION =
   "Use compact document/file aliases ONLY as pointers. Never derive an identifier from an alias, filename, heading, date or another source. " +
   "Do NOT copy fields, proofs, corrections, source audits or page-quality arrays in this response. " +
   "If original pages reveal a concrete error in the audited fields, return sourceRecheckRequests identifying the document and precise source problem; never silently change its fields. " +
-  "Do not request a recheck simply because a page is already flagged unreadable/rotated: retain that safety warning. " +
+  "Retain existing warnings for unreadable content without requesting a recheck solely for that warning. " +
   "Return a termsChecklist covering every explicit packet-testable clause; unknown obligations are not commercial mismatches. " +
   "packetIssues contains ONLY newly found source-proved discrepancies not already represented by candidateMismatches. Every evidence value must be printed in its own cited page quote. " +
   "The app handles mandatory blank invoice numbers and core missing documents; do not duplicate those checks in packetIssues. " +

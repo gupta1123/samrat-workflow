@@ -487,7 +487,7 @@ test("reference repair hands a later page-quality defect to the audit repair", a
   const invalid = structuredClone(payloads[0]);
   invalid.references.referencePoNumber.quote = "No quoted order value";
   invalid.pageQuality[0].issues = ["rotated"] as never[];
-  invalid.pageQuality[0].approvalSafe = true;
+  invalid.pageQuality[0].approvalSafe = false;
   let refs = 0;
   let audits = 0;
   t.mock.method(

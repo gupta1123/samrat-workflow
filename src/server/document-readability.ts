@@ -6,18 +6,31 @@ export type DocumentReadabilitySourcePage = {
   pageNumber: number;
 };
 
+export const PAGE_READABILITY_ISSUES = [
+  "faint",
+  "blurred",
+  "cropped",
+  "unreadable",
+] as const;
+
+export const PAGE_READABILITY_INSTRUCTION =
+  "Assess readability in any orientation, including sideways or upside down. " +
+  "Read the page in its natural direction and judge the legibility of its critical details. " +
+  "Orientation alone is never a defect or a reason for needs_review. " +
+  "Mark a page unsafe only when faint, blurred, cropped, or unreadable content prevents reliable verification.";
+
 export type DocumentPageQualityAssessment = {
   sourceFileName: string;
   pageNumber: number;
   documentId: string;
-  issues: Array<"faint" | "rotated" | "blurred" | "cropped" | "unreadable">;
+  issues: (typeof PAGE_READABILITY_ISSUES)[number][];
   approvalSafe: boolean;
   confidence: "high" | "medium" | "low";
   reason: string;
 };
 
 const QUALITY_ISSUES = new Set<DocumentPageQualityAssessment["issues"][number]>(
-  ["faint", "rotated", "blurred", "cropped", "unreadable"],
+  PAGE_READABILITY_ISSUES,
 );
 
 function record(value: unknown): Record<string, unknown> {
@@ -85,12 +98,13 @@ function parseAssessment(
   const issues = readIssues(entry.issues);
   if (entry.approvalSafe === true && issues.length > 0) {
     throw new Error(
-      "The extraction reviewer marked a damaged or rotated page as approval-safe.",
+      "The extraction reviewer marked a page with a reading defect as approval-safe.",
     );
   }
   if (entry.approvalSafe === false && issues.length === 0) {
     throw new Error(
-      "The extraction reviewer marked a page unsafe without identifying the reading problem.",
+      "The extraction reviewer marked a page unsafe without identifying a reading defect. " +
+        PAGE_READABILITY_INSTRUCTION,
     );
   }
 
@@ -148,25 +162,17 @@ export function parseDocumentPageQuality(params: {
   return assessments;
 }
 
-function issueLabel(issue: DocumentPageQualityAssessment["issues"][number]) {
-  if (issue === "rotated") return "materially rotated";
-  if (issue === "cropped") return "cropped";
-  return issue;
-}
-
 export function buildDocumentReadabilityMismatches(
   assessments: DocumentPageQualityAssessment[],
 ): Mismatch[] {
-  // Only unreadable pages surface as review issues. Lesser quality notes
-  // (faint, rotated, blurred, cropped) are intentionally not shown and do
-  // not block approval on their own.
+  // Only pages explicitly reported as unreadable get the replacement workflow.
   return assessments
     .filter(
       (assessment) =>
         !assessment.approvalSafe && assessment.issues.includes("unreadable"),
     )
     .map((assessment, index) => {
-      const issueText = assessment.issues.map(issueLabel).join(", ");
+      const issueText = assessment.issues.join(", ");
       const location = `${assessment.sourceFileName}, page ${assessment.pageNumber}`;
       return {
         id: `evidence-review-${assessment.documentId}-readability-${assessment.pageNumber}-${index + 1}`,
@@ -181,7 +187,7 @@ export function buildDocumentReadabilityMismatches(
         ],
         analysis: `The source page is ${issueText} and cannot be trusted for automatic approval. ${assessment.reason}`,
         fixPlan:
-          "Upload a clear, upright scan of this page and run the analysis again. Keep the case in review until every critical value is readable.",
+          "Upload a clear scan of this page and run the analysis again. Keep the case in review until every critical value is readable.",
       };
     });
 }

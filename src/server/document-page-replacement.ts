@@ -5,19 +5,24 @@ import { storedSupplyNature } from "@/lib/supply-nature";
 
 import { DOCUMENT_READABILITY_FIELD } from "@/lib/document-readability";
 import type { CaseDoc, ExtractionQualityIssue } from "@/types/pipeline";
+import {
+  PAGE_READABILITY_INSTRUCTION,
+  PAGE_READABILITY_ISSUES,
+} from "./document-readability";
 
 import {
   callExtractionReviewModel,
   type OpenRouterMessage,
 } from "./processing/openrouter";
 
-type QualityIssue = "faint" | "rotated" | "blurred" | "cropped" | "unreadable";
+type QualityIssue = (typeof PAGE_READABILITY_ISSUES)[number];
+type StoredQualityIssue = QualityIssue | "rotated";
 
 export type DocumentPageReplacementTarget = {
   sourceFileName: string;
   pageNumber: number;
   documentId: string;
-  issues: QualityIssue[];
+  issues: StoredQualityIssue[];
   reason: string;
 };
 
@@ -37,12 +42,9 @@ type StoredMismatch = {
   values_json?: unknown;
 };
 
-const QUALITY_ISSUES = new Set<QualityIssue>([
-  "faint",
+const QUALITY_ISSUES = new Set<StoredQualityIssue>([
+  ...PAGE_READABILITY_ISSUES,
   "rotated",
-  "blurred",
-  "cropped",
-  "unreadable",
 ]);
 
 function record(value: unknown): Record<string, unknown> {
@@ -65,8 +67,8 @@ function readQualityIssues(value: unknown) {
     new Set(
       value
         .map((entry) => stringValue(entry).toLowerCase())
-        .filter((entry): entry is QualityIssue =>
-          QUALITY_ISSUES.has(entry as QualityIssue),
+        .filter((entry): entry is StoredQualityIssue =>
+          QUALITY_ISSUES.has(entry as StoredQualityIssue),
         ),
     ),
   );
@@ -196,7 +198,9 @@ export function evaluateDocumentPageReplacementReview(
   const sameTransaction = booleanOrNull(review.sameTransaction);
   const readable = review.readable === true;
   const approvalSafe = review.approvalSafe === true;
-  const detectedIssues = readQualityIssues(review.detectedIssues);
+  const detectedIssues = readQualityIssues(review.detectedIssues).filter(
+    (issue) => issue !== "rotated",
+  );
   const reason =
     stringValue(review.reason).slice(0, 700) ||
     "The replacement page could not be verified against the case.";
@@ -284,7 +288,9 @@ export async function reviewDocumentPageReplacement(params: {
       {
         role: "system",
         content:
-          'You are the final admission gate for replacing one unreadable page in a procurement case. Inspect both supplied images directly. Accept only when the proposed page is a clear and upright replacement for the same physical document page and the same business transaction. Compare visible document type/layout, page role, parties, GSTINs, PO/invoice/e-way-bill/LR/weighment references, dates, vehicle, material, quantity/weight and amount as available. Do not accept merely because the company matches. Reject a different document, different page, different transaction, blank page, materially cropped page, faint page, blurred page, materially rotated page, or conflicting critical values. Use uncertain if identity or linkage cannot be established confidently; never guess. Return only JSON with exactly this shape: {"verdict":"accept|reject|uncertain","confidence":"high|medium|low","sameDocumentPage":true|false|null,"sameTransaction":true|false|null,"readable":true|false,"approvalSafe":true|false,"detectedIssues":["faint|rotated|blurred|cropped|unreadable"],"matchingEvidence":["short visible facts"],"conflictingEvidence":["short visible facts"],"reason":"short user-facing explanation"}.',
+          "You are the final admission gate for replacing one unreadable page in a procurement case. Inspect both supplied images directly. Accept only when the proposed page is a legible replacement for the same physical document page and the same business transaction. Compare visible document type/layout, page role, parties, GSTINs, PO/invoice/e-way-bill/LR/weighment references, dates, vehicle, material, quantity/weight and amount as available. Do not accept merely because the company matches. Reject a different document, different page, different transaction, blank page, materially cropped page, faint page, blurred page, or conflicting critical values. Use uncertain if identity or linkage cannot be established confidently; never guess. " +
+          PAGE_READABILITY_INSTRUCTION +
+          ' Return only JSON with exactly this shape: {"verdict":"accept|reject|uncertain","confidence":"high|medium|low","sameDocumentPage":true|false|null,"sameTransaction":true|false|null,"readable":true|false,"approvalSafe":true|false,"detectedIssues":["faint|blurred|cropped|unreadable"],"matchingEvidence":["short visible facts"],"conflictingEvidence":["short visible facts"],"reason":"short user-facing explanation"}.',
       },
       { role: "user", content },
     ],

@@ -653,7 +653,7 @@ function getReviewerHint(
     return "Check the three printed weights on the same slip. Approval stays blocked until Gross Weight − Tare Weight equals Net Weight or the source document is corrected.";
   }
   if (mismatch.fieldName === DOCUMENT_READABILITY_FIELD) {
-    return "Replace or rescan this page so it is clear and upright, then run the analysis again. Approval stays blocked while this warning is unresolved.";
+    return "Replace this page with a clearer scan, then run the analysis again. Approval stays blocked while this warning is unresolved.";
   }
   if (mismatch.fieldName === MISSING_DOCUMENTS_FIELD) {
     return "Upload every listed required document, then run analysis again so the packet can be checked as a complete case.";
@@ -2110,9 +2110,8 @@ export function CaseMismatchPage({ caseId }: { caseId: string }) {
                         {activeMismatch.fieldName ===
                           DOCUMENT_READABILITY_FIELD && !isCaseFinal ? (
                           <div className="max-w-lg text-xs font-normal text-[#5b4b3d]">
-                            Approval is blocked. Replace this page with a clear,
-                            upright copy and analyze the case again; this
-                            warning cannot be manually accepted.
+                            Approval is blocked. Replace this page with a clear
+                            copy and analyze the case again.
                           </div>
                         ) : selectedPendingMismatchIds.length > 0 &&
                           !isCaseFinal ? (
