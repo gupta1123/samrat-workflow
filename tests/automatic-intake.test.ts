@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { queueIntakeAnalysis } from "../src/server/automatic-intake";
 import { runInvoiceInboxCycle } from "../src/server/ftp-inbox/worker";
-import { automaticGrpoCandidate } from "../src/server/sap/automatic-grpo";
+import {
+  automaticGrpoCandidate,
+  automaticGrpoImportHistory,
+} from "../src/server/sap/automatic-grpo";
 
 const receipt = {
   DocEntry: 176126,
@@ -44,6 +47,63 @@ test("automatic GRPO intake requires a PDF, a reference and quantity left to bil
       DocumentLines: [{ LineStatus: "bost_Open", RemainingOpenQuantity: 0 }],
     }),
     null,
+  );
+});
+
+test("recycling the only linked GRPO case makes the receipt eligible for a new automatic import", () => {
+  const events = [
+    {
+      case_id: "recycled",
+      owner_user_id: "reviewer",
+      details: { docEntry: 176126, automatic: true },
+    },
+    {
+      case_id: "permanently-deleted",
+      owner_user_id: "reviewer",
+      details: { docEntry: 176126 },
+    },
+  ];
+  const cases = [
+    { id: "recycled", status: "completed", deleted_at: "2026-11-16T13:04:37Z" },
+  ];
+  assert.deepEqual(
+    automaticGrpoImportHistory(events, cases, "reviewer").get(176126),
+    { latestCaseId: "recycled" },
+  );
+  assert.deepEqual(
+    automaticGrpoImportHistory(events, [], "reviewer").get(176126),
+    { latestCaseId: "recycled" },
+  );
+});
+
+test("a newer recycle cannot hide another active case for the same receipt", () => {
+  const events = [
+    {
+      case_id: "recycled",
+      owner_user_id: "reviewer",
+      details: { docEntry: 176126 },
+    },
+    {
+      case_id: "active",
+      owner_user_id: "other-reviewer",
+      details: { docEntry: 176126, automatic: true },
+    },
+  ];
+  const cases = [
+    { id: "recycled", status: "completed", deleted_at: "2026-11-16T13:04:37Z" },
+    { id: "active", status: "draft", deleted_at: null },
+  ];
+  const state = automaticGrpoImportHistory(events, cases, "reviewer").get(
+    176126,
+  );
+  assert.deepEqual(state, { latestCaseId: "recycled", activeCaseId: "active" });
+  assert.deepEqual(
+    automaticGrpoImportHistory(events, cases, "other-reviewer").get(176126),
+    {
+      latestCaseId: "recycled",
+      activeCaseId: "active",
+      resumeCaseId: "active",
+    },
   );
 });
 
