@@ -7,6 +7,11 @@ import {
 import { ApiError } from "@/server/api/helpers";
 import { sapFetch } from "./http";
 import { downloadGrpoPdfs } from "./grpo-attachments-api";
+import {
+  grpoVendorInvoiceReference,
+  sapApDraftIdentity,
+  sapApDraftsReadPath,
+} from "./grpo-drafts";
 
 export type GrpoPdfFile = {
   attachmentEntry?: number;
@@ -101,7 +106,10 @@ export async function withGrpoPdfs<T>(
     files: GrpoPdfFile[];
     download: (index: number) => Promise<Buffer>;
   }) => Promise<T>,
-  options?: { requireOpenQuantity?: boolean },
+  options?: {
+    requireOpenQuantity?: boolean;
+    rejectExistingDraft?: { invoiceRefField?: string };
+  },
 ) {
   const environment = readSapEnvironment();
   const {
@@ -165,6 +173,32 @@ export async function withGrpoPdfs<T>(
       );
     if (!Number.isSafeInteger(receipt.DocNum))
       throw new ApiError("SAP receipt identity is unavailable.", 502);
+    if (options?.rejectExistingDraft) {
+      const reference = grpoVendorInvoiceReference(
+        receipt,
+        options.rejectExistingDraft.invoiceRefField,
+      );
+      if (reference) {
+        const { body } = await json(sapApDraftsReadPath([reference], 5));
+        if (!Array.isArray(body.value))
+          throw new ApiError(
+            "Could not check the SAP draft. Refresh and retry.",
+            502,
+          );
+        const drafts: Record<string, unknown>[] = body.value;
+        const matches = drafts.some(
+          (row) =>
+            row?.CardCode === reference.cardCode &&
+            row?.NumAtCard === reference.invoice &&
+            sapApDraftIdentity(row),
+        );
+        if (matches)
+          throw new ApiError(
+            "Already drafted in SAP. Refresh Unbilled Receipts to see the draft.",
+            409,
+          );
+      }
+    }
     const pdfs =
       environment === "test"
         ? await downloadGrpoPdfs(entry)

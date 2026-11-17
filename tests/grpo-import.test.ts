@@ -92,6 +92,8 @@ async function setup(t: TestContext, production = false) {
     failSave: false,
     failEvents: false,
     failDraftRead: false,
+    receiptReference: {} as MockRow,
+    sapDrafts: [] as MockRow[],
     assets: [] as MockRow[],
     events: [] as MockRow[],
     cases: [] as MockRow[],
@@ -145,8 +147,23 @@ async function setup(t: TestContext, production = false) {
         DocumentStatus: state.closed ? "bost_Close" : "bost_Open",
         Cancelled: "tNO",
         AttachmentEntry: 9,
+        ...state.receiptReference,
       }),
     }))
+    .persist();
+  sap
+    .intercept({ path: /^\/b1s\/v1\/Drafts\?/, method: "GET" })
+    .reply((options) => {
+      const params = new URL(options.path, "https://sap.invalid").searchParams;
+      assert.ok(
+        params.get("$filter")?.includes("DocObjectCode eq 'oPurchaseInvoices'"),
+      );
+      const offset = Number(params.get("$skip") ?? 0);
+      return {
+        statusCode: 200,
+        data: { value: state.sapDrafts.slice(offset) },
+      };
+    })
     .persist();
   sap
     .intercept({ path: "/b1s/v1/Attachments2(9)", method: "GET" })
@@ -495,6 +512,80 @@ test("missing or non-PDF attachments and closed GRPOs create no uploads", async 
   state.closed = true;
   assert.equal((await call({ action: "prepare" })).status, 409);
   assert.equal(state.assets.length, 0);
+});
+
+test("an existing SAP draft replaces the import action without a case and vanishes when deleted in SAP", async (t) => {
+  const { state, call, listRows } = await setup(t, true);
+  state.receiptReference = { CardCode: "TSPL001", NumAtCard: "4725015971" };
+  Object.assign(
+    listRows.find((row) => row.DocEntry === 42)!,
+    {
+      ...state.receiptReference,
+      AttachmentEntry: 9,
+    },
+  );
+  state.sapDrafts = [
+    {
+      ...state.receiptReference,
+      CardCode: "TSPL002",
+      DocEntry: 247787,
+      DocNum: 2754,
+      DocObjectCode: "oPurchaseInvoices",
+    },
+    {
+      ...state.receiptReference,
+      DocEntry: 247788,
+      DocNum: 2754,
+      DocObjectCode: "oPurchaseInvoices",
+    },
+    {
+      ...state.receiptReference,
+      NumAtCard: "2146596246",
+      DocEntry: 247789,
+      DocNum: 2754,
+      DocObjectCode: "oPurchaseInvoices",
+    },
+  ];
+  const read = () =>
+    fetchOpenReceiptSnapshot(
+      new AbortController().signal,
+      () => {},
+      (path, init) =>
+        listRoute(
+          new Request(new URL(path, "https://app.invalid"), {
+            ...init,
+            headers: { Authorization: "Bearer " + jwt(owner) },
+          }),
+        ),
+    );
+  const snapshot = await read();
+  assert.equal(snapshot.uploads[42], undefined);
+  assert.equal(snapshot.pdfs[42].status, "available");
+  assert.deepEqual(snapshot.drafts[42], {
+    status: "created",
+    docNum: "2754",
+    docEntry: "247788",
+  });
+  assert.match(
+    renderToStaticMarkup(
+      createElement(GrpoDraftBadge, {
+        draft: snapshot.drafts[42],
+        existing: true,
+      }),
+    ),
+    /entry 247788">Already drafted in SAP · 2754/,
+  );
+  const denied = await call({ action: "prepare", completeSinglePdf: true });
+  assert.equal(denied.status, 409);
+  assert.match((await denied.json()).error, /Already drafted in SAP/);
+  assert.equal(state.productionPdfDownloads, 0);
+  state.sapDrafts.splice(1, 1);
+  assert.equal((await read()).drafts[42], undefined);
+  assert.equal(
+    (await call({ action: "prepare", completeSinglePdf: true })).status,
+    200,
+  );
+  assert.equal(state.cases.length, 1);
 });
 
 test("an HTML download is rejected before reserving storage", async (t) => {

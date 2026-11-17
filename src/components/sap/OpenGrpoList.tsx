@@ -3,7 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { GrpoPdfAvailability, GrpoUploadState } from "@/lib/grpo-import";
+import type {
+  GrpoPdfAvailability,
+  GrpoSapDraftState,
+  GrpoUploadState,
+} from "@/lib/grpo-import";
 import {
   GrpoAnalysisStartError,
   fetchOpenReceiptSnapshot,
@@ -201,6 +205,7 @@ function GrpoRows({
   record,
   upload,
   pdf,
+  existingDraft,
   busy,
   progress,
   onImport,
@@ -210,6 +215,7 @@ function GrpoRows({
   record: SapInspectorRecord;
   upload?: GrpoUploadState;
   pdf?: GrpoPdfAvailability;
+  existingDraft?: GrpoSapDraftState;
   busy: boolean;
   progress: string | null;
   onImport: () => void;
@@ -364,6 +370,8 @@ function GrpoRows({
                       </Button>
                     ) : null}
                   </div>
+                ) : existingDraft?.status === "created" ? (
+                  <GrpoDraftBadge draft={existingDraft} existing />
                 ) : (
                   <div className="space-y-2">
                     {pdf?.status !== "available" ? (
@@ -745,6 +753,7 @@ export function OpenGrpoList() {
                 record={record}
                 upload={data?.uploads[String(record.docEntry)]}
                 pdf={data?.pdfs?.[String(record.docEntry)]}
+                existingDraft={data?.drafts?.[String(record.docEntry)]}
                 busy={busyEntry !== null}
                 progress={busyEntry === record.docEntry ? progress : null}
                 onImport={() => void importReceipt(String(record.docEntry))}

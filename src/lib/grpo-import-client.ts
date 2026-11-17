@@ -3,6 +3,7 @@ import { enqueueCaseAnalysis } from "./case-persistence";
 import type {
   GrpoImportResult,
   GrpoPdfAvailability,
+  GrpoSapDraftState,
   GrpoUploadState,
 } from "./grpo-import";
 import type { SapInspectorRecord } from "./sap-inspector";
@@ -11,6 +12,7 @@ type OpenReceiptSnapshot = {
   records: SapInspectorRecord[];
   uploads: Record<string, GrpoUploadState>;
   pdfs: Record<string, GrpoPdfAvailability>;
+  drafts: Record<string, GrpoSapDraftState>;
 };
 
 export async function fetchOpenReceiptSnapshot(
@@ -22,6 +24,7 @@ export async function fetchOpenReceiptSnapshot(
   const records = new Map<string, SapInspectorRecord>();
   const uploads: OpenReceiptSnapshot["uploads"] = {};
   const pdfs: OpenReceiptSnapshot["pdfs"] = {};
+  const drafts: OpenReceiptSnapshot["drafts"] = {};
   const params = new URLSearchParams({ uploaded: "all", limit: "70" });
   let cursor: number | null = null;
 
@@ -33,7 +36,11 @@ export async function fetchOpenReceiptSnapshot(
       signal,
     });
     const body = (await response.json().catch(() => null)) as
-      | (OpenReceiptSnapshot & { nextCursor: number | null; error?: string })
+      | (Omit<OpenReceiptSnapshot, "drafts"> & {
+          drafts?: OpenReceiptSnapshot["drafts"];
+          nextCursor: number | null;
+          error?: string;
+        })
       | null;
     signal.throwIfAborted();
     if (!response.ok) {
@@ -60,10 +67,13 @@ export async function fetchOpenReceiptSnapshot(
       records.set(record.docEntry, record);
       const upload = body.uploads[record.docEntry];
       const pdf = body.pdfs[record.docEntry];
+      const draft = body.drafts?.[record.docEntry];
       if (upload) uploads[record.docEntry] = upload;
       else delete uploads[record.docEntry];
       if (pdf) pdfs[record.docEntry] = pdf;
       else delete pdfs[record.docEntry];
+      if (draft) drafts[record.docEntry] = draft;
+      else delete drafts[record.docEntry];
     }
     cursor = body.nextCursor;
     onProgress(records.size);
@@ -72,11 +82,12 @@ export async function fetchOpenReceiptSnapshot(
         records: [...records.values()],
         uploads: { ...uploads },
         pdfs: { ...pdfs },
+        drafts: { ...drafts },
       });
     }
   } while (cursor !== null);
 
-  return { records: [...records.values()], uploads, pdfs };
+  return { records: [...records.values()], uploads, pdfs, drafts };
 }
 
 type Prepared = Partial<GrpoImportResult> & {

@@ -8,6 +8,7 @@ import {
   withUser,
 } from "@/server/api/helpers";
 import { grpoEntry, withGrpoPdfs } from "@/server/sap/grpo-pdf";
+import { sapFieldConfig } from "@/server/sap/match-data";
 import {
   attachGrpoPdfs,
   grpoUploadStates,
@@ -77,70 +78,81 @@ export async function POST(
       await grpoUploadStates(db, user, company, [{ docEntry: String(entry) }])
     )[String(entry)];
     if (prior && !prior.deleted) return { existing: true, ...prior };
-    return withGrpoPdfs(entry, async (source) => {
-      const manifest = createHash("sha256")
-        .update(
-          JSON.stringify([
-            source.environment,
+    const rejectExistingDraft =
+      body.action === "file"
+        ? undefined
+        : { invoiceRefField: sapFieldConfig().invoiceRefField };
+    return withGrpoPdfs(
+      entry,
+      async (source) => {
+        const manifest = createHash("sha256")
+          .update(
+            JSON.stringify([
+              source.environment,
+              source.company,
+              source.docNum,
+              source.files,
+            ]),
+          )
+          .digest("hex");
+        const preparing = body.action === "prepare";
+        const completeSinglePdf =
+          preparing &&
+          body.completeSinglePdf === true &&
+          source.files.length === 1;
+        if (preparing && !completeSinglePdf)
+          return {
+            files: source.files.map((f) => ({ name: f.name, index: f.index })),
+            day: new Date().toISOString().slice(0, 10),
+            manifest,
+            session: randomUUID(),
+          };
+        if (!preparing && body.manifest !== manifest)
+          throw new ApiError(
+            "SAP attachments changed. Refresh and retry.",
+            409,
+          );
+        const day = preparing
+          ? new Date().toISOString().slice(0, 10)
+          : importDay(body.day);
+        const session = preparing ? randomUUID() : uuid(body.session);
+        const assetId = (index: number) =>
+          importAssetId(
+            user,
             source.company,
-            source.docNum,
-            source.files,
-          ]),
-        )
-        .digest("hex");
-      const preparing = body.action === "prepare";
-      const completeSinglePdf =
-        preparing &&
-        body.completeSinglePdf === true &&
-        source.files.length === 1;
-      if (preparing && !completeSinglePdf)
-        return {
-          files: source.files.map((f) => ({ name: f.name, index: f.index })),
-          day: new Date().toISOString().slice(0, 10),
-          manifest,
-          session: randomUUID(),
-        };
-      if (!preparing && body.manifest !== manifest)
-        throw new ApiError("SAP attachments changed. Refresh and retry.", 409);
-      const day = preparing
-        ? new Date().toISOString().slice(0, 10)
-        : importDay(body.day);
-      const session = preparing ? randomUUID() : uuid(body.session);
-      const assetId = (index: number) =>
-        importAssetId(
+            entry,
+            day,
+            index,
+            source.environment === "live" || completeSinglePdf
+              ? `${source.environment}:${manifest}:${prior?.deleted ? prior.caseId : ""}`
+              : session,
+          );
+        if (body.action === "file" || completeSinglePdf) {
+          const index = completeSinglePdf ? 0 : body.index;
+          if (!Number.isInteger(index) || !source.files[index])
+            throw new ApiError("Invalid PDF selection.");
+          const file = source.files[index];
+          const name = `${file.index + 1}-${file.name.slice(0, -4).slice(0, 230)}.pdf`;
+          const stored = await storeGrpoPdf(db, user, {
+            id: assetId(file.index),
+            name,
+            bytes: await source.download(file.index),
+          });
+          if (!completeSinglePdf) return stored;
+        }
+        return attachGrpoPdfs(
+          db,
           user,
-          source.company,
-          entry,
-          day,
-          index,
-          source.environment === "live" || completeSinglePdf
-            ? `${source.environment}:${manifest}:${prior?.deleted ? prior.caseId : ""}`
-            : session,
+          source.files.map((f) => assetId(f.index)),
+          {
+            environment: source.environment,
+            company: source.company,
+            docEntry: entry,
+            docNum: source.docNum,
+          },
         );
-      if (body.action === "file" || completeSinglePdf) {
-        const index = completeSinglePdf ? 0 : body.index;
-        if (!Number.isInteger(index) || !source.files[index])
-          throw new ApiError("Invalid PDF selection.");
-        const file = source.files[index];
-        const name = `${file.index + 1}-${file.name.slice(0, -4).slice(0, 230)}.pdf`;
-        const stored = await storeGrpoPdf(db, user, {
-          id: assetId(file.index),
-          name,
-          bytes: await source.download(file.index),
-        });
-        if (!completeSinglePdf) return stored;
-      }
-      return attachGrpoPdfs(
-        db,
-        user,
-        source.files.map((f) => assetId(f.index)),
-        {
-          environment: source.environment,
-          company: source.company,
-          docEntry: entry,
-          docNum: source.docNum,
-        },
-      );
-    });
+      },
+      { rejectExistingDraft },
+    );
   });
 }

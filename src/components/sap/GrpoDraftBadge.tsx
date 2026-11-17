@@ -1,12 +1,18 @@
 import React from "react";
 import type { GrpoSapDraftState } from "@/lib/grpo-import";
 
-export function GrpoDraftBadge({ draft }: { draft?: GrpoSapDraftState }) {
+export function GrpoDraftBadge({
+  draft,
+  existing = false,
+}: {
+  draft?: GrpoSapDraftState;
+  existing?: boolean;
+}) {
   const status = draft?.status ?? "unavailable";
   const number = draft?.docNum ?? draft?.docEntry;
   const label =
     status === "created"
-      ? `Draft created${number ? ` · ${number}` : ""}`
+      ? `${existing ? "Already drafted in SAP" : "Draft created"}${number ? ` · ${number}` : ""}`
       : status === "not_created"
         ? "Not drafted"
         : status === "posted"

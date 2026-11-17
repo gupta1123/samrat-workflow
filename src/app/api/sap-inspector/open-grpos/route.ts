@@ -11,6 +11,7 @@ import {
   parseGrpoInspectorQuery,
 } from "@/lib/sap-grpo-inspector";
 import { grpoPdfAvailability } from "@/server/sap/grpo-pdf-availability";
+import { grpoExistingDrafts } from "@/server/sap/grpo-drafts";
 import { grpoUploadStates } from "@/server/sap/grpo-import";
 import type { SapInspectorRecord } from "@/lib/sap-inspector";
 import type { GrpoUploadState } from "@/lib/grpo-import";
@@ -91,14 +92,17 @@ export async function GET(request: Request) {
             .map((l) => l.baseEntry!),
         ),
       ];
-      const readPdfs = async () => {
+      const readUnuploaded = async () => {
         if (allPageUploads) {
           const states = await allPageUploads;
           for (const [entry, state] of Object.entries(states)) {
             if (!state.deleted) uploads[entry] = state;
           }
         }
-        const unuploaded = records.filter((r) => !uploads[String(r.docEntry)]);
+        return records.filter((r) => !uploads[String(r.docEntry)]);
+      };
+      const unuploaded = readUnuploaded();
+      const readPdfs = async (unuploaded: SapInspectorRecord[]) => {
         if (tab !== "all") {
           return grpoPdfAvailability(unuploaded, client.getAttachmentMetadata);
         }
@@ -121,17 +125,30 @@ export async function GET(request: Request) {
           async (entry) => attachments.get(entry) ?? {},
         );
       };
-      const [purchaseOrders, pdfs] = await Promise.all([
+      const [purchaseOrders, pdfs, drafts] = await Promise.all([
         poEntries.length
           ? client.listPurchaseOrdersByEntries(
               poEntries,
               tab === "all" ? 40 : 15,
             )
           : [],
-        readPdfs(),
+        unuploaded.then(readPdfs),
+        unuploaded.then((rows) =>
+          grpoExistingDrafts(
+            rows,
+            config.invoiceRefField,
+            client.listApDraftsByVendorReferences,
+          ).catch(() => {
+            console.warn(
+              "Could not verify existing SAP drafts for unbilled receipts.",
+            );
+            return {};
+          }),
+        ),
       ]);
       return {
         pdfs,
+        drafts,
         records: normalizeSapInspectorRecords(
           "grpo",
           records.map((r) => r.raw),

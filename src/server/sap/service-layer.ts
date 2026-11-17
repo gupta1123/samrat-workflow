@@ -18,6 +18,10 @@ import type { SapWithholdingTaxRow } from "./draft-total";
 import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
 import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
 import { readODataCollection } from "./odata-pagination";
+import {
+  sapApDraftsReadPath,
+  type SapVendorInvoiceReference,
+} from "./grpo-drafts";
 import { itemsReadPath, type ItemsQuery } from "@/lib/sap-items-inspector";
 import {
   businessPartnerReadPath,
@@ -225,6 +229,9 @@ export async function withSapServiceLayer<T>(
       cardCode: string,
       vendorReference: string,
     ) => Promise<SapDraftResponse | null>;
+    listApDraftsByVendorReferences: (
+      references: SapVendorInvoiceReference[],
+    ) => Promise<SapDraftResponse[]>;
     listApInvoicePostingDates: (onOrBefore: string) => Promise<string[]>;
     resolveGstApInvoiceSeries: (
       postingDate: string,
@@ -1009,16 +1016,43 @@ export async function withSapServiceLayer<T>(
         );
       },
       async findDraftByVendorReference(cardCode, vendorReference) {
-        const filter = encodeURIComponent(
-          `CardCode eq '${cardCode.replaceAll("'", "''")}' and NumAtCard eq '${vendorReference.replaceAll("'", "''")}' and DocObjectCode eq 'oPurchaseInvoices'`,
-        );
         const { body } = await request(
-          `/Drafts?$select=DocEntry,DocNum,CardCode,NumAtCard,Comments,DocObjectCode&$filter=${filter}&$top=5`,
+          sapApDraftsReadPath([{ cardCode, invoice: vendorReference }], 5),
         );
         const rows = Array.isArray(body.value)
           ? (body.value as SapDraftResponse[])
           : [];
         return rows[0] ?? null;
+      },
+      async listApDraftsByVendorReferences(references) {
+        const unique = [
+          ...new Map(
+            references.map((ref) => [
+              JSON.stringify([ref.cardCode, ref.invoice]),
+              ref,
+            ]),
+          ).values(),
+        ];
+        const reads = [];
+        for (let i = 0; i < unique.length; i += 20) {
+          const batch = unique.slice(i, i + 20);
+          reads.push(
+            readODataCollection<SapDraftResponse>({
+              initialPath: sapApDraftsReadPath(batch),
+              baseUrl: config.baseUrl,
+              max: 100,
+              read: async (path) =>
+                (
+                  await request(
+                    path,
+                    { headers: { Prefer: "odata.maxpagesize=100" } },
+                    8_000,
+                  )
+                ).body,
+            }),
+          );
+        }
+        return (await Promise.all(reads)).flat();
       },
       async createDraft(payload) {
         const { body } = await request("/Drafts", {

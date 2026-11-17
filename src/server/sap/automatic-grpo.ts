@@ -15,6 +15,7 @@ import { attachGrpoPdfs, importAssetId, storeGrpoPdf } from "./grpo-import";
 import { grpoHasOpenQuantity, pdfAttachments, withGrpoPdfs } from "./grpo-pdf";
 import { sapFieldConfig } from "./match-data";
 import { withSapServiceLayer } from "./service-layer";
+import { grpoVendorInvoiceReference } from "./grpo-drafts";
 
 type Db = ReturnType<typeof createSupabaseAdminClient>;
 type PriorImport = {
@@ -39,16 +40,10 @@ export function automaticGrpoCandidate(
   if (!grpoHasOpenQuantity(receipt.DocumentLines)) return null;
   const lines = attachment?.Attachments2_Lines;
   const pdfs = pdfAttachments(receipt.AttachmentEntry, lines);
-  const reference = invoiceField ? receipt[invoiceField] : undefined;
-  const invoice = [reference, receipt.NumAtCard].find(
-    (x): x is string =>
-      typeof x === "string" && !!x.trim() && !/^0+$/.test(x.trim()),
-  );
+  const reference = grpoVendorInvoiceReference(receipt, invoiceField);
   if (
     !pdfs.length ||
-    !invoice ||
-    typeof receipt.CardCode !== "string" ||
-    !receipt.CardCode.trim() ||
+    !reference ||
     !Number.isSafeInteger(receipt.DocEntry) ||
     !Number.isSafeInteger(receipt.DocNum)
   )
@@ -68,8 +63,8 @@ export function automaticGrpoCandidate(
   return {
     entry: Number(receipt.DocEntry),
     number: Number(receipt.DocNum),
-    card: receipt.CardCode,
-    invoice: invoice.trim(),
+    card: reference.cardCode,
+    invoice: reference.invoice,
   };
 }
 
