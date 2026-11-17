@@ -164,6 +164,7 @@ before(async () => {
   for (const migration of [
     "20261015130910_service_invoice_po_document_approval.sql",
     "20261021081909_optional_po_upload_approval.sql",
+    "20261117111802_raise_daily_analysis_limit_to_500.sql",
   ]) {
     await db.exec(
       readFileSync(
@@ -635,16 +636,21 @@ test("more than three saved cases queue durably while running work stays bounded
   await complete(independentJob.job.id, independent.id);
 });
 
-test("queue admission keeps the daily safeguard and idempotency at the limit", async () => {
+test("queue admission allows 500 analyses per rolling day and keeps retries idempotent", async () => {
   const owner = randomUUID();
   await db.query("insert into auth.users(id) values($1)", [owner]);
-  let first: { caseId: string; jobId: string } | undefined;
-  for (let index = 0; index < 40; index++) {
-    const c = await createCase(owner);
-    const result = await job(c.id, owner);
-    first ??= { caseId: c.id, jobId: result.job.id };
-  }
-  assert.equal((await job(first!.caseId, owner)).job.id, first!.jobId);
+  const first = await createCase(owner);
+  const firstJob = await job(first.id, owner);
+  await db.query(
+    `insert into public.packet_processing_jobs(case_id,owner_user_id,status,created_at)
+     select $1::uuid,$2::uuid,'succeeded',now() from generate_series(1,498)
+     union all
+     select $1,$2,'succeeded',now()-interval '25 hours'`,
+    [first.id, owner],
+  );
+  const last = await createCase(owner);
+  assert.equal((await job(last.id, owner)).job.status, "queued");
+  assert.equal((await job(first.id, owner)).job.id, firstJob.job.id);
   const extra = await createCase(owner);
   await assert.rejects(job(extra.id, owner), (error: unknown) => {
     const failure = error as { code?: string; detail?: string };
