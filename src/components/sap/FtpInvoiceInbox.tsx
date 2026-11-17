@@ -258,7 +258,11 @@ export function FtpInvoiceInbox() {
                 </td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-[#f4eee7] px-2 py-1 text-xs font-medium text-[#6b3d20]">
-                    {statuses[row.status]}
+                    {row.automatic
+                      ? row.error
+                        ? "Automatic retry pending"
+                        : "Waiting for automatic analysis"
+                      : statuses[row.status]}
                   </span>
                   {row.error && (
                     <p className="mt-1 max-w-xs text-xs text-[#71675e]">

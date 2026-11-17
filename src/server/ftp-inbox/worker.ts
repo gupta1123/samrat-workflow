@@ -3,8 +3,8 @@ import { ApiError, dbCheck } from "@/server/api/helpers";
 import { storeImportedPdf } from "@/server/imported-pdf";
 import {
   analysisQueueIsIdle,
+  productionAutomaticIntake,
   queueIntakeAnalysis,
-  readAutomaticIntake,
   type AutomaticIntake,
 } from "@/server/automatic-intake";
 import { runAutomaticGrpoIntake } from "@/server/sap/automatic-grpo";
@@ -15,7 +15,12 @@ import {
 } from "@/server/sap/config";
 import { createSupabaseAdminClient } from "@/server/supabase/admin";
 import { UPLOAD_LIMITS } from "@/server/uploads";
-import { checkInboxError, SCAN_INTERVAL_MS, type FtpInvoiceRow } from "./data";
+import {
+  checkInboxError,
+  isAutomaticFtpInvoice,
+  SCAN_INTERVAL_MS,
+  type FtpInvoiceRow,
+} from "./data";
 import {
   archiveFilename,
   createInvoiceFtp,
@@ -348,19 +353,20 @@ async function takeAutomaticInvoice(
     .gt("size_bytes", 0)
     .lte("size_bytes", UPLOAD_LIMITS.bytes)
     .or(`owner_user_id.is.null,owner_user_id.eq.${config.owner}`)
+    .order("requested_at", { ascending: true, nullsFirst: true })
     .order("discovered_at")
     .order("id")
     .limit(1)
     .maybeSingle();
   dbCheck(ready.error);
   const row = ready.data as FtpInvoiceRow | null;
-  if (!row) return false;
+  if (!row || !isAutomaticFtpInvoice(row, config, now)) return false;
   const claimed = await db
     .from(table)
     .update({
       status: "importing",
       owner_user_id: config.owner,
-      requested_at: now.toISOString(),
+      requested_at: row.requested_at ?? now.toISOString(),
       error: null,
     })
     .eq("id", row.id)
@@ -374,20 +380,61 @@ async function takeAutomaticInvoice(
     await queueAnalysis(db, ftp, claimed.data as FtpInvoiceRow, true);
     console.info("[automatic-intake] Checked ready FTP invoice", row.id);
   } catch (error) {
-    await update(
+    await recordImportFailure(
       db,
-      row.id,
-      {
-        status: "failed",
-        error: userError(
-          error,
-          "Could not start analysis. Retry from the inbox.",
-        ),
-      },
-      "importing",
+      claimed.data as FtpInvoiceRow,
+      error,
+      now,
+      config,
     );
   }
   return true;
+}
+
+async function recordImportFailure(
+  db: Db,
+  row: FtpInvoiceRow,
+  error: unknown,
+  now: Date,
+  automatic: AutomaticIntake | null,
+) {
+  const retryWindowMs = 10 * 60_000;
+  const { code = "", message = "" } =
+    (error as { code?: string; message?: string } | null) ?? {};
+  const temporary =
+    (error instanceof InboxFtpError && error.retryable) ||
+    (error instanceof ApiError &&
+      (error.status >= 500 || [408, 429].includes(error.status))) ||
+    /^(08[A-Z0-9]{3}|PGRST00[0-3]|PT(429|5\d\d))$/.test(code) ||
+    (!code &&
+      /^(?:TimeoutError:|TypeError: (?:fetch failed|Failed to fetch))/.test(
+        message,
+      ));
+  // A ready row with a request time returns to the automatic scan. The
+  // original request anchors the retry window across worker restarts.
+  const retry =
+    temporary &&
+    isAutomaticFtpInvoice(row, automatic, now) &&
+    row.requested_at &&
+    now.getTime() - Date.parse(row.requested_at) < retryWindowMs;
+  await update(
+    db,
+    row.id,
+    retry
+      ? {
+          status: "ready",
+          error:
+            "A temporary issue delayed import. The app will retry automatically.",
+        }
+      : {
+          status: "failed",
+          error: userError(
+            error,
+            "Could not start analysis. Retry from the inbox.",
+          ),
+        },
+    "importing",
+  );
 }
 
 async function reconcileAnalysis(db: Db) {
@@ -559,13 +606,15 @@ export async function runInvoiceInboxCycle(
     if (row) {
       await update(db, row.id, { status: "importing" }, row.status);
       try {
-        await queueAnalysis(db, ftp, row);
-      } catch (failure) {
-        const error = userError(
-          failure,
-          "Could not start analysis. Retry from the inbox.",
+        await queueAnalysis(
+          db,
+          ftp,
+          row,
+          row.status === "importing" &&
+            isAutomaticFtpInvoice(row, automatic, now),
         );
-        await update(db, row.id, { status: "failed", error }, "importing");
+      } catch (failure) {
+        await recordImportFailure(db, row, failure, now, automatic);
       }
       return;
     }
@@ -645,14 +694,6 @@ export async function runProductionInvoiceInbox() {
 let productionIntake: AutomaticIntake | null | undefined;
 function productionIntakeConfiguration() {
   if (productionIntake !== undefined) return productionIntake;
-  try {
-    productionIntake = readAutomaticIntake();
-  } catch (error) {
-    productionIntake = null;
-    console.warn(
-      "[automatic-intake] Configuration is invalid",
-      error instanceof Error ? error.message : "Unknown error",
-    );
-  }
+  productionIntake = productionAutomaticIntake("live");
   return productionIntake;
 }

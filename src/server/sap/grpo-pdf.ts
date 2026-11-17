@@ -10,7 +10,7 @@ import { downloadGrpoPdfs } from "./grpo-attachments-api";
 import {
   grpoVendorInvoiceReference,
   sapApDraftIdentity,
-  sapApDraftsReadPath,
+  sapApDocumentsReadPath,
 } from "./grpo-drafts";
 
 export type GrpoPdfFile = {
@@ -179,7 +179,7 @@ export async function withGrpoPdfs<T>(
         options.rejectExistingDraft.invoiceRefField,
       );
       if (reference) {
-        const { body } = await json(sapApDraftsReadPath([reference], 5));
+        const { body } = await json(sapApDocumentsReadPath([reference], 5));
         if (!Array.isArray(body.value))
           throw new ApiError(
             "Could not check the SAP draft. Refresh and retry.",

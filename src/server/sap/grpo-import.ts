@@ -108,6 +108,7 @@ export async function grpoUploadStates(
         caseId: c.id,
         status: c.status,
         deleted: !!c.deleted_at,
+        ...(event.details?.automatic === true ? { automatic: true } : {}),
         sapDraft: { status: "unavailable" },
       };
   }

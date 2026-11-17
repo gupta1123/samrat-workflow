@@ -2,6 +2,8 @@ import { ApiError, dbCheck, uuid } from "@/server/api/helpers";
 import { DEFAULT_COMPARISON_OPTIONS } from "@/server/comparison";
 import { isConfirmedAnalysisStart } from "@/lib/analysis-start";
 import type { createSupabaseAdminClient } from "@/server/supabase/admin";
+import type { SapEnvironment } from "./sap/config";
+import { analysisStartDatabaseError } from "./processing/analysis-start-error";
 
 type Db = ReturnType<typeof createSupabaseAdminClient>;
 
@@ -27,6 +29,20 @@ export function readAutomaticIntake(): AutomaticIntake | null {
     fromDate,
     fromInstant: new Date(`${fromDate}T00:00:00+05:30`).toISOString(),
   };
+}
+
+export function productionAutomaticIntake(environment: SapEnvironment) {
+  if (environment !== "live" || process.env.FTP_INBOX_ENABLED !== "true")
+    return null;
+  try {
+    return readAutomaticIntake();
+  } catch (error) {
+    console.warn(
+      "[automatic-intake] Configuration is invalid",
+      error instanceof Error ? error.message : "Unknown error",
+    );
+    return null;
+  }
 }
 
 export async function analysisQueueIsIdle(db: Db) {
@@ -69,6 +85,8 @@ export async function queueIntakeAnalysis(
       ...(automatic ? { automaticIntake: true } : {}),
     },
   });
+  const rejection = analysisStartDatabaseError(result.error);
+  if (rejection) throw rejection;
   dbCheck(result.error);
   if (!isConfirmedAnalysisStart(result.data))
     throw new Error("Analysis queue did not confirm the case.");

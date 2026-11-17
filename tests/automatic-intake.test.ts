@@ -143,14 +143,20 @@ test("automatic intake leaves the case untouched if work arrives before enqueue"
   }
 });
 
-test("the FTP cycle queues an eligible saved invoice once without a button click", async (t) => {
+test("the FTP cycle retries a temporary queue failure and reuses the saved case", async (t) => {
   const now = new Date("2026-11-16T12:00:00Z");
   const row = {
     id: "ftp-entry",
     status: "ready",
     owner_user_id: "reviewer",
     case_id: "saved-case",
+    present: true,
+    size_bytes: 1000,
+    discovered_at: now.toISOString(),
+    requested_at: null,
+    error: null,
   };
+  let checkedAt = now;
   let queued = false;
   const enqueues: unknown[] = [];
   const db = {
@@ -160,7 +166,7 @@ test("the FTP cycle queues an eligible saved invoice once without a button click
       let fetchingByCase = false;
       const resolve = () => {
         if (table === "ftp_invoice_sync")
-          return { last_checked_at: now.toISOString(), error: null };
+          return { last_checked_at: checkedAt.toISOString(), error: null };
         if (table === "sap_match_jobs") return [];
         if (table === "packet_processing_jobs")
           return fetchingByCase ? null : queued ? [{ id: "analysis" }] : [];
@@ -196,6 +202,8 @@ test("the FTP cycle queues an eligible saved invoice once without a button click
     async rpc(name: string, args: Record<string, unknown>) {
       assert.equal(name, "enqueue_case_analysis");
       enqueues.push(args);
+      if (enqueues.length === 1)
+        return { data: null, error: { code: "PGRST003" } };
       queued = true;
       return {
         data: {
@@ -230,8 +238,15 @@ test("the FTP cycle queues an eligible saved invoice once without a button click
   };
   await runInvoiceInboxCycle(db, ftp, now, config);
   await runInvoiceInboxCycle(db, ftp, now, config);
-  assert.equal(row.status, "analyzing");
+  assert.equal(row.status, "ready");
+  assert.match(String(row.error), /retry automatically/);
   assert.equal(enqueues.length, 1);
+  checkedAt = new Date(now.getTime() + 120_000);
+  await runInvoiceInboxCycle(db, ftp, checkedAt, config);
+  assert.equal(row.status, "analyzing");
+  assert.equal(row.error, null);
+  assert.equal(row.requested_at, now.toISOString());
+  assert.equal(enqueues.length, 2);
   assert.equal(
     (enqueues[0] as { p_options: { automaticIntake: boolean } }).p_options
       .automaticIntake,

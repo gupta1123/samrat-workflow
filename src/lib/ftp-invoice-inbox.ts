@@ -17,6 +17,7 @@ export type FtpInvoice = {
   caseId: string | null;
   error: string | null;
   canAnalyze: boolean;
+  automatic?: boolean;
 };
 
 export type FtpInvoiceProgress = Pick<

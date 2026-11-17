@@ -8,6 +8,10 @@ import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from "undici";
 import { grpoPdfAvailability } from "../src/server/sap/grpo-pdf-availability";
 import { GET as listRoute } from "../src/app/api/sap-inspector/open-grpos/route";
 import {
+  GET as ftpInboxRoute,
+  POST as queueFtpInvoiceRoute,
+} from "../src/app/api/ftp-invoice-inbox/route";
+import {
   POST as importRoute,
   DELETE as deleteImportRoute,
 } from "../src/app/api/sap-inspector/grpos/[id]/import/route";
@@ -61,6 +65,10 @@ async function setup(t: TestContext, production = false) {
     SAP_TEST_USERNAME: "api-user",
     SAP_TEST_PASSWORD: "api-password",
     QUOTAGUARDSTATIC_URL: "",
+    AUTOMATIC_INTAKE_ENABLED: "false",
+    FTP_INBOX_ENABLED: "false",
+    AUTOMATIC_INTAKE_FROM: "2026-01-02",
+    AUTOMATIC_INTAKE_OWNER: owner,
   };
   const old = Object.fromEntries(
     Object.keys(cfg).map((k) => [k, process.env[k]]),
@@ -94,11 +102,13 @@ async function setup(t: TestContext, production = false) {
     failDraftRead: false,
     receiptReference: {} as MockRow,
     sapDrafts: [] as MockRow[],
+    sapPosted: [] as MockRow[],
     assets: [] as MockRow[],
     events: [] as MockRow[],
     cases: [] as MockRow[],
     files: [] as MockRow[],
     postings: [] as MockRow[],
+    ftpInvoices: [] as MockRow[],
     postingReads: [] as URLSearchParams[],
     caseMutations: [] as MockRow[],
     objects: new Map<string, Buffer>(),
@@ -164,6 +174,21 @@ async function setup(t: TestContext, production = false) {
         data: { value: state.sapDrafts.slice(offset) },
       };
     })
+    .persist();
+  sap
+    .intercept({ path: /^\/b1s\/v1\/PurchaseInvoices\?/, method: "GET" })
+    .reply((options) => ({
+      statusCode: 200,
+      data: {
+        value: state.sapPosted.slice(
+          Number(
+            new URL(options.path, "https://sap.invalid").searchParams.get(
+              "$skip",
+            ) ?? 0,
+          ),
+        ),
+      },
+    }))
     .persist();
   sap
     .intercept({ path: "/b1s/v1/Attachments2(9)", method: "GET" })
@@ -391,6 +416,11 @@ async function setup(t: TestContext, production = false) {
           : Response.json({ message: "missing" }, { status: 404 });
       }
       const table = url.pathname.split("/").at(-1);
+      if (table === "ftp_invoice_sync")
+        return Response.json({
+          last_success_at: new Date().toISOString(),
+          error: null,
+        });
       if (table === "sap_postings") {
         assert.equal(method, "GET", "Draft status must be read-only");
         state.postingReads.push(url.searchParams);
@@ -408,7 +438,9 @@ async function setup(t: TestContext, production = false) {
                 ? state.events
                 : table === "sap_postings"
                   ? state.postings
-                  : null;
+                  : table === "ftp_invoice_inbox"
+                    ? state.ftpInvoices
+                    : null;
       assert.ok(rows, `Unexpected data call ${url}`);
       const visible: MockRow[] =
         table === "packet_case_files" &&
@@ -586,6 +618,108 @@ test("an existing SAP draft replaces the import action without a case and vanish
     200,
   );
   assert.equal(state.cases.length, 1);
+});
+
+test("production receipts waiting for automation distinguish missing references and already posted invoices", async (t) => {
+  const { state, listRows } = await setup(t, true);
+  process.env.FTP_INBOX_ENABLED = "true";
+  process.env.AUTOMATIC_INTAKE_ENABLED = "true";
+  const recentReceipt = {
+    DocDate: "2026-11-17T00:00:00Z",
+    CardCode: "TSPL001",
+    AttachmentEntry: 9,
+    DocumentLines: [
+      {
+        LineNum: 0,
+        ItemCode: "ITEM",
+        LineStatus: "bost_Open",
+        Quantity: 8,
+        RemainingOpenQuantity: 5,
+      },
+    ],
+  };
+  const nowIST = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+  for (const [entry, invoice] of [
+    [42, "pending"],
+    [43, "posted"],
+    [45, ""],
+  ] as const)
+    Object.assign(
+      listRows.find((row) => row.DocEntry === entry)!,
+      {
+        ...recentReceipt,
+        DocDate: nowIST,
+        NumAtCard: invoice,
+      },
+    );
+  state.sapPosted = [
+    {
+      DocEntry: 125,
+      NumAtCard: "pending",
+      CardCode: "TSPL001",
+      Cancelled: "tYES",
+    },
+    {
+      DocEntry: 126,
+      NumAtCard: "posted",
+      CardCode: "TSPL001",
+      Cancelled: "tNO",
+    },
+  ];
+  const snapshot = await fetchOpenReceiptSnapshot(
+    new AbortController().signal,
+    () => {},
+    (path, init) =>
+      listRoute(
+        new Request(new URL(path, "https://app.invalid"), {
+          ...init,
+          headers: { Authorization: "Bearer " + jwt(owner) },
+        }),
+      ),
+  );
+  assert.deepEqual(snapshot.automaticStatuses, {
+    "42": "waiting",
+    "45": "missing_invoice_reference",
+  });
+  assert.equal(snapshot.drafts[43].status, "posted");
+  assert.equal(snapshot.pdfs[44].status, "missing");
+});
+
+test("automatic FTP rows report waiting and reject a stale Analyze click", async (t) => {
+  const { state } = await setup(t, true);
+  process.env.FTP_INBOX_ENABLED = "true";
+  process.env.AUTOMATIC_INTAKE_ENABLED = "true";
+  const invoiceId = "55555555-5555-4555-8555-555555555555";
+  state.ftpInvoices.push({
+    id: invoiceId,
+    file_name: "invoice.pdf",
+    discovered_at: new Date().toISOString(),
+    present: true,
+    status: "ready",
+    size_bytes: 1000,
+    owner_user_id: null,
+    case_id: null,
+    error: null,
+  });
+  const url = "https://app.invalid/api/ftp-invoice-inbox";
+  const headers = {
+    Authorization: "Bearer " + jwt(owner),
+    Origin: "https://app.invalid",
+  };
+  const response = await ftpInboxRoute(new Request(url, { headers }));
+  const page = await response.json();
+  assert.equal(page.rows[0].automatic, true);
+  assert.equal(page.rows[0].canAnalyze, false);
+  const stale = await queueFtpInvoiceRoute(
+    new Request(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ id: invoiceId }),
+    }),
+  );
+  assert.equal(stale.status, 409);
+  assert.match((await stale.json()).error, /Waiting for automatic analysis/);
+  assert.equal(state.ftpInvoices[0].status, "ready");
 });
 
 test("an HTML download is rejected before reserving storage", async (t) => {

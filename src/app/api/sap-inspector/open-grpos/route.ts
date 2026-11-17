@@ -3,6 +3,7 @@ import {
   readSapServiceConnection,
 } from "@/server/sap/config";
 import { ApiError, withUser } from "@/server/api/helpers";
+import { productionAutomaticIntake } from "@/server/automatic-intake";
 import { withSapServiceLayer } from "@/server/sap/service-layer";
 import { sapFieldConfig } from "@/server/sap/match-data";
 import { normalizeSapInspectorRecords } from "@/lib/sap-inspector";
@@ -11,10 +12,17 @@ import {
   parseGrpoInspectorQuery,
 } from "@/lib/sap-grpo-inspector";
 import { grpoPdfAvailability } from "@/server/sap/grpo-pdf-availability";
-import { grpoExistingDrafts } from "@/server/sap/grpo-drafts";
+import {
+  grpoExistingApDocuments,
+  grpoVendorInvoiceReference,
+} from "@/server/sap/grpo-drafts";
+import {
+  automaticGrpoCandidate,
+  readAutomaticGrpoImportHistory,
+} from "@/server/sap/automatic-grpo";
 import { grpoUploadStates } from "@/server/sap/grpo-import";
 import type { SapInspectorRecord } from "@/lib/sap-inspector";
-import type { GrpoUploadState } from "@/lib/grpo-import";
+import type { GrpoAutomaticStatus, GrpoUploadState } from "@/lib/grpo-import";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -33,6 +41,7 @@ export async function GET(request: Request) {
       throw new ApiError("Invalid upload tab.");
     const config = sapFieldConfig();
     const environment = readSapEnvironment();
+    const automatic = productionAutomaticIntake(environment);
     const { company } = readSapServiceConnection(environment);
     return withSapServiceLayer(async (client) => {
       const records: SapInspectorRecord[] = [];
@@ -103,9 +112,6 @@ export async function GET(request: Request) {
       };
       const unuploaded = readUnuploaded();
       const readPdfs = async (unuploaded: SapInspectorRecord[]) => {
-        if (tab !== "all") {
-          return grpoPdfAvailability(unuploaded, client.getAttachmentMetadata);
-        }
         const attachmentEntries = [
           ...new Set(
             unuploaded.flatMap(({ raw }) => {
@@ -119,25 +125,99 @@ export async function GET(request: Request) {
           ),
         ];
         const attachments =
-          await client.listAttachmentMetadataByEntries(attachmentEntries);
-        return grpoPdfAvailability(
-          unuploaded,
-          async (entry) => attachments.get(entry) ?? {},
-        );
+          tab === "all"
+            ? await client.listAttachmentMetadataByEntries(attachmentEntries)
+            : new Map<number, Record<string, unknown>>();
+        const pdfs = await grpoPdfAvailability(unuploaded, async (entry) => {
+          if (tab === "all") return attachments.get(entry) ?? {};
+          const metadata = await client.getAttachmentMetadata(entry);
+          attachments.set(entry, metadata);
+          return metadata;
+        });
+        return { pdfs, attachments };
       };
-      const [purchaseOrders, pdfs, drafts] = await Promise.all([
+      const pdfDetails = unuploaded.then(readPdfs);
+      const readAutomation = async () => {
+        const states: Record<string, GrpoAutomaticStatus> = {};
+        if (!automatic) return { states, posted: {} };
+        const [rows, { pdfs, attachments }] = await Promise.all([
+          unuploaded,
+          pdfDetails,
+        ]);
+        const today = new Date(Date.now() + 330 * 60_000)
+          .toISOString()
+          .slice(0, 10);
+        const candidates = rows.filter((row) => {
+          const entry = String(row.docEntry);
+          if (pdfs[entry]?.status !== "available") return false;
+          if (!grpoVendorInvoiceReference(row.raw, config.invoiceRefField)) {
+            states[entry] = "missing_invoice_reference";
+            return false;
+          }
+          return Boolean(
+            automaticGrpoCandidate(
+              row.raw,
+              attachments.get(Number(row.raw.AttachmentEntry)),
+              automatic.fromDate,
+              today,
+              config.invoiceRefField,
+            ),
+          );
+        });
+        const entries = candidates.map((row) => Number(row.docEntry));
+        let posted = {};
+        if (entries.length) {
+          try {
+            const [history, postedInvoices] = await Promise.all([
+              readAutomaticGrpoImportHistory(
+                db,
+                company,
+                entries,
+                automatic.owner,
+              ),
+              grpoExistingApDocuments(
+                candidates,
+                config.invoiceRefField,
+                (refs) =>
+                  client.listApDocumentsByVendorReferences(refs, "posted"),
+                "posted",
+              ),
+            ]);
+            posted = postedInvoices;
+            for (const entry of entries) {
+              const prior = history.get(entry);
+              if (!postedInvoices[String(entry)])
+                states[String(entry)] =
+                  prior?.activeCaseId && !prior.resumeCaseId
+                    ? "case_exists"
+                    : "waiting";
+            }
+          } catch {
+            for (const entry of entries) states[String(entry)] = "unavailable";
+          }
+        }
+        for (const [entry, upload] of Object.entries(uploads))
+          if (
+            upload.automatic &&
+            upload.status === "draft" &&
+            upload.sapDraft?.status === "not_created"
+          )
+            states[entry] = "waiting";
+        return { states, posted };
+      };
+      const [purchaseOrders, { pdfs }, drafts, automation] = await Promise.all([
         poEntries.length
           ? client.listPurchaseOrdersByEntries(
               poEntries,
               tab === "all" ? 40 : 15,
             )
           : [],
-        unuploaded.then(readPdfs),
+        pdfDetails,
         unuploaded.then((rows) =>
-          grpoExistingDrafts(
+          grpoExistingApDocuments(
             rows,
             config.invoiceRefField,
-            client.listApDraftsByVendorReferences,
+            client.listApDocumentsByVendorReferences,
           ).catch(() => {
             console.warn(
               "Could not verify existing SAP drafts for unbilled receipts.",
@@ -145,10 +225,12 @@ export async function GET(request: Request) {
             return {};
           }),
         ),
+        readAutomation(),
       ]);
       return {
         pdfs,
-        drafts,
+        drafts: { ...drafts, ...automation.posted },
+        automaticStatuses: automation.states,
         records: normalizeSapInspectorRecords(
           "grpo",
           records.map((r) => r.raw),

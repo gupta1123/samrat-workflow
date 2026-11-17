@@ -19,7 +19,7 @@ import { sapDocumentNumber } from "@/lib/sap-exact-po-match";
 import { selectOpenGrposBasedOnPurchaseOrders } from "@/lib/sap-grpo-relations";
 import { readODataCollection } from "./odata-pagination";
 import {
-  sapApDraftsReadPath,
+  sapApDocumentsReadPath,
   type SapVendorInvoiceReference,
 } from "./grpo-drafts";
 import { itemsReadPath, type ItemsQuery } from "@/lib/sap-items-inspector";
@@ -45,6 +45,7 @@ type SapDraftResponse = {
   DocCurrency?: string;
   Comments?: string;
   DocObjectCode?: string;
+  Cancelled?: string;
   WithholdingTaxDataCollection?: SapWithholdingTaxRow[];
   DocumentLines?: Array<{
     LineNum?: number;
@@ -229,8 +230,9 @@ export async function withSapServiceLayer<T>(
       cardCode: string,
       vendorReference: string,
     ) => Promise<SapDraftResponse | null>;
-    listApDraftsByVendorReferences: (
+    listApDocumentsByVendorReferences: (
       references: SapVendorInvoiceReference[],
+      kind?: "draft" | "posted",
     ) => Promise<SapDraftResponse[]>;
     listApInvoicePostingDates: (onOrBefore: string) => Promise<string[]>;
     resolveGstApInvoiceSeries: (
@@ -1017,14 +1019,14 @@ export async function withSapServiceLayer<T>(
       },
       async findDraftByVendorReference(cardCode, vendorReference) {
         const { body } = await request(
-          sapApDraftsReadPath([{ cardCode, invoice: vendorReference }], 5),
+          sapApDocumentsReadPath([{ cardCode, invoice: vendorReference }], 5),
         );
         const rows = Array.isArray(body.value)
           ? (body.value as SapDraftResponse[])
           : [];
         return rows[0] ?? null;
       },
-      async listApDraftsByVendorReferences(references) {
+      async listApDocumentsByVendorReferences(references, kind = "draft") {
         const unique = [
           ...new Map(
             references.map((ref) => [
@@ -1038,7 +1040,7 @@ export async function withSapServiceLayer<T>(
           const batch = unique.slice(i, i + 20);
           reads.push(
             readODataCollection<SapDraftResponse>({
-              initialPath: sapApDraftsReadPath(batch),
+              initialPath: sapApDocumentsReadPath(batch, undefined, kind),
               baseUrl: config.baseUrl,
               max: 100,
               read: async (path) =>

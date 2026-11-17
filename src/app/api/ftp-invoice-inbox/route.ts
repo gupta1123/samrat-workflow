@@ -1,10 +1,12 @@
 import { ApiError, jsonBody, uuid, withUser } from "@/server/api/helpers";
 import { readSapEnvironment } from "@/server/sap/config";
+import { productionAutomaticIntake } from "@/server/automatic-intake";
 import { UPLOAD_LIMITS } from "@/server/uploads";
 import {
   canAnalyzeInvoice,
   checkInboxError,
   INBOX_PAGE_SIZE,
+  isAutomaticFtpInvoice,
   type FtpInvoiceRow,
 } from "@/server/ftp-inbox/data";
 import type {
@@ -13,13 +15,15 @@ import type {
 } from "@/lib/ftp-invoice-inbox";
 
 function requireProduction() {
-  if (readSapEnvironment() !== "live")
+  const environment = readSapEnvironment();
+  if (environment !== "live")
     throw new ApiError("The invoice inbox is available in Production.", 409);
+  return productionAutomaticIntake(environment);
 }
 
 export async function GET(request: Request) {
   return withUser(request, async (db, user) => {
-    requireProduction();
+    const automatic = requireProduction();
     const params = new URL(request.url).searchParams;
     if (params.has("id")) {
       const result = await db
@@ -63,17 +67,25 @@ export async function GET(request: Request) {
     ]);
     checkInboxError(inbox.error);
     checkInboxError(sync.error);
+    const now = new Date();
     return {
-      rows: ((inbox.data ?? []) as FtpInvoiceRow[]).map((row) => ({
-        id: row.id,
-        fileName: row.file_name,
-        discoveredAt: row.discovered_at,
-        status: row.status,
-        caseId: row.owner_user_id === user ? row.case_id : null,
-        error: row.error,
-        canAnalyze:
-          row.size_bytes <= UPLOAD_LIMITS.bytes && canAnalyzeInvoice(row, user),
-      })),
+      rows: ((inbox.data ?? []) as FtpInvoiceRow[]).map((row) => {
+        const autoWaiting =
+          row.status === "ready" && isAutomaticFtpInvoice(row, automatic, now);
+        return {
+          id: row.id,
+          fileName: row.file_name,
+          discoveredAt: row.discovered_at,
+          status: row.status,
+          caseId: row.owner_user_id === user ? row.case_id : null,
+          error: row.error,
+          automatic: autoWaiting,
+          canAnalyze:
+            !autoWaiting &&
+            row.size_bytes <= UPLOAD_LIMITS.bytes &&
+            canAnalyzeInvoice(row, user),
+        };
+      }),
       page,
       totalPages: Math.max(1, Math.ceil((inbox.count ?? 0) / INBOX_PAGE_SIZE)),
       lastSuccessAt: sync.data?.last_success_at ?? null,
@@ -84,7 +96,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   return withUser(request, async (db, user) => {
-    requireProduction();
+    const automatic = requireProduction();
     const id = uuid((await jsonBody(request))?.id);
     const lookup = await db
       .from("ftp_invoice_inbox")
@@ -94,6 +106,11 @@ export async function POST(request: Request) {
     checkInboxError(lookup.error);
     const row = lookup.data as FtpInvoiceRow | null;
     if (!row) throw new ApiError("Invoice file not found.", 404);
+    if (
+      row.status === "ready" &&
+      isAutomaticFtpInvoice(row, automatic, new Date())
+    )
+      throw new ApiError("Waiting for automatic analysis.", 409);
     if (!canAnalyzeInvoice(row, user) || row.size_bytes > UPLOAD_LIMITS.bytes)
       throw new ApiError(
         "This file is no longer ready to analyze. Refresh the inbox.",

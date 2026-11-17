@@ -16,7 +16,9 @@ export function GrpoDraftBadge({
       : status === "not_created"
         ? "Not drafted"
         : status === "posted"
-          ? "Invoice posted"
+          ? existing
+            ? "Already posted in SAP"
+            : "Invoice posted"
           : "Draft status unavailable";
   const color =
     status === "created"

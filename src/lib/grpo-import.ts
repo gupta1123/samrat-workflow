@@ -9,7 +9,10 @@ export type GrpoUploadState = {
   status: string;
   deleted: boolean;
   sapDraft?: GrpoSapDraftState;
+  automatic?: boolean;
 };
+export type GrpoAutomaticStatus =
+  "waiting" | "case_exists" | "missing_invoice_reference" | "unavailable";
 export type GrpoImportSource = {
   environment: "test" | "live";
   company: string;

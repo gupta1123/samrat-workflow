@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type {
+  GrpoAutomaticStatus,
   GrpoPdfAvailability,
   GrpoSapDraftState,
   GrpoUploadState,
@@ -27,6 +28,12 @@ import { GrpoDraftBadge } from "@/components/sap/GrpoDraftBadge";
 import type { SapInspectorLine, SapInspectorRecord } from "@/lib/sap-inspector";
 
 const PAGE_SIZE = 10;
+const AUTOMATIC_LABEL = {
+  waiting: "Waiting for automatic analysis",
+  case_exists: "Case already exists",
+  missing_invoice_reference: "Invoice reference missing in SAP",
+  unavailable: "Automatic status unavailable",
+} satisfies Record<GrpoAutomaticStatus, string>;
 const number = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 6 });
 const money = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
 
@@ -206,6 +213,7 @@ function GrpoRows({
   upload,
   pdf,
   existingDraft,
+  automaticStatus,
   busy,
   progress,
   onImport,
@@ -216,6 +224,7 @@ function GrpoRows({
   upload?: GrpoUploadState;
   pdf?: GrpoPdfAvailability;
   existingDraft?: GrpoSapDraftState;
+  automaticStatus?: GrpoAutomaticStatus;
   busy: boolean;
   progress: string | null;
   onImport: () => void;
@@ -329,7 +338,9 @@ function GrpoRows({
                         ? "In Recycle Bin"
                         : upload.status === "processing"
                           ? "Analysis queued / running"
-                          : upload.status}
+                          : automaticStatus === "waiting"
+                            ? AUTOMATIC_LABEL.waiting
+                            : upload.status}
                     </p>
                     <Link
                       className="font-medium text-[#6b3d20] underline"
@@ -359,6 +370,7 @@ function GrpoRows({
                       </Button>
                     ) : null}
                     {!upload.deleted &&
+                    automaticStatus !== "waiting" &&
                     ["draft", "failed"].includes(upload.status) ? (
                       <Button
                         disabled={busy}
@@ -370,33 +382,26 @@ function GrpoRows({
                       </Button>
                     ) : null}
                   </div>
-                ) : existingDraft?.status === "created" ? (
+                ) : existingDraft?.status === "created" ||
+                  existingDraft?.status === "posted" ? (
                   <GrpoDraftBadge draft={existingDraft} existing />
+                ) : automaticStatus || pdf?.status !== "available" ? (
+                  <span className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
+                    {automaticStatus
+                      ? AUTOMATIC_LABEL[automaticStatus]
+                      : pdf?.status === "missing"
+                        ? "No PDF attached"
+                        : "PDF check unavailable"}
+                  </span>
                 ) : (
-                  <div className="space-y-2">
-                    {pdf?.status !== "available" ? (
-                      <span className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
-                        {pdf?.status === "missing"
-                          ? "No PDF attached"
-                          : "PDF check unavailable"}
-                      </span>
-                    ) : null}
-                    <Button
-                      disabled={busy || pdf?.status !== "available"}
-                      onClick={onImport}
-                      variant="outline"
-                      title={
-                        pdf?.status === "missing"
-                          ? "No PDF is attached to this GRPO in SAP."
-                          : pdf?.status !== "available"
-                            ? "Refresh to check PDF availability in SAP."
-                            : undefined
-                      }
-                      className="h-auto whitespace-normal py-2 text-xs"
-                    >
-                      {progress ?? "Download & analyze"}
-                    </Button>
-                  </div>
+                  <Button
+                    disabled={busy}
+                    onClick={onImport}
+                    variant="outline"
+                    className="h-auto whitespace-normal py-2 text-xs"
+                  >
+                    {progress ?? "Download & analyze"}
+                  </Button>
                 )}
               </td>
             ) : null}
@@ -754,6 +759,9 @@ export function OpenGrpoList() {
                 upload={data?.uploads[String(record.docEntry)]}
                 pdf={data?.pdfs?.[String(record.docEntry)]}
                 existingDraft={data?.drafts?.[String(record.docEntry)]}
+                automaticStatus={
+                  data?.automaticStatuses?.[String(record.docEntry)]
+                }
                 busy={busyEntry !== null}
                 progress={busyEntry === record.docEntry ? progress : null}
                 onImport={() => void importReceipt(String(record.docEntry))}

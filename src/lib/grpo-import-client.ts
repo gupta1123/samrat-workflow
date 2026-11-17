@@ -2,6 +2,7 @@ import { apiFetch } from "./api-client";
 import { enqueueCaseAnalysis } from "./case-persistence";
 import type {
   GrpoImportResult,
+  GrpoAutomaticStatus,
   GrpoPdfAvailability,
   GrpoSapDraftState,
   GrpoUploadState,
@@ -13,6 +14,7 @@ type OpenReceiptSnapshot = {
   uploads: Record<string, GrpoUploadState>;
   pdfs: Record<string, GrpoPdfAvailability>;
   drafts: Record<string, GrpoSapDraftState>;
+  automaticStatuses: Record<string, GrpoAutomaticStatus>;
 };
 
 export async function fetchOpenReceiptSnapshot(
@@ -25,6 +27,7 @@ export async function fetchOpenReceiptSnapshot(
   const uploads: OpenReceiptSnapshot["uploads"] = {};
   const pdfs: OpenReceiptSnapshot["pdfs"] = {};
   const drafts: OpenReceiptSnapshot["drafts"] = {};
+  const automaticStatuses: OpenReceiptSnapshot["automaticStatuses"] = {};
   const params = new URLSearchParams({ uploaded: "all", limit: "70" });
   let cursor: number | null = null;
 
@@ -36,8 +39,9 @@ export async function fetchOpenReceiptSnapshot(
       signal,
     });
     const body = (await response.json().catch(() => null)) as
-      | (Omit<OpenReceiptSnapshot, "drafts"> & {
+      | (Omit<OpenReceiptSnapshot, "drafts" | "automaticStatuses"> & {
           drafts?: OpenReceiptSnapshot["drafts"];
+          automaticStatuses?: OpenReceiptSnapshot["automaticStatuses"];
           nextCursor: number | null;
           error?: string;
         })
@@ -68,12 +72,15 @@ export async function fetchOpenReceiptSnapshot(
       const upload = body.uploads[record.docEntry];
       const pdf = body.pdfs[record.docEntry];
       const draft = body.drafts?.[record.docEntry];
+      const automatic = body.automaticStatuses?.[record.docEntry];
       if (upload) uploads[record.docEntry] = upload;
       else delete uploads[record.docEntry];
       if (pdf) pdfs[record.docEntry] = pdf;
       else delete pdfs[record.docEntry];
       if (draft) drafts[record.docEntry] = draft;
       else delete drafts[record.docEntry];
+      if (automatic) automaticStatuses[record.docEntry] = automatic;
+      else delete automaticStatuses[record.docEntry];
     }
     cursor = body.nextCursor;
     onProgress(records.size);
@@ -83,11 +90,18 @@ export async function fetchOpenReceiptSnapshot(
         uploads: { ...uploads },
         pdfs: { ...pdfs },
         drafts: { ...drafts },
+        automaticStatuses: { ...automaticStatuses },
       });
     }
   } while (cursor !== null);
 
-  return { records: [...records.values()], uploads, pdfs, drafts };
+  return {
+    records: [...records.values()],
+    uploads,
+    pdfs,
+    drafts,
+    automaticStatuses,
+  };
 }
 
 type Prepared = Partial<GrpoImportResult> & {

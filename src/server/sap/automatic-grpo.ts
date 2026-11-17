@@ -101,7 +101,7 @@ export function automaticGrpoImportHistory(
   return history;
 }
 
-async function priorImports(
+export async function readAutomaticGrpoImportHistory(
   db: Db,
   company: string,
   entries: number[],
@@ -208,7 +208,7 @@ export async function runAutomaticGrpoIntake(
           !checkAfter.has(Number(r.DocEntry)),
       );
       if (!rows.length) continue;
-      const imports = await priorImports(
+      const imports = await readAutomaticGrpoImportHistory(
         db,
         company,
         rows.map((r) => Number(r.DocEntry)),
@@ -264,7 +264,12 @@ export async function runAutomaticGrpoIntake(
               // Recheck after downloading in case someone imported or restored
               // a case while the attachment was being read.
               const history = (
-                await priorImports(db, company, [entry], config.owner)
+                await readAutomaticGrpoImportHistory(
+                  db,
+                  company,
+                  [entry],
+                  config.owner,
+                )
               ).get(entry);
               if (history?.activeCaseId) {
                 const resume = history.resumeCaseId;
@@ -315,7 +320,12 @@ export async function runAutomaticGrpoIntake(
                 });
               }
               const finalHistory = (
-                await priorImports(db, company, [entry], config.owner)
+                await readAutomaticGrpoImportHistory(
+                  db,
+                  company,
+                  [entry],
+                  config.owner,
+                )
               ).get(entry);
               if (
                 finalHistory?.activeCaseId ||

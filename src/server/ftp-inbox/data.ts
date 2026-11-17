@@ -1,5 +1,7 @@
 import type { FtpInvoiceStatus } from "@/lib/ftp-invoice-inbox";
 import { ApiError } from "@/server/api/helpers";
+import type { AutomaticIntake } from "@/server/automatic-intake";
+import { UPLOAD_LIMITS } from "@/server/uploads";
 
 export const SCAN_INTERVAL_MS = 120_000;
 export const INBOX_PAGE_SIZE = 25;
@@ -33,5 +35,21 @@ export function canAnalyzeInvoice(row: FtpInvoiceRow, userId: string) {
     (row.status === "ready" || row.status === "failed") &&
     (!row.owner_user_id || row.owner_user_id === userId) &&
     (row.present || Boolean(row.case_id))
+  );
+}
+
+export function isAutomaticFtpInvoice(
+  row: FtpInvoiceRow,
+  config: AutomaticIntake | null,
+  now: Date,
+) {
+  return Boolean(
+    config &&
+    row.present &&
+    row.size_bytes > 0 &&
+    row.size_bytes <= UPLOAD_LIMITS.bytes &&
+    Date.parse(row.discovered_at) >= Date.parse(config.fromInstant) &&
+    Date.parse(row.discovered_at) <= now.getTime() &&
+    (!row.owner_user_id || row.owner_user_id === config.owner),
   );
 }
