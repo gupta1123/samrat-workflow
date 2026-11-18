@@ -8,6 +8,7 @@ import {
   HelpCircle,
   LayoutDashboard,
   LogOut,
+  PackageOpen,
   Settings,
   Trash2,
 } from "lucide-react";
@@ -45,6 +46,11 @@ const sections = [
         icon: FolderPlus,
       },
       { href: "/cases", label: "All Cases", icon: FolderOpen },
+      {
+        href: "/sap-inspector/open-grpos",
+        label: "Unbilled Receipts",
+        icon: PackageOpen,
+      },
     ],
   },
   {
