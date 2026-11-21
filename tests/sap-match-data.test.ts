@@ -5,6 +5,7 @@ import {
   computeCaseMatch,
 } from "../src/server/sap/match-data";
 import { serializeFieldsWithLineItems } from "../src/server/line-items";
+import { SapReadAhead } from "../src/server/sap/read-ahead";
 
 // A tiny stand-in for the Supabase query builder: enough for the reads that
 // computeCaseMatch performs.
@@ -172,6 +173,67 @@ const tables = (): Record<string, Array<Record<string, unknown>>> => ({
       sap_item_code: "BW-TW20-091",
     },
   ],
+});
+
+test("prepared SAP reads produce the same final match, while new SAP invoices still block posting", async () => {
+  const data = tables();
+  const source = sapClient();
+  const ahead = new SapReadAhead();
+  const initial = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    client: source as never,
+  });
+  await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    client: source as never,
+    reads: ahead.capture,
+    packet: {
+      documents: data.packet_documents.map((row) => ({
+        ...row,
+        document_type: row.document_type,
+        extracted_fields: row.extracted_fields,
+      })),
+      mismatchAttributions: [],
+    },
+  });
+  const reused = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    client: source as never,
+    reads: ahead.consume,
+  });
+  assert.equal(initial.available, true);
+  assert.equal(reused.available, true);
+  if (!initial.available || !reused.available) return;
+  assert.deepEqual(reused.invoice, initial.invoice);
+  assert.deepEqual(
+    { ...reused.result, checkedAt: null },
+    { ...initial.result, checkedAt: null },
+  );
+  assert.deepEqual(
+    reused.context?.receiptSearch,
+    initial.context?.receiptSearch,
+  );
+  assert.ok(ahead.reusedReads >= 4);
+  assert.equal(reused.context?.checkedAt, ahead.consume.checkedAt!());
+  const duplicate = await computeCaseMatch({
+    db: fakeDb(data) as never,
+    caseRow: CASE,
+    reads: ahead.consume,
+    client: sapClient({
+      findInvoiceByReference: async () => ({ DocEntry: 777, DocNum: 999 }),
+    }) as never,
+  });
+  assert.equal(duplicate.available, true);
+  if (duplicate.available) {
+    assert.equal(duplicate.result.status, "blocked");
+    assert.match(
+      duplicate.result.checks.find((check) => check.id === "dup")!.title,
+      /999/,
+    );
+  }
 });
 
 test("loader finds full Item Master names outside supplier documents without automatically linking them", async () => {

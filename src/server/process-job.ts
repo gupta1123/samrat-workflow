@@ -1,4 +1,8 @@
 import { sapCaseOrigin } from "./sap/config";
+import {
+  discardCaseSapReadAhead,
+  startCaseSapReadAhead,
+} from "./sap/case-read-ahead";
 import { randomUUID } from "node:crypto";
 import type {
   CaseAnalysisMode,
@@ -304,6 +308,8 @@ async function processJob(jobId: string) {
     result: unknown;
     created_at?: string;
   };
+  discardCaseSapReadAhead(job.case_id);
+  let sapReadAhead: ReturnType<typeof startCaseSapReadAhead>;
   const update = async (progress: number, stage: string) => {
     remainingTimeout();
     const result = await db
@@ -386,7 +392,7 @@ async function processJob(jobId: string) {
             .eq("case_id", job.case_id),
           db
             .from("packet_cases")
-            .select("created_at,processing_meta")
+            .select("id,owner_user_id,created_at,processing_meta")
             .eq("id", job.case_id)
             .single(),
           readManifest(),
@@ -437,6 +443,14 @@ async function processJob(jobId: string) {
           comparisonOptions: processed.comparisonOptions,
           checkpoints: checkpoints.store,
           onReviewStage: reportReviewStage,
+          onSourcesReviewed: (sourceDocuments) => {
+            sapReadAhead?.discard();
+            sapReadAhead = startCaseSapReadAhead({
+              db,
+              caseRow: caseOrigin.data,
+              documents: sourceDocuments,
+            });
+          },
         }),
       ),
     );
@@ -773,6 +787,9 @@ async function processJob(jobId: string) {
       },
     });
     if (complete.error) throw complete.error;
+    if (prepared.length === 1 && prepared[0].id === job.case_id)
+      sapReadAhead?.commit();
+    else sapReadAhead?.discard();
     await checkpoints.clearUsed();
     phases.persistResultsMs = Date.now() - saveStartedAt;
     console.info(
@@ -786,6 +803,7 @@ async function processJob(jobId: string) {
     );
     return { skipped: false, caseIds: prepared.map((g) => g.id) };
   } catch (error) {
+    sapReadAhead?.discard();
     const failed = await db.rpc("fail_case_job", {
       p_job: jobId,
       p_worker: worker,

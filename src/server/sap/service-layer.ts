@@ -272,6 +272,7 @@ export async function withSapServiceLayer<T>(
     ) => Promise<Record<string, unknown>[]>;
   }) => Promise<T>,
   environment: SapEnvironment = readSapEnvironment(),
+  options: { signal?: AbortSignal } = {},
 ): Promise<T> {
   const config = readSapServiceConnection(environment);
   let cookie = "";
@@ -292,7 +293,10 @@ export async function withSapServiceLayer<T>(
           ...(cookie ? { Cookie: cookie } : {}),
           ...init.headers,
         },
-        signal: controller.signal,
+        signal:
+          options.signal && path !== "/Logout"
+            ? AbortSignal.any([controller.signal, options.signal])
+            : controller.signal,
         cache: "no-store",
       });
       const body = (await response.json().catch(() => ({}))) as Record<

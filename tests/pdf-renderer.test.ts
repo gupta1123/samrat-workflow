@@ -2,11 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
 import { PDFDocument, degrees } from "pdf-lib";
+import { createCanvas } from "@napi-rs/canvas";
 import { samplePdf } from "./pdf-fixture";
 import {
   pdfTextPages,
   renderPdfPages,
   withPdfSource,
+  loadPdf,
 } from "../src/server/processing/pdf-renderer";
 test("PDF text and native rendering handle all pages without Poppler", async () => {
   const bytes = samplePdf(2);
@@ -52,4 +54,95 @@ test("reusing the PDF for text and images preserves every page, including sidewa
     images: await source.renderPages(40, capture),
   }));
   assert.deepEqual(combined, separate);
+});
+
+// Reference renderer from the pre-optimization implementation. Comparing its
+// actual output catches changed pixels, encoding, scaling and page rotation.
+async function originalSequentialImages(bytes: Uint8Array) {
+  const pdf = await loadPdf(bytes);
+  const images: Buffer[] = [];
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      const page = await pdf.getPage(pageNumber);
+      const normal = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({
+        scale: Math.min(160 / 72, 3200 / Math.max(normal.width, normal.height)),
+      });
+      const canvas = createCanvas(
+        Math.ceil(viewport.width),
+        Math.ceil(viewport.height),
+      );
+      try {
+        await page.render({
+          canvasContext: canvas.getContext(
+            "2d",
+          ) as unknown as CanvasRenderingContext2D,
+          viewport,
+        }).promise;
+        images.push(canvas.toBuffer("image/png"));
+      } finally {
+        page.cleanup();
+        canvas.width = 1;
+        canvas.height = 1;
+      }
+    }
+    return images;
+  } finally {
+    await pdf.destroy();
+  }
+}
+
+test("bounded parallel preparation preserves the exact original PNG bytes and delivery order", async () => {
+  const pdf = await PDFDocument.load(samplePdf(5));
+  pdf.getPage(1).setRotation(degrees(90));
+  pdf.getPage(2).setRotation(degrees(180));
+  pdf.getPage(3).setRotation(degrees(270));
+  pdf.getPage(4).setSize(842, 595);
+  const raster = await sharp({
+    create: { width: 620, height: 420, channels: 3, background: "#badcfe" },
+  })
+    .png()
+    .toBuffer();
+  const image = await pdf.embedPng(raster);
+  pdf.getPage(4).drawImage(image, { x: 100, y: 100, width: 620, height: 420 });
+  const bytes = await pdf.save();
+  const expected = await originalSequentialImages(bytes);
+  for (const concurrency of [1, 2, 4]) {
+    const order: number[] = [];
+    const actual = await renderPdfPages(
+      bytes,
+      40,
+      async (image, page) => {
+        order.push(page);
+        await new Promise((resolve) => setImmediate(resolve));
+        return Buffer.from(image);
+      },
+      { concurrency },
+    );
+    assert.deepEqual(order, [1, 2, 3, 4, 5]);
+    assert.deepEqual(actual, expected);
+  }
+});
+
+test("a failed downstream page drains preparation before closing the PDF", async () => {
+  const delivered: number[] = [];
+  await assert.rejects(
+    renderPdfPages(
+      samplePdf(5),
+      40,
+      async (_image, page) => {
+        delivered.push(page);
+        throw new Error("Orientation callback failed");
+      },
+      { concurrency: 2 },
+    ),
+    /Orientation callback failed/,
+  );
+  assert.deepEqual(delivered, [1]);
+  const next = await renderPdfPages(
+    samplePdf(2),
+    40,
+    async (_image, page) => page,
+  );
+  assert.deepEqual(next, [1, 2]);
 });

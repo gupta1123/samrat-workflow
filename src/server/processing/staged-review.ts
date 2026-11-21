@@ -1323,6 +1323,7 @@ export async function reviewExtractedDocumentsInStages(
     comparisonOptions?: unknown;
     checkpoints?: ReviewCheckpointStore;
     onReviewStage?: (progress: number, stage: string) => Promise<void>;
+    onSourcesReviewed?: (documents: CaseDoc[]) => void;
   },
 ) {
   if (process.env.PACKET_EXTRACTION_REVIEW_ENABLED === "false")
@@ -1613,6 +1614,23 @@ export async function reviewExtractedDocumentsInStages(
     };
   };
   for (let pass = 0; pass < 2; pass++) {
+    if (
+      sourceReviews.every(
+        (source) =>
+          source.audit.status === "verified" ||
+          source.audit.status === "corrected",
+      )
+    ) {
+      try {
+        options.onSourcesReviewed?.(structuredClone(currentDocuments));
+      } catch {
+        // Speculative read-only preparation is never part of the AI contract.
+        // Its failure cannot skip, change or fail the authoritative review.
+        console.warn(
+          "Source-review preparation unavailable; continuing normal verification.",
+        );
+      }
+    }
     await report(94, "Pro reviewer reconciling the whole verified packet");
     const preliminary = verifyProcessedDocuments(
       currentDocuments,

@@ -45,41 +45,80 @@ export async function loadPdf(data: Uint8Array) {
 }
 type PdfDocument = Awaited<ReturnType<typeof loadPdf>>;
 
+export type PdfRenderOptions = { concurrency?: number };
+
+async function renderPage(pdf: PdfDocument, pageNumber: number) {
+  const page = await pdf.getPage(pageNumber);
+  const normal = page.getViewport({ scale: 1 });
+  const scale = Math.min(
+    160 / 72,
+    3200 / Math.max(normal.width, normal.height),
+  );
+  const viewport = page.getViewport({ scale });
+  const canvas = createCanvas(
+    Math.ceil(viewport.width),
+    Math.ceil(viewport.height),
+  );
+  try {
+    await page.render({
+      canvasContext: canvas.getContext(
+        "2d",
+      ) as unknown as CanvasRenderingContext2D,
+      viewport,
+    }).promise;
+    // PNG encoding runs on the native thread pool. Keep the same lossless
+    // format, dimensions and renderer while the next page is being prepared.
+    return await canvas.encode("png");
+  } finally {
+    page.cleanup();
+    canvas.width = 1;
+    canvas.height = 1;
+  }
+}
+
 async function renderPages<T>(
   pdf: PdfDocument,
   maxPages: number,
   onPage: (bytes: Uint8Array, page: number) => Promise<T>,
+  options: PdfRenderOptions = {},
 ) {
   const images: T[] = [];
   checkPageLimit(pdf, maxPages);
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const normal = page.getViewport({ scale: 1 });
-    const scale = Math.min(
-      160 / 72,
-      3200 / Math.max(normal.width, normal.height),
-    );
-    const viewport = page.getViewport({ scale });
-    const canvas = createCanvas(
-      Math.ceil(viewport.width),
-      Math.ceil(viewport.height),
-    );
-    let bytes: Uint8Array;
-    try {
-      await page.render({
-        canvasContext: canvas.getContext(
-          "2d",
-        ) as unknown as CanvasRenderingContext2D,
-        viewport,
-      }).promise;
-      bytes = canvas.toBuffer("image/png");
-    } finally {
-      page.cleanup();
-      canvas.width = 1;
-      canvas.height = 1;
+  const configured =
+    options.concurrency ??
+    Number(process.env.PACKET_PDF_RENDER_CONCURRENCY ?? 2);
+  const concurrency = Math.min(4, Math.max(1, Math.floor(configured) || 1));
+  type Prepared =
+    { bytes: Uint8Array; error?: never } | { error: unknown; bytes?: never };
+  const pending = new Map<number, Promise<Prepared>>();
+  let nextPage = 1;
+  const prepare = () => {
+    while (pending.size < concurrency && nextPage <= pdf.numPages) {
+      const pageNumber = nextPage++;
+      // Capture failures immediately, including pages whose turn has not
+      // arrived yet. The PDF must stay alive until all render tasks drain.
+      pending.set(
+        pageNumber,
+        renderPage(pdf, pageNumber).then(
+          (bytes) => ({ bytes }),
+          (error: unknown) => ({ error }),
+        ),
+      );
     }
-    // The encoded PNG is independent; free native pixels before downstream AI work.
-    images.push(await onPage(bytes, i));
+  };
+  prepare();
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      const prepared = await pending.get(pageNumber)!;
+      pending.delete(pageNumber);
+      if (!prepared.bytes) throw prepared.error;
+      // Delivery stays strictly ordered: orientation checks and downstream
+      // document recognition receive the same page sequence as before.
+      images.push(await onPage(prepared.bytes, pageNumber));
+      prepare();
+    }
+  } finally {
+    await Promise.all(pending.values());
   }
   return images;
 }
@@ -118,6 +157,7 @@ type PdfSource = {
   renderPages: <T>(
     maxPages: number,
     onPage: (bytes: Uint8Array, page: number) => Promise<T>,
+    options?: PdfRenderOptions,
   ) => Promise<T[]>;
 };
 
@@ -136,9 +176,9 @@ export async function withPdfSource<T>(
   try {
     return await processSource({
       textPages: (limit) => readTextPages(pdf, limit),
-      renderPages: async (limit, onPage) => {
+      renderPages: async (limit, onPage, options) => {
         try {
-          return await renderPages(pdf, limit, onPage);
+          return await renderPages(pdf, limit, onPage, options);
         } finally {
           await dispose();
         }
@@ -153,8 +193,11 @@ export function renderPdfPages<T>(
   data: Uint8Array,
   maxPages: number,
   onPage: (bytes: Uint8Array, page: number) => Promise<T>,
+  options?: PdfRenderOptions,
 ) {
-  return withPdfSource(data, (source) => source.renderPages(maxPages, onPage));
+  return withPdfSource(data, (source) =>
+    source.renderPages(maxPages, onPage, options),
+  );
 }
 
 export function pdfTextPages(data: Uint8Array, maxPages = 40) {

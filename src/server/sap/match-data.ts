@@ -37,7 +37,15 @@ import {
 import type { withSapServiceLayer } from "./service-layer";
 
 type Db = ReturnType<typeof createSupabaseAdminClient>;
-type Client = Parameters<Parameters<typeof withSapServiceLayer>[0]>[0];
+export type CaseMatchClient = Parameters<
+  Parameters<typeof withSapServiceLayer>[0]
+>[0];
+type Client = CaseMatchClient;
+
+export type CaseMatchReads = {
+  clientForInvoice: (invoice: MatchInvoice, client: Client) => Client;
+  checkedAt?: () => string | undefined;
+};
 
 type StoredMismatchAttribution = {
   field_name: unknown;
@@ -326,6 +334,12 @@ export async function saveItemMapping(
 export async function computeCaseMatch(params: {
   db: Db;
   client: Client;
+  /** Provisional, source-reviewed input for read-only preparation. Never saved here. */
+  packet?: {
+    documents: Parameters<typeof buildMatchInvoice>[0]["documents"];
+    mismatchAttributions: StoredMismatchAttribution[];
+  };
+  reads?: CaseMatchReads;
   environment?: SapEnvironment;
   caseRow: {
     id: string;
@@ -337,24 +351,28 @@ export async function computeCaseMatch(params: {
   const { db, caseRow, environment = readSapEnvironment() } = params;
   const timings: Timings = [];
   const runStarted = Date.now();
-  const client = timedClient(params.client, timings);
   const mark = (step: string, since: number) =>
     timings.push({ step, ms: Date.now() - since });
   const packetStarted = Date.now();
-  const [documents, mismatchAttributions] = await Promise.all([
-    db
-      .from("packet_documents")
-      .select(
-        "client_document_id, document_type, extracted_fields, source_file_name, source_hint",
-      )
-      .eq("case_id", caseRow.id)
-      .order("created_at"),
-    db
-      .from("packet_mismatches")
-      .select("field_name, values_json, resolution_status")
-      .eq("case_id", caseRow.id)
-      .eq("field_name", UNRELATED_DOCUMENT_FIELD),
-  ]);
+  const [documents, mismatchAttributions] = params.packet
+    ? [
+        { data: params.packet.documents, error: null },
+        { data: params.packet.mismatchAttributions, error: null },
+      ]
+    : await Promise.all([
+        db
+          .from("packet_documents")
+          .select(
+            "client_document_id, document_type, extracted_fields, source_file_name, source_hint",
+          )
+          .eq("case_id", caseRow.id)
+          .order("created_at"),
+        db
+          .from("packet_mismatches")
+          .select("field_name, values_json, resolution_status")
+          .eq("case_id", caseRow.id)
+          .eq("field_name", UNRELATED_DOCUMENT_FIELD),
+      ]);
   dbCheck(documents.error);
   dbCheck(mismatchAttributions.error);
   const outlierIds = authoritativeOutlierDocumentIds(
@@ -390,6 +408,13 @@ export async function computeCaseMatch(params: {
         "Invoice item extraction is incomplete: no product rows were saved. Review the invoice and analyze the case again before SAP matching.",
     };
   }
+
+  // Only read-only background matching opts into read-ahead. Draft creation
+  // and all callers without this option continue to use fresh SAP requests.
+  const client = timedClient(
+    params.reads?.clientForInvoice(invoice, params.client) ?? params.client,
+    timings,
+  );
 
   mark("db.packet", packetStarted);
   const [rules, state] = await Promise.all([
@@ -830,7 +855,7 @@ export async function computeCaseMatch(params: {
     itemMappingScopes,
     itemMappingConflicts,
     receiptItemSuggestions,
-    checkedAt: new Date().toISOString(),
+    checkedAt: params.reads?.checkedAt?.() ?? new Date().toISOString(),
     ambiguousVendors: ambiguous,
     vendorKey: keys[0] ?? null,
     suppliersRead,

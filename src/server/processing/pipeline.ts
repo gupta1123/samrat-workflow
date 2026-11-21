@@ -216,6 +216,29 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+async function measurePdfStage<T>(
+  fileName: string,
+  stage: string,
+  work: () => Promise<T>,
+) {
+  const startedAt = Date.now();
+  try {
+    return await work();
+  } finally {
+    const finishedAt = Date.now();
+    console.info(
+      JSON.stringify({
+        scope: "pdf-stage-timing",
+        fileName,
+        stage,
+        startedAt,
+        finishedAt,
+        durationMs: finishedAt - startedAt,
+      }),
+    );
+  }
+}
+
 const SUPPORTED_DOC_TYPES: DocType[] = [
   "Purchase Order",
   "Amended Purchase Order",
@@ -11497,11 +11520,16 @@ export async function extractPdfPacketDocuments(params: {
     if (pageImages.length) return Promise.resolve(pageImages);
     if (pageImageRequest) return pageImageRequest;
 
-    pageImageRequest = renderPdfToImagePages(params.bytes, {
-      maxPages: PDF_SMART_SPLIT_MAX_PAGES,
-      sourceName: params.fileName,
-      renderPages: params.renderPages,
-    })
+    pageImageRequest = measurePdfStage(
+      params.fileName,
+      "page-preparation",
+      () =>
+        renderPdfToImagePages(params.bytes, {
+          maxPages: PDF_SMART_SPLIT_MAX_PAGES,
+          sourceName: params.fileName,
+          renderPages: params.renderPages,
+        }),
+    )
       .then((rendered) => {
         pageImages = rendered;
         return rendered;
@@ -11524,31 +11552,35 @@ export async function extractPdfPacketDocuments(params: {
     return pageImageRequest;
   };
 
-  if (!hasMeaningfulTextPages(params.textPages)) {
-    pageImages = await loadPageImages();
-  }
-
-  const groups = await splitPdfIntoDocumentGroups({
-    fileName: params.fileName,
-    textPages: params.textPages,
-    pageImages,
-    loadPageImages,
-  });
+  // Preparation also happens before splitting inside the existing loader.
+  // Await it explicitly so each timer measures its own stage.
   const sourceImages = await loadPageImages();
+  const groups = await measurePdfStage(
+    params.fileName,
+    "document-splitting",
+    () =>
+      splitPdfIntoDocumentGroups({
+        fileName: params.fileName,
+        textPages: params.textPages,
+        pageImages: sourceImages,
+      }),
+  );
   const [documents, reviewImages] = await Promise.all([
-    extractPdfDocumentGroups({
-      fileName: params.fileName,
-      textPages: params.textPages,
-      pageImages: sourceImages,
-      loadPageImages,
-      groups,
-      onGroupProgress: ({ current, total, group }) =>
-        params.onGroupProgress?.({
-          current,
-          total,
-          documentType: group.documentType,
-        }),
-    }),
+    measurePdfStage(params.fileName, "document-extraction", () =>
+      extractPdfDocumentGroups({
+        fileName: params.fileName,
+        textPages: params.textPages,
+        pageImages: sourceImages,
+        loadPageImages,
+        groups,
+        onGroupProgress: ({ current, total, group }) =>
+          params.onGroupProgress?.({
+            current,
+            total,
+            documentType: group.documentType,
+          }),
+      }),
+    ),
     params.compactReviewImages
       ? prepareAuthoritativeReviewImages(sourceImages, params.fileName)
       : sourceImages,

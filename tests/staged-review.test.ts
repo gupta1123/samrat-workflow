@@ -974,6 +974,97 @@ function response(payload: unknown, finish_reason = "stop") {
   });
 }
 
+test("read-only preparation starts after source verification without changing any AI request or reviewed result", async (t) => {
+  const { reviewExtractedDocumentsInStages } =
+    await import("../src/server/processing/staged-review");
+  const payloads = await Promise.all(documents.map(compact));
+  let requests: unknown[] = [];
+  let holdSource = false;
+  let sourceCalls = 0,
+    packetCalls = 0;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      requests.push(body);
+      const name = body.response_format.json_schema.name;
+      const context = JSON.parse(body.messages[1].content[0].text);
+      if (name === "source_document_review") {
+        sourceCalls++;
+        const index = context.sourcePageNumbers[0] - 1;
+        return response(
+          holdSource && index === 1
+            ? { ...payloads[index], sourceVerdict: "needs_review" }
+            : payloads[index],
+        );
+      }
+      if (name === "packet_reconciliation") {
+        packetCalls++;
+        return response(packet());
+      }
+      return response({
+        mismatchDecisions: context.requestedCandidates.map(
+          (candidate: { mismatchId: string }) => ({
+            mismatchId: candidate.mismatchId,
+            status: "dismissed",
+            primary: false,
+            outlierDocumentIds: [],
+            reason: "No source-proved difference.",
+          }),
+        ),
+      });
+    },
+  );
+  const baseline = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+  });
+  const baselineRequests = requests;
+  requests = [];
+  sourceCalls = 0;
+  packetCalls = 0;
+  let observed = 0;
+  let observation: unknown;
+  const optimized = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+    onSourcesReviewed: (verified) => {
+      observed++;
+      observation = {
+        sourceCalls,
+        packetCalls,
+        removedReference: verified[1].fields.referenceInvoiceNumber,
+      };
+      verified[0].fields.vendorName = "Mutation must never reach AI";
+      throw new Error("Speculative SAP read is unavailable");
+    },
+  });
+  assert.equal(observed, 1);
+  assert.deepEqual(observation, {
+    sourceCalls: documents.length,
+    packetCalls: 0,
+    removedReference: undefined,
+  });
+  assert.deepEqual(requests, baselineRequests);
+  assert.deepEqual(optimized.documents, baseline.documents);
+  assert.deepEqual(optimized.authoritativeReview, baseline.authoritativeReview);
+  assert.deepEqual(optimized.pageQuality, baseline.pageQuality);
+  assert.deepEqual(optimized.reviewIssues, baseline.reviewIssues);
+  holdSource = true;
+  observed = 0;
+  const held = await reviewExtractedDocumentsInStages(documents, {
+    sourcePages: pages,
+    onSourcesReviewed: () => {
+      observed++;
+    },
+  });
+  assert.equal(
+    observed,
+    0,
+    "Unverified sources must never start SAP preparation",
+  );
+  assert.equal(held.review.verdict, "needs_review");
+});
+
 test("whole-packet review returns a validated invoice assembly without rewriting page observations", async (t) => {
   const { reviewExtractedDocumentsInStages } =
     await import("../src/server/processing/staged-review");

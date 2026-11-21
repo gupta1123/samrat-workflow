@@ -16,6 +16,7 @@ import { reviewFlowOf } from "@/lib/sap-match/review-flow";
 import { computeCaseMatch, loadMatchState, type CaseMatch } from "./match-data";
 import { settleLogisticsForPoLineCase } from "./settle-logistics";
 import { withSapServiceLayer } from "./service-layer";
+import { takeCaseSapReadAhead } from "./case-read-ahead";
 
 export type SapMatchJobStatus =
   "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -119,16 +120,28 @@ export async function processSapMatchJob(caseId: string) {
     const sapEnv = requireActiveSapCase(
       sapCaseOrigin(row.data.created_at, row.data.processing_meta),
     );
-    const match = await withSapServiceLayer(
-      (client) =>
-        computeCaseMatch({
-          db,
-          client,
-          caseRow: row.data!,
-          environment: sapEnv,
-        }),
-      sapEnv,
-    );
+    const readAhead = takeCaseSapReadAhead(row.data, sapEnv);
+    let match: CaseMatch;
+    try {
+      match = await withSapServiceLayer(
+        (client) =>
+          computeCaseMatch({
+            db,
+            client,
+            caseRow: row.data!,
+            environment: sapEnv,
+            reads: readAhead?.reads,
+          }),
+        sapEnv,
+      );
+    } finally {
+      if (readAhead)
+        console.info("SAP read-ahead", {
+          caseId,
+          reusedReads: readAhead.reusedReads(),
+        });
+      readAhead?.dispose();
+    }
     const result = { ...match, sapEnv };
     if ("timings" in result && result.timings)
       console.info("SAP match timings", { caseId, timings: result.timings });
