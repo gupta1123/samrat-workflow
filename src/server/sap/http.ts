@@ -1,18 +1,30 @@
 import { ProxyAgent, fetch as undiciFetch, request } from "undici";
+import {
+  readStaticEgressProxy,
+  type StaticEgressProxy,
+} from "@/server/static-egress";
 
 let proxyUrl: string | null = null;
+let proxyCa: string | null = null;
 let proxyAgent: ProxyAgent | null = null;
 
-function readProxyUrl(): string | null {
-  const value = (process.env.QUOTAGUARDSTATIC_URL ?? "").trim();
-  return value || null;
-}
-
-function dispatcherFor(url: string): ProxyAgent {
-  if (!proxyAgent || proxyUrl !== url) {
+function dispatcherFor(proxy: StaticEgressProxy): ProxyAgent {
+  const url = proxy.url.href;
+  if (!proxyAgent || proxyUrl !== url || proxyCa !== proxy.ca) {
     proxyAgent?.close().catch(() => undefined);
     proxyUrl = url;
-    proxyAgent = new ProxyAgent(url);
+    proxyCa = proxy.ca;
+    proxyAgent = new ProxyAgent({
+      uri: url,
+      ...(proxy.custom
+        ? {
+            proxyTls: {
+              rejectUnauthorized: true,
+              ...(proxy.ca ? { ca: proxy.ca } : {}),
+            },
+          }
+        : {}),
+    });
   }
   return proxyAgent;
 }
@@ -25,10 +37,10 @@ export function sapFetch(
   input: string | URL,
   init: RequestInit = {},
 ): Promise<globalThis.Response> {
-  const url = readProxyUrl();
+  const proxy = readStaticEgressProxy();
   const proxyInit = {
     ...init,
-    ...(url ? { dispatcher: dispatcherFor(url) } : {}),
+    ...(proxy ? { dispatcher: dispatcherFor(proxy) } : {}),
   } as unknown as Parameters<typeof undiciFetch>[1];
 
   return undiciFetch(
@@ -38,7 +50,7 @@ export function sapFetch(
 }
 
 export function isSapStaticEgressConfigured(): boolean {
-  return readProxyUrl() !== null;
+  return readStaticEgressProxy() !== null;
 }
 
 /** Server-side download: fetch rejects the client's HTTPS port 5061 as a bad port. */
@@ -46,7 +58,7 @@ export async function sapAttachmentDownload(
   url: string,
   authorization: string,
 ) {
-  const proxy = readProxyUrl();
+  const proxy = readStaticEgressProxy();
   const response = await request(url, {
     method: "GET",
     headers: { Authorization: authorization, Accept: "application/zip" },

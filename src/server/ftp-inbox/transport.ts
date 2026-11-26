@@ -1,6 +1,10 @@
 import { execFile } from "node:child_process";
 import { parseList } from "basic-ftp";
 import { UPLOAD_LIMITS } from "@/server/uploads";
+import {
+  proxyCertificateFile,
+  readStaticEgressProxy,
+} from "@/server/static-egress";
 
 export type RemoteInvoice = {
   name: string;
@@ -63,10 +67,14 @@ export function createInvoiceFtp(): InvoiceFtp {
   )
     throw new InboxFtpError("FTP connection settings are incomplete.");
 
-  const proxy =
+  const egress =
     process.env.FTP_INBOX_USE_STATIC_PROXY === "true"
-      ? new URL(process.env.QUOTAGUARDSTATIC_URL ?? "")
+      ? readStaticEgressProxy()
       : null;
+  if (process.env.FTP_INBOX_USE_STATIC_PROXY === "true" && !egress)
+    throw new InboxFtpError("The secure connection settings are incomplete.");
+  const proxy = egress?.url;
+  const secureProxy = egress?.custom === true;
   // FTP uses two connections per transfer. Pin both to one QuotaGuard
   // gateway, then try the other gateway if that transfer fails.
   const staticGateway = proxy?.hostname.match(
@@ -88,6 +96,8 @@ export function createInvoiceFtp(): InvoiceFtp {
     "--ftp-skip-pasv-ip",
     "--noproxy",
     "",
+    ...(secureProxy ? ["--proxytunnel", "--suppress-connect-headers"] : []),
+    ...(egress?.ca ? ["--proxy-cacert", proxyCertificateFile(egress.ca)] : []),
     ...(mode === "ftps" ? ["--ssl-reqd"] : []),
   ];
   const config = [
@@ -115,7 +125,11 @@ export function createInvoiceFtp(): InvoiceFtp {
         [
           ...args,
           "--proxy",
-          gateway ? `socks5h://${gateway}:1080` : "",
+          secureProxy
+            ? proxy!.origin
+            : gateway
+              ? `socks5h://${gateway}:1080`
+              : "",
           "--max-time",
           String(seconds),
           ...extra,
@@ -151,7 +165,9 @@ export function createInvoiceFtp(): InvoiceFtp {
     for (let attempt = 1; ; attempt++) {
       try {
         return await run(
-          !staticGateway && attempt === 2 ? ["--disable-epsv", ...extra] : extra,
+          !staticGateway && attempt === 2
+            ? ["--disable-epsv", ...extra]
+            : extra,
           maxBuffer,
           seconds,
           dataGateways[(attempt - 1) % dataGateways.length],
