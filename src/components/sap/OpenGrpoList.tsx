@@ -544,11 +544,11 @@ export function OpenGrpoList() {
           },
         );
         if (active) setData(snapshot);
-      } catch (failure) {
+      } catch {
         if (active && !controller.signal.aborted) {
           setData(null);
           setError(
-            failure instanceof Error ? failure.message : "Could not read SAP.",
+            "We couldn’t load your receipts right now. Please try again later.",
           );
         }
       } finally {
