@@ -13,6 +13,30 @@ Provisioned on 26 November 2026:
 - Budget alert: $5/month, notifications at 50%, 75%, 90%, 100%. Notifications
   do not cap charges or stop the gateway.
 
+## Completed production cutover — 26 November 2026
+
+Client IT approved the fixed IP. Verified through the new gateway:
+
+- Production SAP API reads, Service Layer authentication and a receipt read.
+- A valid production PDF download, without importing a case.
+- FTP `/prod/in` and `/prod/archive` listings and a PDF download from the archive.
+  The verification probes did not move files or create cases.
+- Legacy/Test API reads and Service Layer authentication, so older cases keep
+  their existing SAP company routing.
+- Live Chrome receipts page: SAP rows loaded and the FTP check refreshed to
+  the current date without the connection error.
+
+The production website and worker now use the gateway. The old paid QuotaGuard
+add-on has been removed after a queued analysis job and its SAP matching job
+finished. No manual edits to case contents were required. Extraction rules,
+matching logic and SAP posting behavior were not changed by this cutover.
+
+Application code: `8159376685860e3e8d0c601afd0ed018d1938fbe`.
+Netlify cutover deployment: `6b085e64ca62ad8f90a9f38e`.
+Private rollback/configuration backups remain in the local private directory
+below. Local connection verification records are in
+`output/audit/digitalocean-gateway-20261126/` and contain no credentials.
+
 ## Connection and security
 
 The gateway forwards bytes; it does not parse invoices, run AI, change SAP
@@ -63,10 +87,11 @@ The FTP code uses HTTPS CONNECT for the custom gateway, including passive data
 connections. The existing QuotaGuard SOCKS gateway behavior is preserved when
 the replacement URL is absent.
 
-If `STATIC_EGRESS_PROXY_URL` is absent, SAP/FTP retain the existing
-`QUOTAGUARDSTATIC_URL` route. Merely deploying gateway support does not switch
-traffic. If a configured gateway fails, requests fail rather than bypassing it
-over a direct connection.
+The code supports `QUOTAGUARDSTATIC_URL` as a migration fallback when the
+replacement URL is absent. That fallback is no longer configured in the live
+app after retiring the old add-on. Keep the replacement gateway URL and CA
+configured. If a configured gateway fails, requests fail rather than bypassing
+it over a direct connection.
 
 ## Deployment and cutover checklist
 
@@ -89,9 +114,12 @@ over a direct connection.
    remove the old paid add-on in a separate deliberate step; do not remove
    rollback configuration before the new route is proven.
 
-Rollback: unset both `STATIC_EGRESS_PROXY_*` variables and redeploy/restart. This
-restores the old route, but QuotaGuard's existing account suspension must also
-be resolved for that route to work.
+After retirement, **do not unset the gateway variables as a rollback**: the old
+QuotaGuard account is unavailable. Recover this gateway from its backup or
+repair its configuration while retaining the approved IP. If a new IP is
+needed, have client IT approve it before switching. Application rollback must
+retain/reapply the new gateway URL and CA and use a code version with gateway
+support; older deployment snapshots may contain the retired proxy settings.
 
 ## Maintenance
 
