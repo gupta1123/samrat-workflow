@@ -39,6 +39,7 @@ type Shared = {
 
 export type SapMatchUnavailable = Shared & {
   available: false;
+  recoveryAction?: "reanalyze";
   reason?: string;
   sapError?: string;
 };

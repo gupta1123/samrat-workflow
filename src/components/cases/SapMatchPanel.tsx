@@ -69,6 +69,11 @@ import { ReviewHeader } from "./sap-match/ReviewHeader";
 import { reviewModel } from "@/lib/sap-match/review-model";
 import { isPoLineReviewLine } from "@/lib/sap-match/non-stock-po-review";
 import { RecordedInvoiceReview } from "./sap-match/RecordedInvoiceReview";
+import {
+  needsInvoiceVerification,
+  retryInvoiceVerification,
+} from "@/lib/sap-match-recovery";
+import { getFriendlyAnalysisStartError } from "@/lib/analysis-start";
 
 const STATUS: Record<
   MatchStatus,
@@ -513,23 +518,65 @@ export function SapMatchPanel({
   }
 
   if (!data.available) {
-    const message = data.reason ?? "No SAP match is available for this case.";
-    // An extraction problem, not a missing SAP document: checking SAP again cannot fix it.
-    const needsReanalysis = message.includes("invoice assembly");
+    const needsReanalysis = needsInvoiceVerification(data);
+    const message = needsReanalysis
+      ? "We couldn’t finish verifying some invoice details. Reanalyse the invoice to continue matching with SAP."
+      : (data.reason ?? "No SAP match is available for this case.");
     const title = needsReanalysis
-      ? "Invoice pages not assembled"
+      ? "Invoice needs another check"
       : "No SAP match";
-    const hint = needsReanalysis
-      ? "Checking SAP again will not fix this. Run the case analysis again from the case page."
-      : null;
+    const recoveryControl = needsReanalysis ? (
+      data.caseStatus === "completed" ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          className="h-7 px-2.5 text-[11px]"
+          onClick={async () => {
+            setBusy(true);
+            setActionError(null);
+            try {
+              await retryInvoiceVerification(caseId);
+              window.location.assign(`/cases/${caseId}`);
+            } catch (error) {
+              setActionError(getFriendlyAnalysisStartError(error));
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3 w-3" />
+          )}
+          {busy ? "Starting check…" : "Reanalyse invoice"}
+        </Button>
+      ) : (
+        <Button
+          asChild
+          size="sm"
+          variant="outline"
+          className="h-7 px-2.5 text-[11px]"
+        >
+          <Link href={`/cases/${caseId}`}>Review case</Link>
+        </Button>
+      )
+    ) : null;
     if (variant === "sidebar") {
       return (
         <div className="px-4 py-4">
           <div className="text-[11px] font-medium text-[#3d3530]">{title}</div>
           <div className="mt-0.5 text-[11px] leading-4 text-[#8a7f72]">
             {message}
-            {hint ? ` ${hint}` : ""}
           </div>
+          {recoveryControl ? (
+            <div className="mt-3">{recoveryControl}</div>
+          ) : null}
+          {actionError ? (
+            <div role="alert" className="mt-2 text-[11px] text-[#b3261e]">
+              {actionError}
+            </div>
+          ) : null}
         </div>
       );
     }
@@ -548,25 +595,20 @@ export function SapMatchPanel({
             <div className="text-[12px] font-semibold text-[#3d3530]">
               {title}
             </div>
-            <div className="mt-0.5 text-[11px] text-[#8a7f72]">
-              {message}
-              {hint ? ` ${hint}` : ""}
-            </div>
-            {data.sapError ? (
+            <div className="mt-0.5 text-[11px] text-[#8a7f72]">{message}</div>
+            {actionError ? (
+              <div role="alert" className="mt-2 text-[11px] text-[#b3261e]">
+                {actionError}
+              </div>
+            ) : null}
+            {data.sapError && !needsReanalysis ? (
               <div className="mt-1 break-words text-[10px] text-[#b3261e]">
                 {data.sapError}
               </div>
             ) : null}
           </div>
           {needsReanalysis ? (
-            <Button
-              asChild
-              size="sm"
-              variant="outline"
-              className="h-7 px-2.5 text-[11px]"
-            >
-              <Link href={`/cases/${caseId}`}>Review case</Link>
-            </Button>
+            recoveryControl
           ) : (
             <Button
               size="sm"

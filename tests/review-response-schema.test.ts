@@ -93,3 +93,41 @@ test("provider schema keeps the review contract without unsupported or expansive
     120,
   );
 });
+
+test("reference discovery uses one small typed dictionary without expanding every original reference in provider grammar", () => {
+  const proof = {
+    type: "object",
+    properties: {
+      value: { type: ["string", "null"] },
+      quote: { type: "string" },
+    },
+    required: ["value", "quote"],
+    additionalProperties: false,
+  };
+  const originals = Array.from({ length: 80 }, (_, i) => `reference${i}`);
+  const referenceSchema = {
+    type: "object",
+    properties: Object.fromEntries(originals.map((key) => [key, proof])),
+    required: originals,
+    additionalProperties: proof,
+  };
+  const compact = compactReviewProviderSchema(
+    {
+      type: "object",
+      properties: { references: referenceSchema },
+      required: ["references"],
+    },
+    [],
+  );
+  assert.deepEqual(compact, {
+    type: "object",
+    properties: { references: { type: "object", additionalProperties: proof } },
+    required: ["references"],
+  });
+  // The server contract still requires explicit readings of every original.
+  assert.equal(referenceSchema.required.length, 80);
+  assert.ok(
+    JSON.stringify(compact).length <
+      JSON.stringify(referenceSchema).length / 10,
+  );
+});

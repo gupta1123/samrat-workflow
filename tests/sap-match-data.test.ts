@@ -1078,3 +1078,47 @@ test("no suppliers at all points to a permission problem", async () => {
     );
   }
 });
+
+test("unverified invoice rows return analysis recovery before any SAP or matching-state read", async () => {
+  const result = await computeCaseMatch({
+    db: new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error("Unexpected database read after supplied packet");
+        },
+      },
+    ) as never,
+    client: new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error("Unverified data must not reach SAP");
+        },
+      },
+    ) as never,
+    environment: "live",
+    caseRow: {
+      id: "verification-required",
+      invoice_number: "1444099137",
+      po_number: null,
+    },
+    packet: {
+      documents: [
+        {
+          document_type: "Tax Invoice",
+          extracted_fields: {
+            ...invoiceFields,
+            __tableCoverage: { status: "unverified", rows: [] },
+          },
+        },
+      ],
+      mismatchAttributions: [],
+    },
+  });
+  assert.equal(result.available, false);
+  if (!result.available) {
+    assert.equal(result.recoveryAction, "reanalyze");
+    assert.match(result.reason, /incomplete or unverified/);
+  }
+});

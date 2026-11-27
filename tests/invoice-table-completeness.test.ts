@@ -54,7 +54,6 @@ function response(document = source) {
         quote: "Invoice INV-77",
       },
     },
-    newReferences: [],
     fieldChanges: context.fieldChecksInOrder.map((field) => ({
       field,
       value: String(document.fields[field as keyof CaseDoc["fields"]]),

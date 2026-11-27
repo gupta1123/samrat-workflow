@@ -53,6 +53,8 @@ import {
   buildSourceReferenceRepairSchema,
   ownDocumentPages,
   parseCompactSourceAudit,
+  parseSourceReviewObject,
+  sourceReferenceDefinitions,
   parseGroundedReviewIssues,
   sourceAuditContext,
   STAGED_REVIEW_CONTRACT_VERSION,
@@ -300,9 +302,9 @@ const SOURCE_REVIEW_INSTRUCTION =
   LOGISTICS_SOURCE_ROLES_INSTRUCTION +
   "Independently return the COMPLETE logisticsRows inventory from this document, even when initial extraction missed every row. Each review row has kind, cells and pageNumber (a supplied p pointer, not sourcePage). Each cell is {field:one allowed logistics field, value:literal printed value, quote:own-page label/column-and-value quote proving that cell's role}. Use each field once per row; omit absent cells. No transport/weighment entries means []. Logistics rows never count as commercial tableCoverage rows. " +
   "Every pageNumber is a supplied sourcePagePointers pointer such as p1, NOT an integer. The app binds it to the exact original page. Do not use local numbers or an extracted table's sourcePage. " +
-  'The response structure is {"sourceVerdict":"verified|needs_review","fieldChecks":{"requestedField":"supported|unsupported"},"lineItemChecks":{"requestedProperty":"supported|unsupported"},"references":{"canonicalReferenceField":{"value":"literal printed value or null","sourceLabel":"literal label","valueKind":"reference|document_type|date|party|other|absent|unreadable","pageNumber":"supplied pointer","quote":"literal own-page label and value"}},"newReferences":[],"fieldChanges":[{"field":"canonical non-reference field","value":"source-based value","evidenceKind":"printed|visual_observation","pageNumber":"supplied pointer","quote":"literal own-page words"}],"logisticsRows":[],"removalEvidence":{"pageNumber":"supplied pointer","quote":"source assessment of absent fields or roles"},"structureChange":null,"pageQuality":[{"pageNumber":"supplied pointer","issues":[],"approvalSafe":true,"confidence":"high|medium|low","reason":"visual assessment"}],"reviewIssues":[],"reason":"source-based explanation"}. This is a shape guide, not findings: inspect the pixels to fill every nested evidence and quality property; never return empty evidence objects. references can be {} when no references exist. Empty arrays mean no entries, not one empty object. ' +
+  'The response structure is {"sourceVerdict":"verified|needs_review","fieldChecks":{"requestedField":"supported|unsupported"},"lineItemChecks":{"requestedProperty":"supported|unsupported"},"references":{"canonicalReferenceField":{"value":"literal printed value or null","sourceLabel":"literal label","valueKind":"reference|document_type|date|party|other|absent|unreadable","pageNumber":"supplied pointer","quote":"literal own-page label and value"}},"fieldChanges":[{"field":"canonical non-reference field","value":"source-based value","evidenceKind":"printed|visual_observation","pageNumber":"supplied pointer","quote":"literal own-page words"}],"logisticsRows":[],"removalEvidence":{"pageNumber":"supplied pointer","quote":"source assessment of absent fields or roles"},"structureChange":null,"pageQuality":[{"pageNumber":"supplied pointer","issues":[],"approvalSafe":true,"confidence":"high|medium|low","reason":"visual assessment"}],"reviewIssues":[],"reason":"source-based explanation"}. This is a shape guide, not findings: inspect the pixels to fill every nested evidence and quality property; never return empty evidence objects. references can be {} when no references exist. Empty arrays mean no entries, not one empty object. ' +
   "Independently read every requested field in fieldChecksInOrder and referencesToReview, and inspect for omitted labelled values. For EVERY supported non-reference field, return its literal own-page value and proof in fieldChanges, including values that may already be correct. The app compares them to the first pass after this blind source read. A supported vote without a fieldChanges observation cannot verify a field. " +
-  "fieldsToRead lists this document type's complete extraction schema, including fields missed in the first pass. Independently inspect every listed field; return each actually visible non-reference value in fieldChanges and each visible reference in references/newReferences. Never invent absent fields or add them merely to fill the schema. " +
+  "fieldsToRead lists this document type's complete extraction schema, including fields missed in the first pass. Independently inspect every listed field; return each actually visible non-reference value in fieldChanges and each visible reference in references. Never invent absent fields or add them merely to fill the schema. " +
   "Independently inventory commercial goods/service rows from ALL original pages in tableCoverage, even when first-pass lineItems is empty. status complete requires one own-page quote per goods/service row in rows, in the same order as the final lineItems. Include a brief own-page evidence quote explaining the table assessment. Totals, taxes, delivery allocations, repeated copies and supporting references are not additional invoice products. not_present means the source truly has no commercial rows, not that extraction returned none. unreadable requires sourceVerdict needs_review. " +
   "Read the source column headings and billing basis to distinguish billable quantity from package/piece counts and shipment weights. A piece count and a weight describing the SAME commercial row are not separate products. Preserve genuine separate rows even when their codes repeat. If the source is ambiguous, declare unreadable/needs_review rather than choosing by numeric size, code similarity or an assumed unit. Correct erroneous first-pass row structure using complete source-backed structureChange.lineItems. " +
   "If any source row is missing, including an entirely omitted table, recover the COMPLETE source table in structureChange.lineItems with own-page evidence in this response. Never borrow products or quantities from another document. Confirm codes/descriptions, quantity, unit, unit price and amounts directly from the source; preserve absent fields as absent. " +
@@ -310,8 +312,7 @@ const SOURCE_REVIEW_INSTRUCTION =
   "Supported means the source supplies this field/property in its stated role. If its proposed value is misread or attached to the wrong row, you MUST correct it using fieldChanges or a complete source-backed structureChange.lineItems. A supported vote alone must never retain a known wrong value. Unsupported means the source does not supply this field/property in that role; provide removalEvidence. If unreadable source prevents a decision, set sourceVerdict needs_review and report the page issue. " +
   "removalEvidence is ALWAYS an own-page {pageNumber,quote} object. Its quote names the absent fields or wrong source roles behind unsupported votes, or cites the source inventory when nothing is removed. Never return null or an empty object. " +
   "Preserve the literal value you independently read, including decimal places and units. Do not normalize, calculate or repair digits to match an expected value. " +
-  "references is the authority for ORIGINAL reference proposals: it is an OBJECT keyed by every referencesToReview field, NOT an array. Each key has one value-and-proof entry; do not put field inside that entry. " +
-  "newReferences is an array only for clearly printed newly discovered references not in referencesToReview. Each entry supplies field, value, sourceLabel, valueKind, pageNumber and quote. Never repeat an original or new field; the app joins these distinct entries into the same final reference ledger. Use [] when none were missed. " +
+  "references is the ONLY reference ledger: one OBJECT entry per canonical field from allowedReferenceFields. Include every referencesToReview field and any newly discovered printed reference allowed for this document type in this SAME object. Do not add unrelated party IDs just because they are visible. A source-proved document-type correction permits that corrected type’s reference fields as well. Never repeat a key or return a second discovery list. Each entry owns its value, printed label, valueKind, own-page pointer and quote. Do not put field inside the entry. If repeated labels refer to different parties or rows, do not choose or merge them: preserve row-specific references in logisticsRows, and mark an ambiguous document-wide field unreadable with sourceVerdict needs_review. " +
   "When different logistics rows carry different references of the same kind, preserve each reference in that row's cells instead of returning duplicate top-level references. Only a single explicitly identified document-wide reference belongs at top level. " +
   "Each retained value requires valueKind reference and a brief own-page quote containing its EXACT printed label and value together. " +
   "Judge labels by meaning and layout, not by matching their words to field names. Categories, titles, dates, parties and different references are not interchangeable IDs. " +
@@ -334,7 +335,7 @@ const SOURCE_REVIEW_INSTRUCTION =
 
 const SOURCE_REFERENCE_REPAIR_INSTRUCTION =
   "You are repairing ONLY the reference ledger for one source document after its full audit failed validation. " +
-  "Return exactly the requested references and newReferences JSON. Re-read the supplied original page images. " +
+  "Return ONLY a references object, with one entry per allowed canonical field. Include every referencesToReview field, including earlier discoveries that must be independently checked again; put newly discovered printed references in the same object. Do not silently omit a requested field: give an evidenced absent, unrelated or unreadable decision when its proposed role cannot be supported. Never repeat a key or include a second discovery list. Re-read the supplied original page images and pair each value with its exact label and own-page quote. Conflicting party or row references must not be combined or guessed; return unreadable for an ambiguous document-wide reference. " +
   "For each original candidate, decide from its printed label and layout whether it is truly that reference field. " +
   "If it is, use valueKind reference and copy the literal printed value, literal label, page pointer and a brief quote containing both. " +
   "If it is actually a heading, date, party, document type, unrelated ID, absent or unreadable, return value null and the corresponding valueKind. " +
@@ -380,7 +381,7 @@ const SOURCE_AUDIT_REPAIR_INSTRUCTION =
   "Every row quote must literally contain all retained item codes/descriptions, quantities/units, prices, row amounts and row references. Quote that goods row only; omit row amounts that appear only as document totals or freight/tax summaries. Preserve every decimal digit. " +
   "Return one support vote for every supplied field and line-item property. Return an independent literal value-and-proof observation in fieldChanges for EVERY supported non-reference field. Supported means this field/property is supplied in its stated role; return the complete source-read table in structureChange.lineItems when a commercial table exists. Unsupported means this source does not supply the field/property in that role and requires removalEvidence. For an undecidable field/value set sourceVerdict needs_review and report the page issue; uncertainty never proves correctness. " +
   "Use structureChange null only when no commercial table or document-type change is present. " +
-  "Keep all quality findings and review issues tied to literal evidence on this source. Do not return references or newReferences. " +
+  "Keep all quality findings and review issues tied to literal evidence on this source. Do not return references. " +
   PAGE_READABILITY_INSTRUCTION;
 
 function parseObjectOrNull(raw: string) {
@@ -417,9 +418,15 @@ function retainGroundedPacketIssues(
   return { retained, discarded };
 }
 
-function unverifiedSourceReview(document: CaseDoc, pages: ReviewSourcePage[]) {
+function unverifiedSourceReview(
+  document: CaseDoc,
+  pages: ReviewSourcePage[],
+  section?: SourceReviewValidationSection,
+) {
   const reason =
-    "Automated source verification returned an internally inconsistent result. The original extraction was preserved without applying any unverified correction.";
+    section === "references"
+      ? "We couldn’t verify the document’s reference numbers against its original pages. Reanalyse the document before approval."
+      : "We couldn’t finish checking this document against its original pages. Reanalyse the document before approval.";
   return {
     document: {
       ...document,
@@ -653,7 +660,7 @@ export async function reviewOneSource(options: {
                 },
               ],
               validate: (raw) => {
-                const patch = object(JSON.parse(raw));
+                const patch = parseSourceReviewObject(raw);
                 if (
                   Object.keys(patch).length !== 1 ||
                   !Object.hasOwn(patch, "reviewIssues")
@@ -729,7 +736,7 @@ export async function reviewOneSource(options: {
                 },
               ],
               validate: (raw) => {
-                const patch = object(JSON.parse(raw));
+                const patch = parseSourceReviewObject(raw);
                 if (
                   Object.keys(patch).some(
                     (key) =>
@@ -812,7 +819,7 @@ export async function reviewOneSource(options: {
                 },
               ],
               validate: (raw) => {
-                const patch = object(JSON.parse(raw));
+                const patch = parseSourceReviewObject(raw);
                 if (
                   Object.keys(patch).length !==
                     SOURCE_AUDIT_REPAIR_KEYS.length ||
@@ -839,9 +846,31 @@ export async function reviewOneSource(options: {
               attempts: 1 + repaired.attempts,
             };
           }
+          const allowedReferenceFields = sourceReferenceDefinitions(
+            options.document,
+            typeof rejected.structureChange === "object" &&
+              rejected.structureChange !== null
+              ? String(
+                  (rejected.structureChange as Record<string, unknown>)
+                    .documentType ?? options.document.type,
+                )
+              : undefined,
+          ).map(({ key, label }) => ({ field: key, meaning: label }));
+          const allowedReferenceKeys = new Set<string>(
+            allowedReferenceFields.map(({ field }) => field),
+          );
+          const referencesToReview = [
+            ...new Set([
+              ...context.referencesToReview,
+              ...Object.keys(object(rejected.references)).filter((field) =>
+                allowedReferenceKeys.has(field),
+              ),
+            ]),
+          ];
           const repairContext = {
             validationDefect: error.defect,
-            referencesToReview: context.referencesToReview,
+            referencesToReview,
+            allowedReferenceFields,
             sourcePagePointers: context.sourcePagePointers,
           };
           const repaired = await completeReviewRequest({
@@ -855,6 +884,7 @@ export async function reviewOneSource(options: {
             schema: buildSourceReferenceRepairSchema(
               options.document,
               options.pages,
+              referencesToReview,
             ),
             maxTokens: configuredPositive(
               "PACKET_SOURCE_REVIEW_MAX_OUTPUT_TOKENS",
@@ -881,21 +911,26 @@ export async function reviewOneSource(options: {
               },
             ],
             validate: (raw) => {
-              const patch = object(JSON.parse(raw));
+              const patch = parseSourceReviewObject(raw);
               if (
-                Object.keys(patch).some(
-                  (key) => key !== "references" && key !== "newReferences",
-                ) ||
-                !Object.hasOwn(patch, "references") ||
-                !Object.hasOwn(patch, "newReferences")
+                Object.keys(patch).some((key) => key !== "references") ||
+                !Object.hasOwn(patch, "references")
               )
                 throw new Error(
                   "Reference repair returned fields outside its repair contract.",
                 );
+              const readings = object(patch.references);
+              const missing = referencesToReview.filter(
+                (field) => !Object.hasOwn(readings, field),
+              );
+              if (missing.length)
+                throw new SourceReviewValidationError(
+                  "references",
+                  `Reference repair omitted fields requiring an independent source reading: ${missing.join(", ")}. Return an evidenced decision for every requested field.`,
+                );
               const merged = JSON.stringify({
                 ...rejected,
                 references: patch.references,
-                newReferences: patch.newReferences,
               });
               return { raw: merged, result: validateMerged(merged) };
             },
@@ -1076,7 +1111,11 @@ export async function reviewOneSource(options: {
       defect: error.defect,
     });
     return {
-      result: unverifiedSourceReview(options.document, options.pages),
+      result: unverifiedSourceReview(
+        options.document,
+        options.pages,
+        error.validationSection,
+      ),
       reused: false,
       attempts: 2,
       key,

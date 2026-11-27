@@ -9,6 +9,29 @@ export function compactReviewProviderSchema(
     if (!value || typeof value !== "object") return value;
     return Object.fromEntries(
       Object.entries(value).flatMap(([key, entry]) => {
+        // A single typed reference dictionary avoids both competing ledgers
+        // and an exponential grammar from expanding every original field next
+        // to arbitrary discoveries. Exact keys/coverage remain parser-owned.
+        if (
+          key === "references" &&
+          entry &&
+          typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          typeof (entry as Record<string, unknown>).additionalProperties ===
+            "object"
+        ) {
+          return [
+            [
+              key,
+              {
+                type: "object",
+                additionalProperties: visit(
+                  (entry as Record<string, unknown>).additionalProperties,
+                ),
+              },
+            ],
+          ];
+        }
         // Expanding hundreds of required field-name properties exceeds the
         // provider's grammar complexity limit on ordinary multi-page packets.
         // Keep its typed verdict dictionary small; the generated checklist in

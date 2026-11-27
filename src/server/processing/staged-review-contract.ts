@@ -9,6 +9,7 @@ import {
 import { REFERENCE_FIELD_DEFINITIONS } from "./semantic-grounding";
 import { readReferenceLedger } from "./reference-ledger";
 import { SourceReviewValidationError } from "./review-contract-error";
+import { DuplicateReviewKeyError, parseReviewJson } from "./review-json";
 import { STAGED_REVIEW_CONTRACT_VERSION } from "./checkpoint-contract";
 import { LOGISTICS_ROW_FIELDS } from "@/lib/extracted-source-rows";
 import type { LogisticsRow } from "@/types/pipeline";
@@ -36,6 +37,19 @@ function array(value: unknown): unknown[] {
 }
 const text = { type: "string" };
 
+export function parseSourceReviewObject(raw: string): Record<string, unknown> {
+  try {
+    return object(parseReviewJson(raw));
+  } catch (error) {
+    if (error instanceof DuplicateReviewKeyError)
+      throw new SourceReviewValidationError(
+        error.keys[0] === "references" ? "references" : "source-audit",
+        error.message,
+      );
+    throw error;
+  }
+}
+
 export function ownDocumentPages(document: CaseDoc, pages: ReviewSourcePage[]) {
   if (!document.sourcePageNumbers?.length)
     throw new Error(
@@ -53,6 +67,22 @@ export function ownDocumentPages(document: CaseDoc, pages: ReviewSourcePage[]) {
   )
     throw new Error(`Original source pages are missing for ${document.id}.`);
   return own;
+}
+
+// Document-type schemas own which references may be discovered. Existing
+// candidates are always reviewed, even when first-pass classification was wrong.
+export function sourceReferenceDefinitions(
+  document: CaseDoc,
+  observedType?: string,
+) {
+  const allowed = new Set([
+    ...getFieldKeysForDocType(document.type),
+    ...getFieldKeysForDocType(observedType ?? document.type),
+  ]);
+  return REFERENCE_FIELD_DEFINITIONS.filter(
+    ({ key }) =>
+      allowed.has(key) || Boolean(String(document.fields[key] ?? "").trim()),
+  );
 }
 
 export function buildSourceAuditSchema(
@@ -142,9 +172,6 @@ export function buildSourceAuditSchema(
   };
   const originalReferences = REFERENCE_FIELD_DEFINITIONS.filter(({ key }) =>
     String(document.fields[key] ?? "").trim(),
-  ).map(({ key }) => key);
-  const newReferenceKeys = REFERENCE_FIELD_DEFINITIONS.filter(
-    ({ key }) => !originalReferences.includes(key),
   ).map(({ key }) => key);
   const checklist = buildReviewSourceSupportChecklist([document])[document.id];
   const supportSchema = (keys: string[]) => ({
@@ -243,23 +270,9 @@ export function buildSourceAuditSchema(
           originalReferences.map((key) => [key, referenceEntry]),
         ),
         required: originalReferences,
-        additionalProperties: false,
-      },
-      newReferences: {
-        type: "array",
-        items: {
-          ...referenceEntry,
-          properties: {
-            field: {
-              type: "string",
-              enum: newReferenceKeys.length
-                ? newReferenceKeys
-                : originalReferences,
-            },
-            ...referenceEntry.properties,
-          },
-          required: ["field", ...referenceEntry.required],
-        },
+        // Original and discovered references share one slot per canonical field.
+        // The parser enforces known keys, original-field coverage and own-page proof.
+        additionalProperties: referenceEntry,
       },
       fieldChanges: {
         type: "array",
@@ -342,7 +355,6 @@ export function buildSourceAuditSchema(
       "logisticsRows",
       "tableCoverage",
       "references",
-      "newReferences",
       "fieldChanges",
       "removalEvidence",
       "structureChange",
@@ -357,15 +369,18 @@ export function buildSourceAuditSchema(
 export function buildSourceReferenceRepairSchema(
   document: CaseDoc,
   pages: ReviewSourcePage[],
+  referencesToReview?: string[],
 ) {
   const full = buildSourceAuditSchema(document, pages);
   return {
     type: "object",
     properties: {
-      references: full.properties.references,
-      newReferences: full.properties.newReferences,
+      references: {
+        ...full.properties.references,
+        required: referencesToReview ?? full.properties.references.required,
+      },
     },
-    required: ["references", "newReferences"],
+    required: ["references"],
     additionalProperties: false,
   };
 }
@@ -406,20 +421,12 @@ export function isolateUnverifiedSourceReferences(
   document: CaseDoc,
   pages: ReviewSourcePage[],
 ) {
-  const payload = object(JSON.parse(raw));
+  const payload = parseSourceReviewObject(raw);
   const references = object(payload.references);
   const definitions = new Set(
     REFERENCE_FIELD_DEFINITIONS.map(({ key }) => key),
   );
   const candidates = new Map<string, unknown>(Object.entries(references));
-  for (const value of array(payload.newReferences)) {
-    const entry = object(value);
-    if (typeof entry.field !== "string" || candidates.has(entry.field))
-      throw new Error(
-        "Cannot isolate malformed or duplicate reference entries.",
-      );
-    candidates.set(entry.field, entry);
-  }
   const pointers = new Map(
     ownDocumentPages(document, pages).map((page, index) => [
       `p${index + 1}`,
@@ -541,7 +548,7 @@ export function parseCompactSourceAudit(
   document: CaseDoc,
   pages: ReviewSourcePage[],
 ) {
-  const payload = object(JSON.parse(raw));
+  const payload = parseSourceReviewObject(raw);
   const expected = [
     "sourceVerdict",
     "fieldChecks",
@@ -549,7 +556,6 @@ export function parseCompactSourceAudit(
     "logisticsRows",
     "tableCoverage",
     "references",
-    "newReferences",
     "fieldChanges",
     "removalEvidence",
     "structureChange",
@@ -608,7 +614,6 @@ export function parseCompactSourceAudit(
   };
   for (const key of [
     "references",
-    "newReferences",
     "fieldChanges",
     "removalEvidence",
     "structureChange",
@@ -620,8 +625,15 @@ export function parseCompactSourceAudit(
     payload[key] = bindPagePointers(payload[key]);
   const checklist = buildReviewSourceSupportChecklist([document])[document.id];
   const fields: Record<string, unknown> = {};
+  const proposedType =
+    payload.structureChange &&
+    typeof payload.structureChange === "object" &&
+    typeof (payload.structureChange as Record<string, unknown>).documentType ===
+      "string"
+      ? (payload.structureChange as { documentType: string }).documentType
+      : undefined;
   const referenceKeys = new Set<string>(
-    REFERENCE_FIELD_DEFINITIONS.map(({ key }) => key),
+    sourceReferenceDefinitions(document, proposedType).map(({ key }) => key),
   );
   try {
     for (const [field, rawReference] of Object.entries(
@@ -642,7 +654,7 @@ export function parseCompactSourceAudit(
         )
       )
         throw new Error(
-          `Reference ${field} must be a known keyed value-and-proof entry, without a repeated field property.`,
+          `Reference ${field} must be a known keyed value-and-proof entry for this document type, without a repeated field property.`,
         );
       // valueKind is the model's semantic decision. A candidate classified as a
       // date, party, heading or other non-reference is a removal, even if the
@@ -652,45 +664,6 @@ export function parseCompactSourceAudit(
         value: reference.valueKind === "reference" ? reference.value : null,
         sourceFileName: document.sourceFileName,
       };
-    }
-    for (const rawReference of array(payload.newReferences)) {
-      const reference = object(rawReference);
-      const field = reference.field;
-      if (
-        typeof field !== "string" ||
-        !referenceKeys.has(field) ||
-        Object.hasOwn(fields, field) ||
-        String(document.fields[field as FieldKey] ?? "").trim()
-      )
-        throw new Error(
-          `A newly discovered reference must be known and distinct from every original or discovered reference: ${String(field)}.`,
-        );
-      const { field: ignoredField, ...entry } = reference;
-      void ignoredField;
-      if (
-        Object.keys(entry).some(
-          (key) =>
-            ![
-              "value",
-              "sourceLabel",
-              "valueKind",
-              "pageNumber",
-              "quote",
-            ].includes(key),
-        )
-      )
-        throw new Error(
-          `New reference ${field} has unexpected evidence properties.`,
-        );
-      // A discovered candidate that the reviewer itself classifies as something
-      // other than a reference is not a reference-ledger entry.
-      if (
-        reference.valueKind !== "reference" ||
-        typeof reference.value !== "string" ||
-        !reference.value.trim()
-      )
-        continue;
-      fields[field] = { ...entry, sourceFileName: document.sourceFileName };
     }
     // Validate the reference section independently so a later repair can be
     // routed by contract ownership instead of parsing an error message.
@@ -1441,6 +1414,12 @@ export function sourceAuditContext(
     fieldChecksInOrder: checklist.fieldSupport,
     fieldsToRead: getFieldKeysForDocType(document.type),
     lineItemChecksInOrder: checklist.lineItemPropertySupport,
+    allowedReferenceFields: sourceReferenceDefinitions(document).map(
+      ({ key, label }) => ({
+        field: key,
+        meaning: label,
+      }),
+    ),
     referencesToReview: REFERENCE_FIELD_DEFINITIONS.filter(({ key }) =>
       String(document.fields[key] ?? "").trim(),
     ).map(({ key }) => key),

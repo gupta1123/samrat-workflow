@@ -86,7 +86,7 @@ export function authoritativeOutlierDocumentIds(
 }
 
 export type CaseMatch =
-  | { available: false; reason: string }
+  | { available: false; reason: string; recoveryAction?: "reanalyze" }
   | {
       available: true;
       invoice: MatchInvoice;
@@ -403,6 +403,7 @@ export async function computeCaseMatch(params: {
   if (invoice.extractionIssue || !invoice.lines.length) {
     return {
       available: false,
+      recoveryAction: "reanalyze",
       reason:
         invoice.extractionIssue ??
         "Invoice item extraction is incomplete: no product rows were saved. Review the invoice and analyze the case again before SAP matching.",

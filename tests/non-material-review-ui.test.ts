@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { needsInvoiceVerification } from "../src/lib/sap-match-recovery";
 
 const panel = readFileSync("src/components/cases/SapMatchPanel.tsx", "utf8");
 const candidates = readFileSync(
@@ -13,9 +14,15 @@ test("an open duplicate-invoice check keeps item matching out of the way", () =>
   assert.match(panel, /only needed if you do not close this invoice/);
 });
 
-test("an invoice-assembly failure says SAP re-checks cannot fix it", () => {
-  assert.match(panel, /message\.includes\("invoice assembly"\)/);
-  assert.match(panel, /Checking SAP again will not fix this/);
+test("an invoice-assembly failure selects invoice verification recovery", () => {
+  assert.equal(
+    needsInvoiceVerification({
+      available: false,
+      reason:
+        "The invoice cover and billing pages need a source-reviewed invoice assembly.",
+    }),
+    true,
+  );
 });
 
 test("PO line choice shows the invoice line beside the PO lines and the price gap", () => {

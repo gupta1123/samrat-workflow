@@ -98,14 +98,6 @@ async function compact(document: CaseDoc) {
         },
       ]),
     ),
-    newReferences: [] as {
-      field: string;
-      value: string | null;
-      sourceLabel: string;
-      valueKind: string;
-      pageNumber: string;
-      quote: string;
-    }[],
     fieldChanges: context.fieldChecksInOrder.map((field) => ({
       field,
       value: String(document.fields[field as keyof CaseDoc["fields"]]),
@@ -505,7 +497,6 @@ test("reference repair hands a later page-quality defect to the audit repair", a
         refs++;
         return response({
           references: payloads[0].references,
-          newReferences: [],
         });
       }
       if (name === "source_audit_repair") {
@@ -588,14 +579,13 @@ for (const restoreReference of [false, true]) {
     };
     const scoped = await compact(scopedDoc);
     if (restoreReference)
-      scoped.newReferences.push({
-        field: "irnNumber",
+      scoped.references.irnNumber = {
         value: "PRINTED-IRN",
         sourceLabel: "IRN",
         valueKind: "reference",
         pageNumber: "p1",
         quote: "IRN: PRINTED-IRN",
-      });
+      };
     const recovered = { ...invoice.lineItems![1], sourcePage: 1 };
     const quote =
       "Material AL-10 Alloy rod; Packages 8 pieces; Quantity 21.75 MT; Rate 45000 per MT";
@@ -625,7 +615,6 @@ for (const restoreReference of [false, true]) {
         if (name === "source_reference_repair")
           return response({
             references: invalid.references,
-            newReferences: [],
           });
         if (name === "packet_reconciliation") return response(packet());
         return response({
@@ -1282,16 +1271,13 @@ test("a wrapped newly discovered reference is proved once without conflicting om
   const { parseCompactSourceAudit } =
     await import("../src/server/processing/staged-review-contract");
   const raw = await compact(documents[0]);
-  raw.newReferences = [
-    {
-      field: "invoiceNumber",
-      value: "INV123456",
-      sourceLabel: "Invoice No",
-      valueKind: "reference",
-      pageNumber: "p1",
-      quote: "Invoice No: INV 123456",
-    },
-  ];
+  raw.references.invoiceNumber = {
+    value: "INV123456",
+    sourceLabel: "Invoice No",
+    valueKind: "reference",
+    pageNumber: "p1",
+    quote: "Invoice No: INV 123456",
+  };
   const result = parseCompactSourceAudit(JSON.stringify(raw), documents[0], [
     pages[0],
   ]);
@@ -1570,30 +1556,79 @@ test("a proved no-op is verified, not an unsupported missing-field finding", asy
   assert.deepEqual(result.audit.visibleOmittedFields, []);
 });
 
-test("new references are paired once and cannot repeat original or discovered keys", async () => {
-  const { parseCompactSourceAudit } =
+test("one reference dictionary accepts discovered fields but rejects duplicates, unknown fields and a second ledger", async () => {
+  const { parseCompactSourceAudit, buildSourceReferenceRepairSchema } =
     await import("../src/server/processing/staged-review-contract");
   const raw = await compact(documents[0]);
   const found = {
-    field: "invoiceNumber",
     value: "INV-28",
     sourceLabel: "Invoice Number",
     valueKind: "reference",
     pageNumber: "p1",
     quote: "Invoice Number INV-28",
   };
-  const run = (newReferences: unknown[]) =>
-    parseCompactSourceAudit(
-      JSON.stringify({ ...raw, newReferences }),
-      documents[0],
-      [pages[0]],
-    );
-  assert.equal(run([found]).document.fields.invoiceNumber, "INV-28");
-  assert.throws(() => run([found, found]), /distinct/);
-  assert.throws(
-    () => run([{ ...found, field: "referencePoNumber" }]),
-    /distinct/,
+  raw.references.invoiceNumber = found;
+  const parse = (text: string) =>
+    parseCompactSourceAudit(text, documents[0], [pages[0]]);
+  assert.equal(
+    parse(JSON.stringify(raw)).document.fields.invoiceNumber,
+    "INV-28",
   );
+  const duplicate = JSON.stringify(raw).replace(
+    '"invoiceNumber":',
+    `"invoiceNumber":${JSON.stringify(found)},"invoiceNumber":`,
+  );
+  assert.throws(
+    () => parse(duplicate),
+    /Repeated review field references.invoiceNumber/,
+  );
+  assert.throws(
+    () =>
+      parse(
+        JSON.stringify({
+          ...raw,
+          references: { ...raw.references, inventedNumber: found },
+        }),
+      ),
+    /known keyed/,
+  );
+  assert.throws(
+    () => parse(JSON.stringify({ ...raw, newReferences: [] })),
+    /task contract/,
+  );
+  assert.throws(
+    () =>
+      parse(JSON.stringify({ ...raw, references: { invoiceNumber: found } })),
+    /omitted original fields/,
+  );
+  assert.throws(
+    () =>
+      parse(
+        JSON.stringify({
+          ...raw,
+          references: {
+            ...raw.references,
+            panNumber: { ...found, sourceLabel: "PAN", quote: "PAN INV-28" },
+          },
+        }),
+      ),
+    /for this document type/,
+  );
+  const { sourceAuditContext } =
+    await import("../src/server/processing/staged-review-contract");
+  assert.ok(
+    !sourceAuditContext(documents[0], [pages[0]]).allowedReferenceFields.some(
+      ({ field }) => field === "panNumber",
+    ),
+  );
+  assert.ok(
+    sourceAuditContext({ ...documents[0], type: "PAN Card" }, [
+      pages[0],
+    ]).allowedReferenceFields.some(({ field }) => field === "panNumber"),
+  );
+  const schema = buildSourceReferenceRepairSchema(documents[0], [pages[0]]);
+  assert.deepEqual(Object.keys(schema.properties), ["references"]);
+  assert.deepEqual(schema.required, ["references"]);
 });
 
 test("owned page pointers bind an isolated source to original page six without numeric guessing", async () => {
@@ -2431,7 +2466,6 @@ test("an invalid reference proof is repaired from the original source page witho
         assert.equal(Object.hasOwn(context, "originalReferenceValues"), false);
         return response({
           references: sourcePayloads[0].references,
-          newReferences: sourcePayloads[0].newReferences,
         });
       }
       if (name === "packet_reconciliation") return response(packet());
@@ -2841,62 +2875,96 @@ test("targeted packet contradiction rechecks only the affected source", async (t
   assert.equal(packetCalls, 2);
 });
 
-test("a repeated PAN reference reaches reference-only repair, not unrelated source-audit repair", async (t) => {
-  const { reviewExtractedDocumentsInStages } =
-    await import("../src/server/processing/staged-review");
-  const doc = {
-    ...documents[0],
-    fields: { ...documents[0].fields, panNumber: "ABCDE1234F" },
-  };
-  const good = await compact(doc);
-  good.references.panNumber = {
-    value: "ABCDE1234F",
-    sourceLabel: "PAN",
-    valueKind: "reference",
-    pageNumber: "p1",
-    quote: "PAN: ABCDE1234F",
-  };
-  const wrong = {
-    ...good,
-    newReferences: [{ field: "panNumber", ...good.references.panNumber }],
-  };
-  const other = await compact(documents[1]);
-  let referenceRepairs = 0;
-  t.mock.method(
-    globalThis,
-    "fetch",
-    async (_url: RequestInfo | URL, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body));
-      const name = body.response_format.json_schema.name;
-      const context = JSON.parse(body.messages[1].content[0].text);
-      if (name === "source_document_review")
-        return response(context.sourcePageNumbers[0] === 1 ? wrong : other);
-      if (name === "source_reference_repair") {
-        referenceRepairs++;
-        return response({ references: good.references, newReferences: [] });
-      }
-      if (name === "packet_reconciliation") return response(packet());
-      assert.notEqual(name, "source_audit_repair");
-      return response({
-        mismatchDecisions: context.requestedCandidates.map(
-          (c: { mismatchId: string }) => ({
-            mismatchId: c.mismatchId,
-            status: "dismissed",
-            primary: false,
-            outlierDocumentIds: [],
-            reason: "No source discrepancy.",
-          }),
+for (const referenceRepairable of [true, false]) {
+  test(`duplicate reference responses ${referenceRepairable ? "are repaired from their original page" : "stay blocked after bounded repair attempts"}`, async (t) => {
+    const { reviewExtractedDocumentsInStages } =
+      await import("../src/server/processing/staged-review");
+    const doc = {
+      ...documents[0],
+      fields: { ...documents[0].fields, panNumber: "ABCDE1234F" },
+    };
+    const good = await compact(doc);
+    good.references.panNumber = {
+      value: "ABCDE1234F",
+      sourceLabel: "PAN",
+      valueKind: "reference",
+      pageNumber: "p1",
+      quote: "PAN: ABCDE1234F",
+    };
+    const wrong = JSON.stringify(good).replace(
+      '"panNumber":',
+      `"panNumber":${JSON.stringify({ ...good.references.panNumber, value: "CONFLICTING-PAN" })},"panNumber":`,
+    );
+    const other = await compact(documents[1]);
+    let referenceRepairs = 0;
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        const name = body.response_format.json_schema.name;
+        const context = JSON.parse(body.messages[1].content[0].text);
+        if (name === "source_document_review")
+          return context.sourcePageNumbers[0] === 1
+            ? Response.json({
+                choices: [
+                  { finish_reason: "stop", message: { content: wrong } },
+                ],
+              })
+            : response(other);
+        if (name === "source_reference_repair") {
+          referenceRepairs++;
+          if (referenceRepairable)
+            return response({ references: good.references });
+          const rejected = JSON.stringify({
+            references: good.references,
+          }).replace(
+            '"panNumber":',
+            `"panNumber":${JSON.stringify({ ...good.references.panNumber, value: "CONFLICTING-PAN" })},"panNumber":`,
+          );
+          return Response.json({
+            choices: [
+              { finish_reason: "stop", message: { content: rejected } },
+            ],
+          });
+        }
+        if (name === "packet_reconciliation") return response(packet());
+        assert.notEqual(name, "source_audit_repair");
+        return response({
+          mismatchDecisions: context.requestedCandidates.map(
+            (c: { mismatchId: string }) => ({
+              mismatchId: c.mismatchId,
+              status: "dismissed",
+              primary: false,
+              outlierDocumentIds: [],
+              reason: "No source discrepancy.",
+            }),
+          ),
+        });
+      },
+    );
+    const result = await reviewExtractedDocumentsInStages([doc, documents[1]], {
+      sourcePages: pages,
+    });
+    assert.equal(referenceRepairs, referenceRepairable ? 1 : 2);
+    assert.equal(result.documents[0].fields.panNumber, "ABCDE1234F");
+    if (referenceRepairable)
+      assert.notEqual(result.review.documentAudits?.[0].status, "needs_review");
+    else {
+      assert.equal(result.review.documentAudits?.[0].status, "needs_review");
+      assert.equal(result.documents[0].tableCoverage?.status, "unverified");
+      assert.equal(
+        result.pageQuality.find((page) => page.pageNumber === 1)?.approvalSafe,
+        false,
+      );
+      assert.ok(
+        result.reviewIssues.some(
+          (issue) => issue.field === "extractionVerification",
         ),
-      });
-    },
-  );
-  const result = await reviewExtractedDocumentsInStages([doc, documents[1]], {
-    sourcePages: pages,
+      );
+    }
   });
-  assert.equal(referenceRepairs, 1);
-  assert.equal(result.documents[0].fields.panNumber, "ABCDE1234F");
-  assert.notEqual(result.review.documentAudits?.[0].status, "needs_review");
-});
+}
 
 for (const repairable of [true, false]) {
   test(`conflicting invoice classifications ${repairable ? "are repaired from source" : "remain safely blocked when unresolved"}`, async (t) => {
@@ -3300,3 +3368,66 @@ test("a run cannot cache a declared result when its raw response fails validatio
   );
   assert.equal(store.values.size, 0);
 });
+
+for (const restoreDiscovery of [true, false]) {
+  test(`reference repair ${restoreDiscovery ? "rechecks earlier discoveries instead of silently dropping them" : "stays unverified when a discovered reference is omitted by every retry"}`, async (t) => {
+    const { reviewOneSource } =
+      await import("../src/server/processing/staged-review");
+    const doc: CaseDoc = {
+      ...documents[0],
+      fields: { vendorName: "Aster Metals", eWayBillNumber: "100200300400" },
+    };
+    const good = await compact(doc);
+    good.references.irnNumber = {
+      value: "PRINTED-IRN-45",
+      sourceLabel: "IRN",
+      valueKind: "reference",
+      pageNumber: "p1",
+      quote: "IRN: PRINTED-IRN-45",
+    };
+    const initial = {
+      ...good,
+      references: {
+        ...good.references,
+        eWayBillNumber: {
+          ...good.references.eWayBillNumber,
+          quote: "Way Bill No: unreadable",
+        },
+      },
+    };
+    let repairs = 0;
+    t.mock.method(
+      globalThis,
+      "fetch",
+      async (_url: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        const name = body.response_format.json_schema.name;
+        if (name === "source_document_review") return response(initial);
+        assert.equal(name, "source_reference_repair");
+        const context = JSON.parse(body.messages[1].content[0].text);
+        assert.ok(context.referencesToReview.includes("irnNumber"));
+        repairs++;
+        if (restoreDiscovery && repairs === 2)
+          return response({ references: good.references });
+        return response({
+          references: { eWayBillNumber: good.references.eWayBillNumber },
+        });
+      },
+    );
+    const reviewed = await reviewOneSource({
+      document: doc,
+      pages: [pages[0]],
+    });
+    assert.equal(repairs, 2);
+    if (restoreDiscovery) {
+      assert.equal(reviewed.result.document.fields.irnNumber, "PRINTED-IRN-45");
+      assert.notEqual(reviewed.result.audit.status, "needs_review");
+    } else {
+      assert.equal(reviewed.result.audit.status, "needs_review");
+      assert.equal(
+        reviewed.result.document.tableCoverage?.status,
+        "unverified",
+      );
+    }
+  });
+}
